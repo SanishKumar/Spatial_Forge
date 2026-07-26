@@ -3,14 +3,16 @@
 from .model import Observation, ScanSession
 from .replay import ReplayResult, replay_session
 from .session_loader import load_scan_session
+from .tum_importer import TumImportReport, import_tum_dataset
 
 __all__ = [
     "Observation",
     "ReplayResult",
     "ScanSession",
+    "TumImportReport",
+    "import_tum_dataset",
     "load_scan_session",
     "replay_session",
 ]
 
 __version__ = "0.1.0"
-

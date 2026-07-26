@@ -8,15 +8,19 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from .errors import SessionReplayError, SessionValidationError
+from .errors import SessionReplayError, SessionValidationError, TumImportError
 from .model import ScanSession
 from .replay import replay_session
 from .session_loader import STREAM_ORDER, load_scan_session
+from .tum_importer import import_tum_dataset
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     arguments = parser.parse_args(argv)
+
+    if arguments.scan_command == "import-tum":
+        return _run_tum_import(arguments.source, arguments.output)
 
     try:
         session = load_scan_session(arguments.path)
@@ -75,7 +79,54 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Replay RGB observations deterministically.",
     )
     replay.add_argument("path", type=Path)
+
+    import_tum = scan_commands.add_parser(
+        "import-tum",
+        help="Convert an extracted TUM RGB-D folder into a .vgsession.",
+    )
+    import_tum.add_argument("source", type=Path)
+    import_tum.add_argument("output", type=Path)
     return parser
+
+
+def _run_tum_import(source: Path, output: Path) -> int:
+    try:
+        report = import_tum_dataset(source, output)
+        session = load_scan_session(report.output)
+        replay = replay_session(session)
+    except (TumImportError, SessionValidationError, SessionReplayError) as error:
+        print(f"IMPORT FAILED {source}", file=sys.stderr)
+        if isinstance(error, SessionValidationError):
+            for problem in error.errors:
+                print(f"- {problem}", file=sys.stderr)
+        else:
+            print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"IMPORTED {report.session_id}", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print(
+        "source: "
+        f"rgb={report.source_rgb_count} "
+        f"depth={report.source_depth_count} "
+        f"poses={report.source_pose_count}",
+        file=sys.stdout,
+    )
+    print(
+        "matched: "
+        f"rgb_depth={report.matched_rgbd_count} "
+        f"poses={report.matched_pose_count}",
+        file=sys.stdout,
+    )
+    print(
+        "unmatched: "
+        f"rgb={report.unmatched_rgb_count} "
+        f"depth={report.unmatched_depth_count} "
+        f"poses={report.unmatched_pose_count}",
+        file=sys.stdout,
+    )
+    print(f"digest_sha256: {replay.digest_sha256}", file=sys.stdout)
+    return 0
 
 
 def _print_validation_summary(session: ScanSession, output: TextIO) -> None:

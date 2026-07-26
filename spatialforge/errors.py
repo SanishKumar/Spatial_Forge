@@ -11,3 +11,7 @@ class SessionValidationError(ValueError):
 
 class SessionReplayError(RuntimeError):
     """Raised when validated replay input changes or becomes unreadable."""
+
+
+class TumImportError(ValueError):
+    """Raised when an extracted TUM RGB-D sequence cannot be imported."""

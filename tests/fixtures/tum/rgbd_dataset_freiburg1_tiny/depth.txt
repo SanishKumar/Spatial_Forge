@@ -1,0 +1,4 @@
+# The final sample is exactly 20 ms from the final RGB frame and must not match.
+1305031102.001000 depth/000000.pgm
+1305031102.034000 depth/000001.pgm
+1305031102.086667 depth/000002.pgm

@@ -9,3 +9,9 @@ __pycache__/
 build/
 dist/
 
+# Real datasets and generated mapping outputs must stay out of Git.
+/datasets/
+/outputs/
+/results/
+*.bag
+*.tgz
