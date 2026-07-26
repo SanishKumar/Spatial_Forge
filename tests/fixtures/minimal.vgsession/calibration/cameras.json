@@ -1,0 +1,51 @@
+{
+  "schema": "spatialforge.camera-calibration",
+  "schema_version": "0.1.0",
+  "cameras": [
+    {
+      "id": "camera-rgb",
+      "model": "pinhole",
+      "width": 2,
+      "height": 2,
+      "intrinsics": {
+        "fx": 2.0,
+        "fy": 2.0,
+        "cx": 0.5,
+        "cy": 0.5
+      },
+      "distortion": {
+        "model": "none",
+        "coefficients": []
+      },
+      "T_rig_camera": [
+        0, 0, 1, 0,
+        -1, 0, 0, 0,
+        0, -1, 0, 0,
+        0, 0, 0, 1
+      ]
+    },
+    {
+      "id": "camera-depth",
+      "model": "pinhole",
+      "width": 2,
+      "height": 2,
+      "intrinsics": {
+        "fx": 2.0,
+        "fy": 2.0,
+        "cx": 0.5,
+        "cy": 0.5
+      },
+      "distortion": {
+        "model": "none",
+        "coefficients": []
+      },
+      "T_rig_camera": [
+        0, 0, 1, 0,
+        -1, 0, 0, 0,
+        0, -1, 0, 0,
+        0, 0, 0, 1
+      ]
+    }
+  ]
+}
+

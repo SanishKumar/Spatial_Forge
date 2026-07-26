@@ -1,0 +1,4 @@
+{"id":"imu-000000","timestamp_ns":0,"accelerometer_m_s2":[0.0,0.0,9.80665],"gyroscope_rad_s":[0.0,0.0,0.0]}
+{"id":"imu-000001","timestamp_ns":16666667,"accelerometer_m_s2":[0.0,0.0,9.80665],"gyroscope_rad_s":[0.0,0.0,0.01]}
+{"id":"imu-000002","timestamp_ns":33333333,"accelerometer_m_s2":[0.0,0.0,9.80665],"gyroscope_rad_s":[0.0,0.0,0.01]}
+

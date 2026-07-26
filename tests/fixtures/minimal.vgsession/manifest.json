@@ -1,0 +1,51 @@
+{
+  "schema": "spatialforge.scan-session",
+  "schema_version": "0.1.0",
+  "session_id": "scan-synthetic-0001",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "timebase": {
+    "clock": "monotonic",
+    "unit": "nanoseconds",
+    "epoch": "session_start"
+  },
+  "coordinate_system": {
+    "handedness": "right",
+    "world_axes": {
+      "x": "forward",
+      "y": "left",
+      "z": "up"
+    },
+    "camera_axes": {
+      "x": "right",
+      "y": "down",
+      "z": "forward"
+    },
+    "distance_unit": "metres",
+    "pose": "T_world_camera"
+  },
+  "calibration": "calibration/cameras.json",
+  "streams": {
+    "rgb": {
+      "kind": "rgb",
+      "index": "streams/rgb.jsonl",
+      "calibration_id": "camera-rgb"
+    },
+    "depth": {
+      "kind": "depth",
+      "index": "streams/depth.jsonl",
+      "calibration_id": "camera-depth",
+      "depth_scale_m": 0.001,
+      "aligned_to": "rgb"
+    },
+    "imu": {
+      "kind": "imu",
+      "index": "streams/imu.jsonl"
+    },
+    "pose": {
+      "kind": "pose",
+      "index": "streams/poses.jsonl",
+      "transform": "T_world_camera"
+    }
+  }
+}
+
