@@ -124,8 +124,7 @@ interpolated. Missing or gapped ground truth remains missing.
 ## Explicitly deferred
 
 - dataset downloads and archive extraction;
-- real PNG decoding or image preprocessing;
+- image preprocessing;
 - IMU import;
-- point-cloud generation;
 - Open3D, TSDF fusion, meshing, or reconstruction;
 - visual tracking and SLAM.

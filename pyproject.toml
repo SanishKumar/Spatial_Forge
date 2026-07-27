@@ -8,11 +8,12 @@ version = "0.1.0"
 description = "Offline spatial scan formats and replay tooling"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "Pillow>=12.1,<13",
+]
 
 [project.scripts]
 spatialforge = "spatialforge.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["spatialforge*"]
-

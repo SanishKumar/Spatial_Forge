@@ -8,8 +8,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
-from .errors import SessionReplayError, SessionValidationError, TumImportError
+from .errors import (
+    PointCloudError,
+    SessionReplayError,
+    SessionValidationError,
+    TumImportError,
+)
 from .model import ScanSession
+from .point_cloud import reconstruct_point_cloud
 from .replay import replay_session
 from .session_loader import STREAM_ORDER, load_scan_session
 from .tum_importer import import_tum_dataset
@@ -19,6 +25,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     arguments = parser.parse_args(argv)
 
+    if arguments.command == "reconstruct":
+        return _run_point_cloud(
+            arguments.path,
+            arguments.output,
+            arguments.frame_stride,
+            arguments.pixel_stride,
+        )
+    return _run_scan(arguments)
+
+
+def _run_scan(arguments: argparse.Namespace) -> int:
     if arguments.scan_command == "import-tum":
         return _run_tum_import(arguments.source, arguments.output)
 
@@ -59,7 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="spatialforge",
-        description="Validate and replay SpatialForge sensor sessions.",
+        description="Validate, replay, and process SpatialForge sensor sessions.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     scan = commands.add_parser(
@@ -86,7 +103,92 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     import_tum.add_argument("source", type=Path)
     import_tum.add_argument("output", type=Path)
+
+    reconstruct = commands.add_parser(
+        "reconstruct",
+        help="Run known-pose geometric reconstruction steps.",
+    )
+    reconstruct_commands = reconstruct.add_subparsers(
+        dest="reconstruct_command",
+        required=True,
+    )
+    point_cloud = reconstruct_commands.add_parser(
+        "point-cloud",
+        help="Back-project known-pose RGB-D frames to a colored PLY.",
+    )
+    point_cloud.add_argument("path", type=Path)
+    point_cloud.add_argument("output", type=Path)
+    point_cloud.add_argument(
+        "--frame-stride",
+        type=_positive_integer,
+        default=1,
+        help="Integrate every Nth RGB observation (default: 1).",
+    )
+    point_cloud.add_argument(
+        "--pixel-stride",
+        type=_positive_integer,
+        default=1,
+        help="Sample every Nth image row and column (default: 1).",
+    )
     return parser
+
+
+def _run_point_cloud(
+    path: Path,
+    output: Path,
+    frame_stride: int,
+    pixel_stride: int,
+) -> int:
+    try:
+        session = load_scan_session(path)
+        report = reconstruct_point_cloud(
+            session,
+            output,
+            frame_stride=frame_stride,
+            pixel_stride=pixel_stride,
+        )
+    except SessionValidationError as error:
+        print(f"RECONSTRUCT FAILED {path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (PointCloudError, SessionReplayError) as error:
+        print(f"RECONSTRUCT FAILED {path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"POINT CLOUD {report.session_id}", file=sys.stdout)
+    print(
+        "frames: "
+        f"total={report.total_observations} "
+        f"selected={report.selected_observations} "
+        f"integrated={report.integrated_frames}",
+        file=sys.stdout,
+    )
+    print(
+        "skipped: "
+        f"missing_depth={report.skipped_missing_depth} "
+        f"missing_pose={report.skipped_missing_pose}",
+        file=sys.stdout,
+    )
+    print(
+        f"invalid_depth_samples: {report.invalid_depth_samples}",
+        file=sys.stdout,
+    )
+    print(f"points: {report.points_written}", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _positive_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected a positive integer") from error
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("expected a positive integer")
+    return parsed
 
 
 def _run_tum_import(source: Path, output: Path) -> int:

@@ -15,3 +15,7 @@ class SessionReplayError(RuntimeError):
 
 class TumImportError(ValueError):
     """Raised when an extracted TUM RGB-D sequence cannot be imported."""
+
+
+class PointCloudError(RuntimeError):
+    """Raised when known-pose RGB-D point-cloud generation cannot continue."""
