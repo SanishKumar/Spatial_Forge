@@ -9,8 +9,9 @@ deterministic world-space surface points:
   outputs/progress-surface.ply
 ```
 
-It is the narrow surface step between TSDF integration and a future triangle
-mesh. The output is an ASCII PLY containing XYZ points only.
+It is a narrow surface diagnostic between TSDF integration and the separate
+reference triangle-mesh step. The output is an ASCII PLY containing XYZ points
+only.
 
 ## Extraction rule
 
@@ -65,7 +66,7 @@ or inconsistent artifacts fail without a partial PLY.
 
 ## Explicitly deferred
 
-- triangle faces and marching cubes;
+- triangle faces in this output and production marching cubes;
 - normals, colors, smoothing, and deduplication;
 - connected components and watertightness;
 - optimized or sparse TSDF storage;

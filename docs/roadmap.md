@@ -14,6 +14,8 @@ The project is intentionally advancing through small, testable checkpoints.
 - Known-pose RGB-D back-projection to colored ASCII PLY.
 - Fixed-bounds projective TSDF integration with deterministic diagnostics.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
+- Fully observed TSDF-cell extraction to a deterministic, indexed triangle PLY
+  using a fixed six-tetrahedron reference split.
 - CLI error handling, overwrite protection, synthetic fixtures, documentation,
   and automated numerical regression tests.
 
@@ -25,7 +27,8 @@ or SLAM:
 1. automatic but bounded volume selection;
 2. sparse or optimized TSDF fusion suitable for full sequences;
 3. full TUM/ARKitScenes sample runs and geometry accuracy reports;
-4. triangle mesh extraction, normals, and mesh validation;
+4. production mesh refinement: exact-zero cells, normals, connected-component
+   and quality validation, and an optimized extraction backend;
 5. gravity/floor alignment, floor and wall candidates, and openings; and
 6. a top-down/3D Inspector view.
 
@@ -62,6 +65,7 @@ Run:
 
 The suite must finish with `OK`.
 
-Then follow the point-cloud, TSDF, and surface commands in the repository
-README. Their deterministic hashes, fusion weights, signed values, and exact
-surface coordinates provide checks independent of visual appearance.
+Then follow the point-cloud, TSDF, surface-point, and triangle-mesh commands in
+the repository README. Their deterministic hashes, fusion weights, signed
+values, exact coordinates, topology, winding, and boundary counts provide
+checks independent of visual appearance.

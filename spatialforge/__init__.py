@@ -1,6 +1,7 @@
 """SpatialForge's deterministic offline mapping foundations."""
 
 from .model import Observation, ScanSession
+from .mesh import TriangleMeshReport, extract_triangle_mesh
 from .point_cloud import PointCloudReport, reconstruct_point_cloud
 from .replay import ReplayResult, replay_session
 from .session_loader import load_scan_session
@@ -14,9 +15,11 @@ __all__ = [
     "ReplayResult",
     "ScanSession",
     "SurfacePointReport",
+    "TriangleMeshReport",
     "TsdfReport",
     "TumImportReport",
     "extract_surface_points",
+    "extract_triangle_mesh",
     "import_tum_dataset",
     "integrate_tsdf",
     "load_scan_session",

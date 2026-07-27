@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .errors import (
+    MeshExtractionError,
     PointCloudError,
     SessionReplayError,
     SessionValidationError,
@@ -16,6 +17,7 @@ from .errors import (
     TsdfError,
     TumImportError,
 )
+from .mesh import extract_triangle_mesh
 from .model import ScanSession
 from .point_cloud import reconstruct_point_cloud
 from .replay import replay_session
@@ -47,7 +49,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.truncation_m,
                 arguments.frame_stride,
             )
-        return _run_surface_points(arguments.path, arguments.output)
+        if arguments.reconstruct_command == "surface-points":
+            return _run_surface_points(arguments.path, arguments.output)
+        return _run_triangle_mesh(arguments.path, arguments.output)
     return _run_scan(arguments)
 
 
@@ -194,6 +198,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     surface_points.add_argument("path", type=Path)
     surface_points.add_argument("output", type=Path)
+
+    triangle_mesh = reconstruct_commands.add_parser(
+        "triangle-mesh",
+        help="Extract a deterministic reference triangle mesh from a TSDF.",
+    )
+    triangle_mesh.add_argument("path", type=Path)
+    triangle_mesh.add_argument("output", type=Path)
     return parser
 
 
@@ -340,6 +351,46 @@ def _run_surface_points(path: Path, output: Path) -> int:
         f"exact_zero={report.exact_zero_points} "
         f"crossing={crossing_points} "
         f"total={report.points_written}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _run_triangle_mesh(path: Path, output: Path) -> int:
+    try:
+        report = extract_triangle_mesh(path, output)
+    except MeshExtractionError as error:
+        print(f"TRIANGLE MESH FAILED {path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TRIANGLE MESH {report.session_id}", file=sys.stdout)
+    print(
+        "voxels: "
+        f"total={report.total_voxels} "
+        f"observed={report.observed_voxels}",
+        file=sys.stdout,
+    )
+    print(
+        "cells: "
+        f"total={report.total_cells} "
+        f"eligible={report.eligible_cells} "
+        f"active={report.active_cells}",
+        file=sys.stdout,
+    )
+    print(
+        "skipped_cells: "
+        f"unknown={report.skipped_unknown_cells} "
+        f"exact_zero={report.skipped_exact_zero_cells}",
+        file=sys.stdout,
+    )
+    print(
+        "mesh: "
+        f"vertices={report.vertices_written} "
+        f"triangles={report.triangles_written} "
+        f"boundary_edges={report.boundary_edges}",
         file=sys.stdout,
     )
     print(f"output: {report.output}", file=sys.stdout)

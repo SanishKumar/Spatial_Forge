@@ -27,3 +27,7 @@ class TsdfError(RuntimeError):
 
 class SurfaceExtractionError(RuntimeError):
     """Raised when TSDF surface-point extraction cannot continue."""
+
+
+class MeshExtractionError(RuntimeError):
+    """Raised when deterministic TSDF triangle meshing cannot continue."""
