@@ -9,6 +9,7 @@ description = "Offline spatial scan formats and replay tooling"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "numpy>=2.3.4,<2.5",
     "Pillow>=12.1,<13",
 ]
 

@@ -4,17 +4,19 @@ SpatialForge is a standalone spatial mapping and localization engine. It will
 turn calibrated indoor scans into metric, semantic, localizable maps while
 remaining independent of navigation products such as VoiceGIS.
 
-This repository currently implements three narrow foundations:
+This repository currently implements these narrow foundations:
 
 - a versioned, folder-backed `ScanSession` (`.vgsession`) contract;
 - validation for calibration, timestamps, file references, depth scale, IMU
   samples, and rigid camera poses;
 - deterministic offline replay around RGB observations;
-- an extracted TUM RGB-D folder importer with known-pose support; and
-- calibrated, known-pose RGB-D back-projection to a deterministic colored PLY.
+- an extracted TUM RGB-D folder importer with known-pose support;
+- calibrated, known-pose RGB-D back-projection to a deterministic colored PLY;
+  and
+- fixed-bounds projective TSDF integration as a deterministic CPU reference.
 
-RGB-D fusion, meshing, SLAM, map packages, mobile capture, and the visual
-inspector are deliberately not implemented yet.
+Automatic TSDF volume sizing, optimized fusion, meshing, SLAM, map packages,
+mobile capture, and the visual inspector are deliberately not implemented yet.
 
 ## Set up
 
@@ -52,14 +54,52 @@ Import the committed tiny TUM-layout fixture:
   outputs/minimal.ply
 ```
 
-Run the complete test suite:
+## Check current progress yourself
+
+First, run the complete automated test suite:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+The last line should be `OK`.
+
+Then run the small numerical TSDF proof:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf `
+  tests/fixtures/minimal.vgsession `
+  outputs/progress.sftsdf `
+  --origin 0 -0.25 -0.25 `
+  --dimensions 4 1 1 `
+  --voxel-size-m 0.5 `
+  --truncation-m 0.5
+```
+
+The important output is:
+
+```text
+voxels: total=4 observed=3 fused=3
+voxel_updates: 6 max_weight=2
+```
+
+`max_weight=2` proves that both frames contributed to the same voxels. Inspect
+the exact signed distances with:
+
+```powershell
+Get-Content outputs/progress.sftsdf
+```
+
+The three observed TSDF values should be `1.0`, `0.5`, and `-0.5`, each with
+weight `2`. The sign change brackets the known plane at world `X=1.0 m`.
+
+For a visual check, open `outputs/minimal.ply` from the point-cloud command in
+a PLY viewer. Commands refuse to overwrite outputs, so delete an old diagnostic
+or choose a new filename before rerunning it.
+
 The format and coordinate conventions are documented in
 [`docs/scan-session-v0.md`](docs/scan-session-v0.md). TUM-specific conversion
 rules are in [`docs/tum-import.md`](docs/tum-import.md), and the current
-reconstruction boundary is in
-[`docs/known-pose-point-cloud.md`](docs/known-pose-point-cloud.md).
+reconstruction steps are in
+[`docs/known-pose-point-cloud.md`](docs/known-pose-point-cloud.md) and
+[`docs/reference-tsdf.md`](docs/reference-tsdf.md).

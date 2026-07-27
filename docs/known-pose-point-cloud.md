@@ -67,6 +67,7 @@ Both are zero-based: a frame stride selects observation sequences `0, 2, 4,
 - lens undistortion and unregistered RGB/depth alignment;
 - pose estimation, interpolation, tracking, and SLAM;
 - voxel filtering, deduplication, outlier removal, and normals;
-- TSDF or other multi-frame fusion;
+- TSDF fusion in this command (the bounded reference step is documented
+  separately);
 - surface reconstruction and meshing; and
 - semantic structure, map packages, and visualization.

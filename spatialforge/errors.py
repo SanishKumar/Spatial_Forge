@@ -19,3 +19,7 @@ class TumImportError(ValueError):
 
 class PointCloudError(RuntimeError):
     """Raised when known-pose RGB-D point-cloud generation cannot continue."""
+
+
+class TsdfError(RuntimeError):
+    """Raised when bounded reference TSDF integration cannot continue."""
