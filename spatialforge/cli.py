@@ -12,6 +12,7 @@ from .errors import (
     PointCloudError,
     SessionReplayError,
     SessionValidationError,
+    SurfaceExtractionError,
     TsdfError,
     TumImportError,
 )
@@ -19,6 +20,7 @@ from .model import ScanSession
 from .point_cloud import reconstruct_point_cloud
 from .replay import replay_session
 from .session_loader import STREAM_ORDER, load_scan_session
+from .surface import extract_surface_points
 from .tsdf import integrate_tsdf
 from .tum_importer import import_tum_dataset
 
@@ -35,15 +37,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.frame_stride,
                 arguments.pixel_stride,
             )
-        return _run_tsdf(
-            arguments.path,
-            arguments.output,
-            arguments.origin,
-            arguments.dimensions,
-            arguments.voxel_size_m,
-            arguments.truncation_m,
-            arguments.frame_stride,
-        )
+        if arguments.reconstruct_command == "tsdf":
+            return _run_tsdf(
+                arguments.path,
+                arguments.output,
+                arguments.origin,
+                arguments.dimensions,
+                arguments.voxel_size_m,
+                arguments.truncation_m,
+                arguments.frame_stride,
+            )
+        return _run_surface_points(arguments.path, arguments.output)
     return _run_scan(arguments)
 
 
@@ -183,6 +187,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Integrate every Nth RGB observation (default: 1).",
     )
+
+    surface_points = reconstruct_commands.add_parser(
+        "surface-points",
+        help="Extract deterministic zero-crossing points from a reference TSDF.",
+    )
+    surface_points.add_argument("path", type=Path)
+    surface_points.add_argument("output", type=Path)
     return parser
 
 
@@ -289,6 +300,46 @@ def _run_tsdf(
     print(
         f"voxel_updates: {report.voxel_updates} "
         f"max_weight={report.max_weight}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _run_surface_points(path: Path, output: Path) -> int:
+    try:
+        report = extract_surface_points(path, output)
+    except SurfaceExtractionError as error:
+        print(f"SURFACE EXTRACTION FAILED {path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"SURFACE POINTS {report.session_id}", file=sys.stdout)
+    print(
+        "voxels: "
+        f"total={report.total_voxels} "
+        f"observed={report.observed_voxels}",
+        file=sys.stdout,
+    )
+    print(f"observed_edges: {report.observed_edges}", file=sys.stdout)
+    print(
+        "crossings: "
+        f"x={report.crossing_x_points} "
+        f"y={report.crossing_y_points} "
+        f"z={report.crossing_z_points}",
+        file=sys.stdout,
+    )
+    crossing_points = (
+        report.crossing_x_points
+        + report.crossing_y_points
+        + report.crossing_z_points
+    )
+    print(
+        "points: "
+        f"exact_zero={report.exact_zero_points} "
+        f"crossing={crossing_points} "
+        f"total={report.points_written}",
         file=sys.stdout,
     )
     print(f"output: {report.output}", file=sys.stdout)

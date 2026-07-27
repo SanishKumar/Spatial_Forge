@@ -23,3 +23,7 @@ class PointCloudError(RuntimeError):
 
 class TsdfError(RuntimeError):
     """Raised when bounded reference TSDF integration cannot continue."""
+
+
+class SurfaceExtractionError(RuntimeError):
+    """Raised when TSDF surface-point extraction cannot continue."""

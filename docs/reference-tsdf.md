@@ -4,8 +4,8 @@ This milestone adds one part of dense reconstruction: deterministic projective
 TSDF integration for aligned RGB-D frames with known camera poses. It is a
 small CPU numerical reference, not the optimized reconstruction backend.
 
-It deliberately stops before automatic volume sizing, surface extraction, and
-meshing.
+It deliberately stops before automatic volume sizing and meshing. A separate
+step can extract diagnostic zero-crossing surface points from its output.
 
 ## Run the exact fixture proof
 
@@ -104,6 +104,6 @@ It is a reference diagnostic format, not a promised long-term storage format.
 - automatic bounds and sparse voxel blocks;
 - color fusion and sensor-dependent weighting;
 - Open3D, GPU, or other optimized backends;
-- zero-crossing surface extraction and triangle meshes;
+- triangle meshes and production surface reconstruction;
 - smoothing, normals, floor/wall detection, and visualization; and
 - pose estimation, tracking, loop closure, and SLAM.
