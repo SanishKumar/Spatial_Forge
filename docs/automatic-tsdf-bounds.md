@@ -74,8 +74,8 @@ origin and dimensions.
 - configurable padding or automatic voxel/truncation selection;
 - depth-range clipping, confidence masks, and statistical outlier rejection;
 - oriented, PCA, frustum, camera-trajectory, or room-aware bounds;
-- sparse voxel blocks, depth-driven active-block traversal, adaptive
-  resolution, submaps, and GPU integration;
+- block-backed fusion and traversal, adaptive resolution, submaps, and GPU
+  integration;
 - immutable input snapshots during each individual replay/decode pass;
 - mesh refinements, structural extraction, semantics, and visualization; and
 - pose estimation, tracking, loop closure, and SLAM.

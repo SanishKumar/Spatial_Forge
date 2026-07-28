@@ -25,6 +25,10 @@ from .session_loader import STREAM_ORDER, load_scan_session
 from .sparse_tsdf import integrate_sparse_tsdf
 from .surface import extract_surface_points
 from .tsdf import _validate_tsdf_output, integrate_tsdf
+from .tsdf_block_plan import (
+    _validate_tsdf_block_plan_output,
+    plan_tsdf_blocks,
+)
 from .tsdf_bounds import infer_tsdf_bounds
 from .tum_importer import import_tum_dataset
 
@@ -57,6 +61,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.output,
                 arguments.origin,
                 arguments.dimensions,
+                arguments.voxel_size_m,
+                arguments.truncation_m,
+                arguments.frame_stride,
+            )
+        if arguments.reconstruct_command == "tsdf-block-plan":
+            return _run_tsdf_block_plan(
+                arguments.path,
+                arguments.output,
                 arguments.voxel_size_m,
                 arguments.truncation_m,
                 arguments.frame_stride,
@@ -251,6 +263,34 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_positive_integer,
         default=1,
         help="Integrate every Nth RGB observation (default: 1).",
+    )
+
+    block_plan = reconstruct_commands.add_parser(
+        "tsdf-block-plan",
+        help=(
+            "Plan candidate surface-neighborhood blocks; "
+            "does not fuse TSDF values."
+        ),
+    )
+    block_plan.add_argument("path", type=Path)
+    block_plan.add_argument("output", type=Path)
+    block_plan.add_argument(
+        "--voxel-size-m",
+        type=float,
+        default=0.05,
+        help="Voxel edge length in metres (default: 0.05).",
+    )
+    block_plan.add_argument(
+        "--truncation-m",
+        type=float,
+        default=0.10,
+        help="Surface-neighborhood half-width in metres (default: 0.10).",
+    )
+    block_plan.add_argument(
+        "--frame-stride",
+        type=_positive_integer,
+        default=1,
+        help="Plan from every Nth RGB observation (default: 1).",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -463,6 +503,79 @@ def _run_sparse_tsdf(
     )
     print(
         f"storage: sparse accumulator_entries={report.observed_voxels}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_block_plan(
+    path: Path,
+    output: Path,
+    voxel_size_m: float,
+    truncation_m: float,
+    frame_stride: int,
+) -> int:
+    try:
+        _validate_tsdf_block_plan_output(output)
+        session = load_scan_session(path)
+        report = plan_tsdf_blocks(
+            session,
+            output,
+            voxel_size_m=voxel_size_m,
+            truncation_m=truncation_m,
+            frame_stride=frame_stride,
+        )
+    except SessionValidationError as error:
+        print(f"TSDF BLOCK PLAN FAILED {path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF BLOCK PLAN FAILED {path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF BLOCK PLAN {report.session_id}", file=sys.stdout)
+    print(
+        "frames: "
+        f"total={report.total_observations} "
+        f"selected={report.selected_observations} "
+        f"paired={report.paired_observations}",
+        file=sys.stdout,
+    )
+    print(
+        "skipped: "
+        f"missing_depth={report.skipped_missing_depth} "
+        f"missing_pose={report.skipped_missing_pose}",
+        file=sys.stdout,
+    )
+    print(
+        "depth_samples: "
+        f"valid={report.valid_depth_points} "
+        f"invalid={report.invalid_depth_samples}",
+        file=sys.stdout,
+    )
+    print(
+        "grid: "
+        f"voxel_size_m={report.voxel_size_m:.9f} "
+        f"block_resolution={report.block_resolution} "
+        f"block_extent_m={report.block_extent_m:.9f}",
+        file=sys.stdout,
+    )
+    print(
+        "candidate_blocks: "
+        f"surface={report.surface_block_count} "
+        f"active={report.active_block_count} "
+        f"halo={report.halo_block_count} "
+        f"voxel_slots={report.planned_voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        "block_bounds: "
+        f"min={report.min_block_index} "
+        f"max={report.max_block_index}",
         file=sys.stdout,
     )
     print(f"output: {report.output}", file=sys.stdout)

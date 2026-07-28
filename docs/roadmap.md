@@ -15,6 +15,8 @@ The project is intentionally advancing through small, testable checkpoints.
 - Fixed-bounds projective TSDF integration with deterministic diagnostics.
 - Fixed-bounds sparse in-memory TSDF accumulation with dense traversal,
   byte-identical dense-reference results, and the unchanged artifact contract.
+- Deterministic planning of zero-anchored 8 x 8 x 8 candidate voxel blocks around
+  known-pose depth surfaces, with a separate replay-bound diagnostic artifact.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -28,14 +30,16 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. depth-driven active blocks, sparse traversal, larger-volume artifacts and
-   consumers, and an optimized fusion backend suitable for full sequences;
-2. robust depth/pose outlier filtering and configurable production bounds;
-3. full TUM/ARKitScenes sample runs and geometry accuracy reports;
-4. production mesh refinement: exact-zero cells, normals, connected-component
+1. consume candidate block plans in block-backed fusion and define
+   camera-to-surface free-space semantics;
+2. sparse traversal, larger-volume artifacts and consumers, and an optimized
+   backend suitable for full sequences;
+3. robust depth/pose outlier filtering and configurable production bounds;
+4. full TUM/ARKitScenes sample runs and geometry accuracy reports;
+5. production mesh refinement: exact-zero cells, normals, connected-component
    and quality validation, and an optimized extraction backend;
-5. gravity/floor alignment, floor and wall candidates, and openings; and
-6. a top-down/3D Inspector view.
+6. gravity/floor alignment, floor and wall candidates, and openings; and
+7. a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -70,8 +74,8 @@ Run:
 
 The suite must finish with `OK`.
 
-Then follow the point-cloud, fixed/automatic/sparse TSDF, surface-point, and
-triangle-mesh commands in the repository README. Their deterministic hashes,
-inferred bounds, dense/sparse parity, fusion weights, signed values, exact
-coordinates, topology, winding, and boundary counts provide checks independent
-of visual appearance.
+Then follow the point-cloud, fixed/automatic/sparse TSDF, candidate-block,
+surface-point, and triangle-mesh commands in the repository README. Their
+deterministic hashes, inferred bounds, dense/sparse parity, planned block
+coordinates, fusion weights, signed values, exact coordinates, topology,
+winding, and boundary counts provide checks independent of visual appearance.

@@ -76,9 +76,11 @@ consumers.
 ## Explicitly deferred
 
 - automatic-bounds wiring for the sparse backend;
-- depth-driven active blocks, frustum culling, or ray-centric traversal;
+- consuming the candidate-block plan during fusion, frustum culling, or
+  ray-centric traversal;
 - logical volumes larger than 1,000,000 voxels;
-- a block-based artifact and sparse-aware surface or mesh traversal;
+- a block-backed fused TSDF value/weight artifact and sparse-aware surface or
+  mesh traversal;
 - Open3D, GPU, parallel, adaptive-resolution, or submap backends;
 - performance or full-sequence scalability claims;
 - robust outlier filtering, color fusion, and sensor-dependent weighting; and

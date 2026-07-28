@@ -105,7 +105,8 @@ It is a reference diagnostic format, not a promised long-term storage format.
 ## Explicitly deferred
 
 - robust automatic-bound outlier handling;
-- active sparse blocks, sparse traversal, and larger logical volumes;
+- candidate-plan consumption, block-backed fusion, sparse traversal, and larger
+  logical volumes;
 - color fusion and sensor-dependent weighting;
 - Open3D, GPU, or other optimized backends;
 - production meshing, exact-zero-cell handling, and optimized surface

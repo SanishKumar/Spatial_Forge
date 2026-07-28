@@ -15,6 +15,8 @@ This repository currently implements these narrow foundations:
 - fixed-bounds projective TSDF integration as a deterministic CPU reference;
 - fixed-bounds TSDF integration with sparse in-memory accumulator state, dense
   traversal, and exact dense-reference parity;
+- deterministic known-pose depth planning of candidate 8 x 8 x 8 voxel blocks
+  around observed surfaces;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
@@ -165,7 +167,32 @@ The equal digest confirms byte parity for this fixture. The sparse command
 stores sums and weights only for updated voxels, but deliberately retains the
 bounded dense traversal in this checkpoint.
 
-Both artifacts use the same `.sftsdf` contract. Mesh the sparse result directly:
+Plan candidate blocks for the eventual block-backed reconstruction path:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-plan `
+  tests/fixtures/minimal.vgsession `
+  outputs/progress-blocks.sftplan `
+  --voxel-size-m 0.125 `
+  --truncation-m 0.5
+```
+
+Expected:
+
+```text
+depth_samples: valid=8 invalid=0
+grid: voxel_size_m=0.125000000 block_resolution=8 block_extent_m=1.000000000
+candidate_blocks: surface=4 active=8 halo=4 voxel_slots=4096
+block_bounds: min=(0, -1, -1) max=(1, 0, 0)
+output_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
+```
+
+This `.sftplan` is a deterministic surface-neighborhood plan only. Fusion does
+not consume it yet, and it deliberately does not plan the dense reference
+backend's full camera-to-surface free-space updates.
+
+Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
+directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m spatialforge reconstruct triangle-mesh `
@@ -198,6 +225,9 @@ reconstruction steps are in
 [`docs/reference-tsdf.md`](docs/reference-tsdf.md). Automatic volume selection
 is in [`docs/automatic-tsdf-bounds.md`](docs/automatic-tsdf-bounds.md), sparse
 accumulation is in [`docs/sparse-tsdf.md`](docs/sparse-tsdf.md), surface
-extraction is in [`docs/surface-points.md`](docs/surface-points.md), reference
-triangle meshing is in [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and
-overall status is in [`docs/roadmap.md`](docs/roadmap.md).
+TSDF block planning is in
+[`docs/tsdf-block-plan.md`](docs/tsdf-block-plan.md),
+surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
+reference triangle meshing is in
+[`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in
+[`docs/roadmap.md`](docs/roadmap.md).
