@@ -22,6 +22,7 @@ from .model import ScanSession
 from .point_cloud import reconstruct_point_cloud
 from .replay import replay_session
 from .session_loader import STREAM_ORDER, load_scan_session
+from .sparse_tsdf import integrate_sparse_tsdf
 from .surface import extract_surface_points
 from .tsdf import _validate_tsdf_output, integrate_tsdf
 from .tsdf_bounds import infer_tsdf_bounds
@@ -42,6 +43,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "tsdf":
             return _run_tsdf(
+                arguments.path,
+                arguments.output,
+                arguments.origin,
+                arguments.dimensions,
+                arguments.voxel_size_m,
+                arguments.truncation_m,
+                arguments.frame_stride,
+            )
+        if arguments.reconstruct_command == "tsdf-sparse":
+            return _run_sparse_tsdf(
                 arguments.path,
                 arguments.output,
                 arguments.origin,
@@ -201,6 +212,47 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Integrate every Nth RGB observation (default: 1).",
     )
 
+    sparse_tsdf = reconstruct_commands.add_parser(
+        "tsdf-sparse",
+        help="Dense-traversal TSDF with a sparse in-memory accumulator.",
+    )
+    sparse_tsdf.add_argument("path", type=Path)
+    sparse_tsdf.add_argument("output", type=Path)
+    sparse_tsdf.add_argument(
+        "--origin",
+        type=float,
+        nargs=3,
+        required=True,
+        metavar=("X", "Y", "Z"),
+        help="World-space volume origin in metres.",
+    )
+    sparse_tsdf.add_argument(
+        "--dimensions",
+        type=_positive_integer,
+        nargs=3,
+        required=True,
+        metavar=("NX", "NY", "NZ"),
+        help="Voxel counts along world X, Y, and Z.",
+    )
+    sparse_tsdf.add_argument(
+        "--voxel-size-m",
+        type=float,
+        default=0.05,
+        help="Voxel edge length in metres (default: 0.05).",
+    )
+    sparse_tsdf.add_argument(
+        "--truncation-m",
+        type=float,
+        default=0.10,
+        help="Signed-distance truncation in metres (default: 0.10).",
+    )
+    sparse_tsdf.add_argument(
+        "--frame-stride",
+        type=_positive_integer,
+        default=1,
+        help="Integrate every Nth RGB observation (default: 1).",
+    )
+
     auto_tsdf = reconstruct_commands.add_parser(
         "tsdf-auto",
         help="Infer world-aligned bounds and integrate a reference TSDF.",
@@ -345,6 +397,72 @@ def _run_tsdf(
     print(
         f"voxel_updates: {report.voxel_updates} "
         f"max_weight={report.max_weight}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _run_sparse_tsdf(
+    path: Path,
+    output: Path,
+    origin: Sequence[float],
+    dimensions: Sequence[int],
+    voxel_size_m: float,
+    truncation_m: float,
+    frame_stride: int,
+) -> int:
+    try:
+        session = load_scan_session(path)
+        report = integrate_sparse_tsdf(
+            session,
+            output,
+            origin_world_m=origin,
+            dimensions=dimensions,
+            voxel_size_m=voxel_size_m,
+            truncation_m=truncation_m,
+            frame_stride=frame_stride,
+        )
+    except SessionValidationError as error:
+        print(f"SPARSE TSDF FAILED {path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"SPARSE TSDF FAILED {path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"SPARSE TSDF {report.session_id}", file=sys.stdout)
+    print(
+        "frames: "
+        f"total={report.total_observations} "
+        f"selected={report.selected_observations} "
+        f"integrated={report.integrated_frames}",
+        file=sys.stdout,
+    )
+    print(
+        "skipped: "
+        f"missing_depth={report.skipped_missing_depth} "
+        f"missing_pose={report.skipped_missing_pose}",
+        file=sys.stdout,
+    )
+    print(f"invalid_depth_pixels: {report.invalid_depth_pixels}", file=sys.stdout)
+    print(
+        "voxels: "
+        f"total={report.total_voxels} "
+        f"observed={report.observed_voxels} "
+        f"fused={report.fused_voxels}",
+        file=sys.stdout,
+    )
+    print(
+        f"voxel_updates: {report.voxel_updates} "
+        f"max_weight={report.max_weight}",
+        file=sys.stdout,
+    )
+    print(
+        f"storage: sparse accumulator_entries={report.observed_voxels}",
         file=sys.stdout,
     )
     print(f"output: {report.output}", file=sys.stdout)

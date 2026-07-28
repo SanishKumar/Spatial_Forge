@@ -6,7 +6,9 @@ small CPU numerical reference, not the optimized reconstruction backend.
 
 The fixed command accepts explicit bounds. A separate deterministic
 `tsdf-auto` step can derive bounds from known-pose depth before invoking this
-same integrator. Surface-point and triangle-mesh steps consume either output.
+same integrator. A separate `tsdf-sparse` command retains identical numerical
+rules while storing only updated sums and weights. Surface-point and
+triangle-mesh steps consume any of these outputs.
 
 ## Run the exact fixture proof
 
@@ -52,9 +54,9 @@ Voxel `(ix, iy, iz)` is evaluated at its center:
 p_world = origin + (index + 0.5) * voxel_size
 ```
 
-The flattened order is X-fastest, then Y, then Z. This reference implementation
-allows at most 1,000,000 voxels so an accidental command cannot allocate an
-unbounded dense volume.
+The flattened order is X-fastest, then Y, then Z. All current reference
+backends allow at most 1,000,000 logical voxels. The sparse accumulator still
+traverses the logical volume densely, and current consumers remain bounded.
 
 ## Integration rule
 
@@ -102,7 +104,8 @@ It is a reference diagnostic format, not a promised long-term storage format.
 
 ## Explicitly deferred
 
-- robust automatic-bound outlier handling and sparse voxel blocks;
+- robust automatic-bound outlier handling;
+- active sparse blocks, sparse traversal, and larger logical volumes;
 - color fusion and sensor-dependent weighting;
 - Open3D, GPU, or other optimized backends;
 - production meshing, exact-zero-cell handling, and optimized surface

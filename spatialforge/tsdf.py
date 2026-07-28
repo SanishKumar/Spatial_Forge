@@ -9,7 +9,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Protocol, Sequence
 
 import numpy as np
 
@@ -47,6 +47,47 @@ class TsdfReport:
     output_digest_sha256: str
 
 
+class _TsdfAccumulator(Protocol):
+    total_voxels: int
+
+    def add(
+        self,
+        flat_indices: np.ndarray,
+        tsdf_values: np.ndarray,
+    ) -> None: ...
+
+    def observed_arrays(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+
+
+class _DenseTsdfAccumulator:
+    """Dense numerical oracle used by the original reference integrator."""
+
+    def __init__(self, total_voxels: int) -> None:
+        self.total_voxels = total_voxels
+        self._tsdf_sums = np.zeros(total_voxels, dtype=np.float64)
+        self._weights = np.zeros(total_voxels, dtype=np.uint32)
+
+    def add(
+        self,
+        flat_indices: np.ndarray,
+        tsdf_values: np.ndarray,
+    ) -> None:
+        self._tsdf_sums[flat_indices] += tsdf_values
+        self._weights[flat_indices] += 1
+
+    def observed_arrays(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        observed_indices = np.flatnonzero(self._weights)
+        return (
+            observed_indices,
+            self._tsdf_sums[observed_indices],
+            self._weights[observed_indices],
+        )
+
+
 def integrate_tsdf(
     session: ScanSession,
     output: str | Path,
@@ -59,6 +100,33 @@ def integrate_tsdf(
     expected_replay_digest_sha256: str | None = None,
 ) -> TsdfReport:
     """Integrate known-pose depth into a bounded projective TSDF volume."""
+
+    return _integrate_tsdf(
+        session,
+        output,
+        origin_world_m=origin_world_m,
+        dimensions=dimensions,
+        voxel_size_m=voxel_size_m,
+        truncation_m=truncation_m,
+        frame_stride=frame_stride,
+        expected_replay_digest_sha256=expected_replay_digest_sha256,
+        accumulator_factory=_DenseTsdfAccumulator,
+    )
+
+
+def _integrate_tsdf(
+    session: ScanSession,
+    output: str | Path,
+    *,
+    origin_world_m: Sequence[float],
+    dimensions: Sequence[int],
+    voxel_size_m: float,
+    truncation_m: float,
+    frame_stride: int = 1,
+    expected_replay_digest_sha256: str | None = None,
+    accumulator_factory: Callable[[int], _TsdfAccumulator],
+) -> TsdfReport:
+    """Shared deterministic integration with a caller-selected accumulator."""
 
     origin = _validate_origin(origin_world_m)
     volume_dimensions = _validate_dimensions(dimensions)
@@ -96,8 +164,7 @@ def integrate_tsdf(
         for observation in replay.observations
         if observation.sequence % frame_stride == 0
     )
-    tsdf_sums = np.zeros(total_voxels, dtype=np.float64)
-    weights = np.zeros(total_voxels, dtype=np.uint32)
+    accumulator = accumulator_factory(total_voxels)
 
     integrated_frames = 0
     skipped_missing_depth = 0
@@ -124,8 +191,7 @@ def integrate_tsdf(
             volume_dimensions,
             voxel_size,
             truncation,
-            tsdf_sums,
-            weights,
+            accumulator,
         )
         integrated_frames += 1
         invalid_depth_pixels += frame_invalid
@@ -136,13 +202,14 @@ def integrate_tsdf(
             "no selected RGB observation has both exact depth and pose"
         )
 
-    observed_indices = np.flatnonzero(weights)
+    observed_indices, observed_sums, observed_weights = (
+        accumulator.observed_arrays()
+    )
     observed_voxels = int(observed_indices.size)
     if observed_voxels == 0:
         raise TsdfError("selected frames do not observe any voxel in the volume")
 
-    observed_weights = weights[observed_indices]
-    observed_tsdf = tsdf_sums[observed_indices] / observed_weights
+    observed_tsdf = observed_sums / observed_weights
     if not np.all(np.isfinite(observed_tsdf)):
         raise TsdfError("TSDF integration produced a non-finite value")
     if np.any(observed_tsdf < -1.0) or np.any(observed_tsdf > 1.0):
@@ -213,8 +280,7 @@ def _integrate_observation(
     dimensions: tuple[int, int, int],
     voxel_size_m: float,
     truncation_m: float,
-    tsdf_sums: np.ndarray,
-    weights: np.ndarray,
+    accumulator: _TsdfAccumulator,
 ) -> tuple[int, int]:
     if observation.depth is None or observation.pose is None:
         raise AssertionError("caller must filter incomplete observations")
@@ -234,8 +300,11 @@ def _integrate_observation(
     invalid_depth_pixels = int(np.count_nonzero(~valid_depth))
     transform = tuple(observation.pose.data["T_world_camera"])
     updates = 0
-    for start in range(0, tsdf_sums.size, _INTEGRATION_CHUNK_VOXELS):
-        stop = min(start + _INTEGRATION_CHUNK_VOXELS, tsdf_sums.size)
+    for start in range(0, accumulator.total_voxels, _INTEGRATION_CHUNK_VOXELS):
+        stop = min(
+            start + _INTEGRATION_CHUNK_VOXELS,
+            accumulator.total_voxels,
+        )
         updates += _integrate_voxel_chunk(
             start,
             stop,
@@ -246,8 +315,7 @@ def _integrate_observation(
             dimensions,
             voxel_size_m,
             truncation_m,
-            tsdf_sums,
-            weights,
+            accumulator,
         )
     return invalid_depth_pixels, updates
 
@@ -262,8 +330,7 @@ def _integrate_voxel_chunk(
     dimensions: tuple[int, int, int],
     voxel_size_m: float,
     truncation_m: float,
-    tsdf_sums: np.ndarray,
-    weights: np.ndarray,
+    accumulator: _TsdfAccumulator,
 ) -> int:
     nx, ny, _ = dimensions
     flat_indices = np.arange(start, stop, dtype=np.int64)
@@ -370,8 +437,7 @@ def _integrate_voxel_chunk(
         1.0,
     )
     observed_flat_indices = flat_indices[candidate_offsets]
-    tsdf_sums[observed_flat_indices] += observed_tsdf
-    weights[observed_flat_indices] += 1
+    accumulator.add(observed_flat_indices, observed_tsdf)
     return int(observed_flat_indices.size)
 
 

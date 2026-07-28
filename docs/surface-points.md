@@ -69,6 +69,6 @@ or inconsistent artifacts fail without a partial PLY.
 - triangle faces in this output and production marching cubes;
 - normals, colors, smoothing, and deduplication;
 - connected components and watertightness;
-- optimized or sparse TSDF storage;
+- sparse-aware traversal and larger-volume TSDF artifacts;
 - floor, wall, opening, and room extraction; and
 - visualization and map-package export.

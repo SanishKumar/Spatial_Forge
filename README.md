@@ -13,13 +13,15 @@ This repository currently implements these narrow foundations:
 - an extracted TUM RGB-D folder importer with known-pose support;
 - calibrated, known-pose RGB-D back-projection to a deterministic colored PLY;
 - fixed-bounds projective TSDF integration as a deterministic CPU reference;
+- fixed-bounds TSDF integration with sparse in-memory accumulator state, dense
+  traversal, and exact dense-reference parity;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-Optimized fusion, robust outlier filtering, production meshing, normals, SLAM,
-map packages, mobile capture, and the visual inspector are deliberately not
-implemented yet.
+Sparse traversal and full-sequence optimization, robust outlier filtering,
+production meshing, normals, SLAM, map packages, mobile capture, and the visual
+inspector are deliberately not implemented yet.
 
 ## Set up
 
@@ -138,12 +140,37 @@ integration: observed=8 fused=8 updates=16 max_weight=2
 output_sha256: e61803737cdd68b209459fb644cc2f67f18e0420d306273316808e27d2e89994
 ```
 
-The inferred artifact uses the same `.sftsdf` contract. Mesh it directly:
+Use those exact bounds with the first sparse-storage checkpoint:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-sparse `
+  tests/fixtures/minimal.vgsession `
+  outputs/progress-sparse.sftsdf `
+  --origin 0.5 -1 -1 `
+  --dimensions 2 4 4 `
+  --voxel-size-m 0.5 `
+  --truncation-m 0.5
+```
+
+Expected:
+
+```text
+voxels: total=32 observed=8 fused=8
+voxel_updates: 16 max_weight=2
+storage: sparse accumulator_entries=8
+output_sha256: e61803737cdd68b209459fb644cc2f67f18e0420d306273316808e27d2e89994
+```
+
+The equal digest confirms byte parity for this fixture. The sparse command
+stores sums and weights only for updated voxels, but deliberately retains the
+bounded dense traversal in this checkpoint.
+
+Both artifacts use the same `.sftsdf` contract. Mesh the sparse result directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m spatialforge reconstruct triangle-mesh `
-  outputs/progress-auto.sftsdf `
-  outputs/progress-auto-mesh.ply
+  outputs/progress-sparse.sftsdf `
+  outputs/progress-sparse-mesh.ply
 ```
 
 Expected:
@@ -159,7 +186,7 @@ All mesh vertices lie on `X=1.0 m`; its eight triangles cover a
 meshing contract is documented in `docs/triangle-mesh.md`.
 
 For a visual check, open `outputs/minimal.ply` from the point-cloud command in
-a PLY viewer. You can also open `outputs/progress-auto-mesh.ply` in a viewer
+a PLY viewer. You can also open `outputs/progress-sparse-mesh.ply` in a viewer
 that supports PLY faces. Commands refuse to overwrite outputs, so delete an
 old diagnostic or choose a new filename before rerunning it.
 
@@ -169,7 +196,8 @@ rules are in [`docs/tum-import.md`](docs/tum-import.md), and the current
 reconstruction steps are in
 [`docs/known-pose-point-cloud.md`](docs/known-pose-point-cloud.md) and
 [`docs/reference-tsdf.md`](docs/reference-tsdf.md). Automatic volume selection
-is in [`docs/automatic-tsdf-bounds.md`](docs/automatic-tsdf-bounds.md), surface
+is in [`docs/automatic-tsdf-bounds.md`](docs/automatic-tsdf-bounds.md), sparse
+accumulation is in [`docs/sparse-tsdf.md`](docs/sparse-tsdf.md), surface
 extraction is in [`docs/surface-points.md`](docs/surface-points.md), reference
 triangle meshing is in [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and
 overall status is in [`docs/roadmap.md`](docs/roadmap.md).
