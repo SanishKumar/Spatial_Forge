@@ -13,6 +13,8 @@ The project is intentionally advancing through small, testable checkpoints.
 - Deterministic TUM RGB-D folder import with known-pose conversion.
 - Known-pose RGB-D back-projection to colored ASCII PLY.
 - Fixed-bounds projective TSDF integration with deterministic diagnostics.
+- Known-pose depth AABB inference with truncation padding, outward global-grid
+  snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
 - Fully observed TSDF-cell extraction to a deterministic, indexed triangle PLY
   using a fixed six-tetrahedron reference split.
@@ -24,8 +26,8 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. automatic but bounded volume selection;
-2. sparse or optimized TSDF fusion suitable for full sequences;
+1. sparse or optimized TSDF fusion suitable for full sequences;
+2. robust depth/pose outlier filtering and configurable production bounds;
 3. full TUM/ARKitScenes sample runs and geometry accuracy reports;
 4. production mesh refinement: exact-zero cells, normals, connected-component
    and quality validation, and an optimized extraction backend;
@@ -65,7 +67,7 @@ Run:
 
 The suite must finish with `OK`.
 
-Then follow the point-cloud, TSDF, surface-point, and triangle-mesh commands in
-the repository README. Their deterministic hashes, fusion weights, signed
-values, exact coordinates, topology, winding, and boundary counts provide
-checks independent of visual appearance.
+Then follow the point-cloud, fixed/automatic TSDF, surface-point, and
+triangle-mesh commands in the repository README. Their deterministic hashes,
+inferred bounds, fusion weights, signed values, exact coordinates, topology,
+winding, and boundary counts provide checks independent of visual appearance.

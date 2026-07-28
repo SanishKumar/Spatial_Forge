@@ -23,7 +23,8 @@ from .point_cloud import reconstruct_point_cloud
 from .replay import replay_session
 from .session_loader import STREAM_ORDER, load_scan_session
 from .surface import extract_surface_points
-from .tsdf import integrate_tsdf
+from .tsdf import _validate_tsdf_output, integrate_tsdf
+from .tsdf_bounds import infer_tsdf_bounds
 from .tum_importer import import_tum_dataset
 
 
@@ -45,6 +46,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.output,
                 arguments.origin,
                 arguments.dimensions,
+                arguments.voxel_size_m,
+                arguments.truncation_m,
+                arguments.frame_stride,
+            )
+        if arguments.reconstruct_command == "tsdf-auto":
+            return _run_auto_tsdf(
+                arguments.path,
+                arguments.output,
                 arguments.voxel_size_m,
                 arguments.truncation_m,
                 arguments.frame_stride,
@@ -192,6 +201,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Integrate every Nth RGB observation (default: 1).",
     )
 
+    auto_tsdf = reconstruct_commands.add_parser(
+        "tsdf-auto",
+        help="Infer world-aligned bounds and integrate a reference TSDF.",
+    )
+    auto_tsdf.add_argument("path", type=Path)
+    auto_tsdf.add_argument("output", type=Path)
+    auto_tsdf.add_argument(
+        "--voxel-size-m",
+        type=float,
+        default=0.05,
+        help="Voxel edge length in metres (default: 0.05).",
+    )
+    auto_tsdf.add_argument(
+        "--truncation-m",
+        type=float,
+        default=0.10,
+        help="Bounds padding and TSDF truncation in metres (default: 0.10).",
+    )
+    auto_tsdf.add_argument(
+        "--frame-stride",
+        type=_positive_integer,
+        default=1,
+        help="Use every Nth RGB observation (default: 1).",
+    )
+
     surface_points = reconstruct_commands.add_parser(
         "surface-points",
         help="Extract deterministic zero-crossing points from a reference TSDF.",
@@ -316,6 +350,100 @@ def _run_tsdf(
     print(f"output: {report.output}", file=sys.stdout)
     print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
     return 0
+
+
+def _run_auto_tsdf(
+    path: Path,
+    output: Path,
+    voxel_size_m: float,
+    truncation_m: float,
+    frame_stride: int,
+) -> int:
+    try:
+        _validate_tsdf_output(output)
+        session = load_scan_session(path)
+        bounds = infer_tsdf_bounds(
+            session,
+            voxel_size_m=voxel_size_m,
+            truncation_m=truncation_m,
+            frame_stride=frame_stride,
+        )
+        report = integrate_tsdf(
+            session,
+            output,
+            origin_world_m=bounds.origin_world_m,
+            dimensions=bounds.dimensions_xyz,
+            voxel_size_m=voxel_size_m,
+            truncation_m=truncation_m,
+            frame_stride=frame_stride,
+            expected_replay_digest_sha256=bounds.replay_digest_sha256,
+        )
+    except SessionValidationError as error:
+        print(f"AUTO TSDF FAILED {path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"AUTO TSDF FAILED {path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"AUTO TSDF {report.session_id}", file=sys.stdout)
+    print(
+        "bounds_frames: "
+        f"total={bounds.total_observations} "
+        f"selected={bounds.selected_observations} "
+        f"paired={bounds.paired_observations}",
+        file=sys.stdout,
+    )
+    print(
+        "bounds_depth: "
+        f"valid={bounds.valid_depth_points} "
+        f"invalid={bounds.invalid_depth_samples}",
+        file=sys.stdout,
+    )
+    print(
+        "bounds_skipped: "
+        f"missing_depth={bounds.skipped_missing_depth} "
+        f"missing_pose={bounds.skipped_missing_pose}",
+        file=sys.stdout,
+    )
+    print(
+        "surface_min_m: "
+        f"{_format_triplet(bounds.surface_min_world_m)}",
+        file=sys.stdout,
+    )
+    print(
+        "surface_max_m: "
+        f"{_format_triplet(bounds.surface_max_world_m)}",
+        file=sys.stdout,
+    )
+    print(
+        "volume: "
+        f"origin={_format_triplet(bounds.origin_world_m)} "
+        f"dimensions={bounds.dimensions_xyz} "
+        f"voxels={bounds.total_voxels}",
+        file=sys.stdout,
+    )
+    print(
+        "integration: "
+        f"observed={report.observed_voxels} "
+        f"fused={report.fused_voxels} "
+        f"updates={report.voxel_updates} "
+        f"max_weight={report.max_weight}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _format_triplet(values: Sequence[float]) -> str:
+    formatted = []
+    for value in values:
+        normalized = 0.0 if abs(value) < 0.5e-9 else value
+        formatted.append(f"{normalized:.9f}")
+    return f"({', '.join(formatted)})"
 
 
 def _run_surface_points(path: Path, output: Path) -> int:

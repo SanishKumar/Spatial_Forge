@@ -13,12 +13,13 @@ This repository currently implements these narrow foundations:
 - an extracted TUM RGB-D folder importer with known-pose support;
 - calibrated, known-pose RGB-D back-projection to a deterministic colored PLY;
 - fixed-bounds projective TSDF integration as a deterministic CPU reference;
+- deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-Automatic TSDF volume sizing, optimized fusion, production meshing, normals,
-SLAM, map packages, mobile capture, and the visual inspector are deliberately
-not implemented yet.
+Optimized fusion, robust outlier filtering, production meshing, normals, SLAM,
+map packages, mobile capture, and the visual inspector are deliberately not
+implemented yet.
 
 ## Set up
 
@@ -117,27 +118,39 @@ The final line of `outputs/progress-surface.ply` should be:
 ```
 
 The one-dimensional TSDF above proves the zero crossing but cannot contain a
-triangle. Build a separate single-cell 3D proof:
+triangle. Automatically infer a padded, world-aligned 3D volume from the known
+depth and poses:
 
 ```powershell
-.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf `
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-auto `
   tests/fixtures/minimal.vgsession `
-  outputs/progress-mesh.sftsdf `
-  --origin 0.5 -0.5 -0.5 `
-  --dimensions 2 2 2 `
+  outputs/progress-auto.sftsdf `
   --voxel-size-m 0.5 `
   --truncation-m 0.5
-
-.\.venv\Scripts\python.exe -m spatialforge reconstruct triangle-mesh `
-  outputs/progress-mesh.sftsdf `
-  outputs/progress-mesh.ply
 ```
 
 Expected:
 
 ```text
-cells: total=1 eligible=1 active=1
-skipped_cells: unknown=0 exact_zero=0
+bounds_depth: valid=8 invalid=0
+volume: origin=(0.500000000, -1.000000000, -1.000000000) dimensions=(2, 4, 4) voxels=32
+integration: observed=8 fused=8 updates=16 max_weight=2
+output_sha256: e61803737cdd68b209459fb644cc2f67f18e0420d306273316808e27d2e89994
+```
+
+The inferred artifact uses the same `.sftsdf` contract. Mesh it directly:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct triangle-mesh `
+  outputs/progress-auto.sftsdf `
+  outputs/progress-auto-mesh.ply
+```
+
+Expected:
+
+```text
+cells: total=9 eligible=1 active=1
+skipped_cells: unknown=8 exact_zero=0
 mesh: vertices=9 triangles=8 boundary_edges=8
 ```
 
@@ -146,16 +159,17 @@ All mesh vertices lie on `X=1.0 m`; its eight triangles cover a
 meshing contract is documented in `docs/triangle-mesh.md`.
 
 For a visual check, open `outputs/minimal.ply` from the point-cloud command in
-a PLY viewer. You can also open `outputs/progress-mesh.ply` in a viewer that
-supports PLY faces. Commands refuse to overwrite outputs, so delete an old
-diagnostic or choose a new filename before rerunning it.
+a PLY viewer. You can also open `outputs/progress-auto-mesh.ply` in a viewer
+that supports PLY faces. Commands refuse to overwrite outputs, so delete an
+old diagnostic or choose a new filename before rerunning it.
 
 The format and coordinate conventions are documented in
 [`docs/scan-session-v0.md`](docs/scan-session-v0.md). TUM-specific conversion
 rules are in [`docs/tum-import.md`](docs/tum-import.md), and the current
 reconstruction steps are in
 [`docs/known-pose-point-cloud.md`](docs/known-pose-point-cloud.md) and
-[`docs/reference-tsdf.md`](docs/reference-tsdf.md). Surface extraction is in
-[`docs/surface-points.md`](docs/surface-points.md), reference triangle meshing
-is in [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is
-in [`docs/roadmap.md`](docs/roadmap.md).
+[`docs/reference-tsdf.md`](docs/reference-tsdf.md). Automatic volume selection
+is in [`docs/automatic-tsdf-bounds.md`](docs/automatic-tsdf-bounds.md), surface
+extraction is in [`docs/surface-points.md`](docs/surface-points.md), reference
+triangle meshing is in [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and
+overall status is in [`docs/roadmap.md`](docs/roadmap.md).

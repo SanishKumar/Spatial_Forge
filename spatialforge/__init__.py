@@ -7,6 +7,7 @@ from .replay import ReplayResult, replay_session
 from .session_loader import load_scan_session
 from .surface import SurfacePointReport, extract_surface_points
 from .tsdf import TsdfReport, integrate_tsdf
+from .tsdf_bounds import TsdfBoundsReport, infer_tsdf_bounds
 from .tum_importer import TumImportReport, import_tum_dataset
 
 __all__ = [
@@ -17,11 +18,13 @@ __all__ = [
     "SurfacePointReport",
     "TriangleMeshReport",
     "TsdfReport",
+    "TsdfBoundsReport",
     "TumImportReport",
     "extract_surface_points",
     "extract_triangle_mesh",
     "import_tum_dataset",
     "integrate_tsdf",
+    "infer_tsdf_bounds",
     "load_scan_session",
     "reconstruct_point_cloud",
     "replay_session",

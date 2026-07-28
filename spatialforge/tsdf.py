@@ -56,6 +56,7 @@ def integrate_tsdf(
     voxel_size_m: float,
     truncation_m: float,
     frame_stride: int = 1,
+    expected_replay_digest_sha256: str | None = None,
 ) -> TsdfReport:
     """Integrate known-pose depth into a bounded projective TSDF volume."""
 
@@ -74,11 +75,7 @@ def integrate_tsdf(
         )
     _validate_finite_volume_extent(origin, volume_dimensions, voxel_size)
 
-    output_path = Path(output).resolve()
-    if output_path.suffix.lower() != ".sftsdf":
-        raise TsdfError("output filename must end in .sftsdf")
-    if output_path.exists():
-        raise TsdfError(f"output already exists: {output_path}")
+    output_path = _validate_tsdf_output(output)
 
     try:
         camera, depth_scale_m = _validate_reconstruction_contract(session)
@@ -86,6 +83,14 @@ def integrate_tsdf(
         raise TsdfError(str(error)) from error
 
     replay = replay_session(session)
+    if (
+        expected_replay_digest_sha256 is not None
+        and replay.digest_sha256 != expected_replay_digest_sha256
+    ):
+        raise TsdfError(
+            "session inputs changed after automatic bounds inference; "
+            "rerun the command"
+        )
     selected = tuple(
         observation
         for observation in replay.observations
@@ -517,6 +522,15 @@ def _canonical_float(value: float) -> float:
     if abs(value) < 0.5e-9:
         value = 0.0
     return float(f"{value:.9f}")
+
+
+def _validate_tsdf_output(output: str | Path) -> Path:
+    output_path = Path(output).resolve()
+    if output_path.suffix.lower() != ".sftsdf":
+        raise TsdfError("output filename must end in .sftsdf")
+    if output_path.exists():
+        raise TsdfError(f"output already exists: {output_path}")
+    return output_path
 
 
 def _write_output_without_overwrite(output_path: Path, encoded: bytes) -> None:

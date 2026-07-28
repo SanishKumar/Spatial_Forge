@@ -4,9 +4,9 @@ This milestone adds one part of dense reconstruction: deterministic projective
 TSDF integration for aligned RGB-D frames with known camera poses. It is a
 small CPU numerical reference, not the optimized reconstruction backend.
 
-It deliberately stops before automatic volume sizing. Separate steps can
-extract diagnostic zero-crossing surface points or a reference triangle mesh
-from its output.
+The fixed command accepts explicit bounds. A separate deterministic
+`tsdf-auto` step can derive bounds from known-pose depth before invoking this
+same integrator. Surface-point and triangle-mesh steps consume either output.
 
 ## Run the exact fixture proof
 
@@ -102,7 +102,7 @@ It is a reference diagnostic format, not a promised long-term storage format.
 
 ## Explicitly deferred
 
-- automatic bounds and sparse voxel blocks;
+- robust automatic-bound outlier handling and sparse voxel blocks;
 - color fusion and sensor-dependent weighting;
 - Open3D, GPU, or other optimized backends;
 - production meshing, exact-zero-cell handling, and optimized surface
