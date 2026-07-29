@@ -20,6 +20,8 @@ The project is intentionally advancing through small, testable checkpoints.
 - Strict immutable in-memory loading of `.sftplan` diagnostics and read-only
   verification of their session IDs, replay digests, and replay-derived frame
   metadata.
+- Replay-matched allocation of canonical candidate coordinates into temporary
+  zeroed `8 x 8 x 8` float64-sum and uint32-weight block buffers.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -33,8 +35,9 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. consume replay-matched candidate block plans in block-backed fusion, define
-   camera-to-surface free-space semantics, and make verification-to-use atomic;
+1. populate replay-matched allocated blocks through depth fusion, define
+   camera-to-surface free-space semantics, and bind replay verification through
+   fusion use;
 2. sparse traversal, larger-volume artifacts and consumers, and an optimized
    backend suitable for full sequences;
 3. robust depth/pose outlier filtering and configurable production bounds;
@@ -78,8 +81,9 @@ Run:
 The suite must finish with `OK`.
 
 Then follow the point-cloud, fixed/automatic/sparse TSDF, candidate-block,
-strict plan verification, surface-point, and triangle-mesh commands in the
-repository README. Their deterministic hashes, inferred bounds, dense/sparse
-parity, planned block coordinates, replay binding, fusion weights, signed
-values, exact coordinates, topology, winding, and boundary counts provide
-checks independent of visual appearance.
+strict plan verification, empty block allocation, surface-point, and
+triangle-mesh commands in the repository README. Their deterministic hashes,
+inferred bounds, dense/sparse parity, planned block coordinates, replay
+binding, zero-state storage layout, fusion weights, signed values, exact
+coordinates, topology, winding, and boundary counts provide checks independent
+of visual appearance.

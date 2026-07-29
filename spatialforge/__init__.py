@@ -14,6 +14,10 @@ from .tsdf_block_plan_loader import (
     load_tsdf_block_plan,
     verify_tsdf_block_plan_replay,
 )
+from .tsdf_block_storage import (
+    TsdfBlockStorage,
+    allocate_empty_tsdf_blocks,
+)
 from .tsdf_bounds import TsdfBoundsReport, infer_tsdf_bounds
 from .tum_importer import TumImportReport, import_tum_dataset
 
@@ -28,7 +32,9 @@ __all__ = [
     "TsdfBoundsReport",
     "TsdfBlockPlan",
     "TsdfBlockPlanReport",
+    "TsdfBlockStorage",
     "TumImportReport",
+    "allocate_empty_tsdf_blocks",
     "extract_surface_points",
     "extract_triangle_mesh",
     "import_tum_dataset",

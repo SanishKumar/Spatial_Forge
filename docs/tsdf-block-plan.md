@@ -12,7 +12,9 @@ depth without fusing TSDF values:
 ```
 
 The result is a separate `.sftplan` diagnostic. Current TSDF integrators,
-surface extraction, and triangle meshing do not consume it.
+surface extraction, and triangle meshing do not consume it. A separate
+allocation diagnostic now consumes only its canonical active-block coordinates
+to create empty in-memory buffers.
 
 ## Grid contract
 
@@ -137,6 +139,23 @@ recompute candidate coordinates, prove that the artifact was produced by
 trusted planner code, authenticate or sign it, allocate blocks, or fuse TSDF
 values. It is read-only and creates no new artifact.
 
+## Empty-storage consumer
+
+The first consumer remains narrower than fusion:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-allocate `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession
+```
+
+It strict-loads the plan, replay-verifies the current session, and allocates one
+zeroed `8 x 8 x 8` numeric block row for every canonical active coordinate.
+It does not decode depth, regenerate the plan, update a voxel, decide
+camera-to-surface free space, or write an artifact. The temporary storage
+contract is documented in
+[`tsdf-block-storage.md`](tsdf-block-storage.md).
+
 ## Explicitly deferred
 
 - consuming the plan during TSDF fusion;
@@ -146,7 +165,7 @@ values. It is read-only and creates no new artifact.
 - recomputing candidate geometry during verification;
 - artifact signatures, authentication, schema migration, or canonical
   rewriting;
-- an atomic verification-to-use handoff for future plan consumers;
+- replay verification bound through a future depth-fusion use;
 - larger `.sftsdf` volumes and sparse-aware surface or mesh traversal;
 - performance or full-sequence scalability claims;
 - Open3D, GPU, parallel, adaptive-resolution, or submap backends;

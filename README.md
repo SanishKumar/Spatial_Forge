@@ -19,6 +19,8 @@ This repository currently implements these narrow foundations:
   around observed surfaces;
 - strict immutable loading of `.sftplan` diagnostics and read-only verification
   of their current ScanSession replay binding;
+- deterministic allocation of replay-matched candidate blocks into temporary,
+  zeroed float64-sum and uint32-weight buffers;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
@@ -220,6 +222,40 @@ The plan SHA-256 identifies the exact artifact bytes. It does not authenticate
 the artifact or prove that its candidate geometry came from trusted planner
 code. This verification command is read-only and writes no output file.
 
+Allocate the verified candidate coordinates as empty in-memory TSDF block
+storage:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-allocate `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession
+```
+
+Expected:
+
+```text
+artifact: valid
+session_replay: matched
+depth_decoded: no
+geometry_recomputed: no
+fusion_performed: no
+artifact_written: no
+allocation: blocks=8 resolution=8 voxel_slots=4096
+layout: shape=(8, 8, 8, 8) axes=block-z-y-x x_fastest=yes
+dtypes: tsdf_sums=float64 weights=uint32
+zero_state: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+payload_bytes: tsdf_sums=32768 weights=16384 total=49152
+block_rows: first=(0, -1, -1) last=(1, 0, 0)
+```
+
+This command strict-loads and replay-verifies the plan, allocates the buffers,
+reports their zero state, and discards them when the process exits. Replay
+verification hashes sensor payload bytes but does not decode depth pixels.
+The reference allocator caps numeric array payload at `64 MiB`; this does not
+include Python, NumPy-header, allocator, or process-memory overhead. There is no
+TSDF update, free-space decision, fusion, authentication, or output artifact in
+this checkpoint.
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 
@@ -256,6 +292,8 @@ is in [`docs/automatic-tsdf-bounds.md`](docs/automatic-tsdf-bounds.md), sparse
 accumulation is in [`docs/sparse-tsdf.md`](docs/sparse-tsdf.md), surface
 TSDF block planning is in
 [`docs/tsdf-block-plan.md`](docs/tsdf-block-plan.md),
+empty block allocation is in
+[`docs/tsdf-block-storage.md`](docs/tsdf-block-storage.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in

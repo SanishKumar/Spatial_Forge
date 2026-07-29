@@ -33,6 +33,7 @@ from .tsdf_block_plan_loader import (
     load_tsdf_block_plan,
     verify_tsdf_block_plan_replay,
 )
+from .tsdf_block_storage import allocate_empty_tsdf_blocks
 from .tsdf_bounds import infer_tsdf_bounds
 from .tum_importer import import_tum_dataset
 
@@ -79,6 +80,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "tsdf-block-plan-verify":
             return _run_tsdf_block_plan_verify(
+                arguments.plan,
+                arguments.session,
+            )
+        if arguments.reconstruct_command == "tsdf-block-allocate":
+            return _run_tsdf_block_allocate(
                 arguments.plan,
                 arguments.session,
             )
@@ -323,6 +329,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory to match.",
+    )
+
+    block_allocate = reconstruct_commands.add_parser(
+        "tsdf-block-allocate",
+        help=(
+            "Allocate empty in-memory TSDF blocks from a replay-matched plan; "
+            "does not decode depth, fuse, or write an artifact."
+        ),
+        description=(
+            "Strictly load and replay-match a block plan, then allocate "
+            "zeroed in-memory TSDF sum and weight buffers. The buffers are "
+            "discarded when this read-only diagnostic exits."
+        ),
+    )
+    block_allocate.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose active blocks are allocated.",
+    )
+    block_allocate.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory to replay-match before allocation.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -659,6 +688,89 @@ def _run_tsdf_block_plan_verify(
         file=sys.stdout,
     )
     print(f"plan: {plan.path}", file=sys.stdout)
+    print(
+        f"plan_sha256: {plan.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_allocate(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK ALLOCATION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK ALLOCATION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK ALLOCATION CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print("depth_decoded: no", file=sys.stdout)
+    print("geometry_recomputed: no", file=sys.stdout)
+    print("fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print(
+        "allocation: "
+        f"blocks={storage.block_count} "
+        f"resolution={storage.block_resolution} "
+        f"voxel_slots={storage.voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        f"layout: shape={storage.tsdf_sums.shape} "
+        "axes=block-z-y-x x_fastest=yes",
+        file=sys.stdout,
+    )
+    print(
+        "dtypes: "
+        f"tsdf_sums={storage.tsdf_sums.dtype.name} "
+        f"weights={storage.weights.dtype.name}",
+        file=sys.stdout,
+    )
+    print(
+        "zero_state: "
+        f"nonzero_sums={storage.nonzero_sum_count} "
+        f"nonzero_weights={storage.nonzero_weight_count} "
+        f"unknown_voxels={storage.unknown_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "payload_bytes: "
+        f"tsdf_sums={storage.tsdf_sum_bytes} "
+        f"weights={storage.weight_bytes} "
+        f"total={storage.payload_bytes}",
+        file=sys.stdout,
+    )
+    print(
+        "block_rows: "
+        f"first={storage.block_indices[0]} "
+        f"last={storage.block_indices[-1]}",
+        file=sys.stdout,
+    )
     print(
         f"plan_sha256: {plan.artifact_digest_sha256}",
         file=sys.stdout,
