@@ -29,6 +29,10 @@ from .tsdf_block_plan import (
     _validate_tsdf_block_plan_output,
     plan_tsdf_blocks,
 )
+from .tsdf_block_plan_loader import (
+    load_tsdf_block_plan,
+    verify_tsdf_block_plan_replay,
+)
 from .tsdf_bounds import infer_tsdf_bounds
 from .tum_importer import import_tum_dataset
 
@@ -72,6 +76,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.voxel_size_m,
                 arguments.truncation_m,
                 arguments.frame_stride,
+            )
+        if arguments.reconstruct_command == "tsdf-block-plan-verify":
+            return _run_tsdf_block_plan_verify(
+                arguments.plan,
+                arguments.session,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -291,6 +300,29 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_positive_integer,
         default=1,
         help="Plan from every Nth RGB observation (default: 1).",
+    )
+
+    block_plan_verify = reconstruct_commands.add_parser(
+        "tsdf-block-plan-verify",
+        help=(
+            "Strictly validate a block plan and match its replay digest; "
+            "does not replan or fuse."
+        ),
+        description=(
+            "Strictly validate a block plan and match its recorded replay "
+            "digest. This read-only check does not replan geometry or fuse "
+            "TSDF values."
+        ),
+    )
+    block_plan_verify.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact to validate.",
+    )
+    block_plan_verify.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory to match.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -580,6 +612,61 @@ def _run_tsdf_block_plan(
     )
     print(f"output: {report.output}", file=sys.stdout)
     print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_block_plan_verify(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        verify_tsdf_block_plan_replay(plan, session)
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK PLAN VERIFY FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK PLAN VERIFY FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF BLOCK PLAN CHECK {plan.session_id}", file=sys.stdout)
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print("geometry_recomputed: no", file=sys.stdout)
+    print(
+        "frames: "
+        f"total={plan.total_observations} "
+        f"selected={plan.selected_observations} "
+        f"paired={plan.paired_observations}",
+        file=sys.stdout,
+    )
+    print(
+        "candidate_blocks: "
+        f"surface={plan.surface_block_count} "
+        f"active={plan.active_block_count} "
+        f"halo={plan.halo_block_count} "
+        f"voxel_slots={plan.planned_voxel_slots}",
+        file=sys.stdout,
+    )
+    print(f"plan: {plan.path}", file=sys.stdout)
+    print(
+        f"plan_sha256: {plan.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
     return 0
 
 

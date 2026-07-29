@@ -93,12 +93,60 @@ digest before publication, permits at most 100,000 unique active blocks,
 requires signed 32-bit block coordinates, and refuses to overwrite either an
 existing or race-created target.
 
+## Strict loading and replay-bound verification
+
+The `.sftplan` loader creates a frozen in-memory snapshot after strictly
+checking:
+
+- the exact schema version, required fields, and absence of unknown or duplicate
+  JSON keys;
+- ASCII JSON types, finite numeric values, fixed grid and activation
+  conventions, and the 100,000-block limit;
+- positive and internally consistent frame, depth-sample, and block counters;
+- signed 32-bit block coordinates in strict X-fastest order, with no
+  duplicates;
+- the surface-block subset, halo count, planned voxel-slot count, and
+  componentwise block bounds.
+
+Loading does not modify or make the file itself immutable. The returned object
+is the immutable snapshot.
+
+Check that snapshot against a current ScanSession replay with:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-plan-verify `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession
+```
+
+A successful check reports:
+
+```text
+artifact: valid
+session_replay: matched
+geometry_recomputed: no
+```
+
+The verifier compares the session ID, replay SHA-256, and replay-derived
+observation, selection, pairing, and missing-stream counts. The artifact
+SHA-256 identifies the exact plan bytes; the replay SHA-256 binds the plan to
+the current calibrated session inputs.
+
+This boundary is deliberately narrow. The verifier does not decode depth,
+recompute candidate coordinates, prove that the artifact was produced by
+trusted planner code, authenticate or sign it, allocate blocks, or fuse TSDF
+values. It is read-only and creates no new artifact.
+
 ## Explicitly deferred
 
 - consuming the plan during TSDF fusion;
 - camera-to-surface free-space or frustum/ray block activation;
 - configurable block resolution and per-block observation provenance;
 - an immutable snapshot spanning every input-file read;
+- recomputing candidate geometry during verification;
+- artifact signatures, authentication, schema migration, or canonical
+  rewriting;
+- an atomic verification-to-use handoff for future plan consumers;
 - larger `.sftsdf` volumes and sparse-aware surface or mesh traversal;
 - performance or full-sequence scalability claims;
 - Open3D, GPU, parallel, adaptive-resolution, or submap backends;

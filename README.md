@@ -17,6 +17,8 @@ This repository currently implements these narrow foundations:
   traversal, and exact dense-reference parity;
 - deterministic known-pose depth planning of candidate 8 x 8 x 8 voxel blocks
   around observed surfaces;
+- strict immutable loading of `.sftplan` diagnostics and read-only verification
+  of their current ScanSession replay binding;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
@@ -190,6 +192,33 @@ output_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
 This `.sftplan` is a deterministic surface-neighborhood plan only. Fusion does
 not consume it yet, and it deliberately does not plan the dense reference
 backend's full camera-to-surface free-space updates.
+
+Strictly load that artifact and check it against the current session replay:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-plan-verify `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession
+```
+
+The important status lines are:
+
+```text
+artifact: valid
+session_replay: matched
+geometry_recomputed: no
+```
+
+`artifact: valid` means the strict loader accepted the schema, types, ordering,
+limits, and cross-field invariants. `session_replay: matched` means the
+artifact's session ID and replay digest still match the current sensor inputs
+and replay-derived frame metadata. `geometry_recomputed: no` is equally
+important: verification does not decode depth again, regenerate block
+coordinates, allocate TSDF blocks, or fuse any values.
+
+The plan SHA-256 identifies the exact artifact bytes. It does not authenticate
+the artifact or prove that its candidate geometry came from trusted planner
+code. This verification command is read-only and writes no output file.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
