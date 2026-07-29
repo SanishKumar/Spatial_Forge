@@ -1,0 +1,207 @@
+# Read-only TSDF voxel contribution
+
+This checkpoint evaluates one already planned voxel against one replay-selected
+observation. When exact depth and known pose are both present, it performs one
+projective TSDF evaluation:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-contribution `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession `
+  --observation-sequence 0 `
+  --voxel 8 -1 -1
+```
+
+The result describes the TSDF sum and weight deltas that a later fusion step
+could apply. This command applies neither delta. It evaluates no other voxel or
+observation, leaves the temporary block buffers unchanged, and writes no
+artifact.
+
+## Public API
+
+```python
+contribution = evaluate_tsdf_voxel_contribution(
+    storage,
+    address,
+    session,
+    observation_sequence,
+)
+```
+
+The inputs are:
+
+- replay-matched `TsdfBlockStorage` allocated from a strict-loaded
+  `TsdfBlockPlan`;
+- a frozen `TsdfVoxelAddress` that resolves back to that exact storage;
+- the current loaded `ScanSession`; and
+- a zero-based replay observation sequence selected by the plan's frame
+  stride.
+
+The function returns a frozen `TsdfVoxelContribution`. The address is an input
+because planning and signed voxel addressing are already separate checkpoints.
+A valid global coordinate in an unplanned block remains an addressing miss;
+the CLI rejects it instead of creating a block or treating it as a measurement
+skip.
+
+The evaluator replay-checks the current session against the source plan before
+sampling and again after evaluation. A session mismatch, stale replay digest,
+out-of-range or unselected observation sequence, address/storage mismatch, or
+invalid reconstruction contract raises `TsdfError`.
+
+## Projective contribution rule
+
+For signed global voxel index `(gx, gy, gz)` and plan voxel edge length `s`,
+the zero-anchored voxel center is:
+
+```text
+world_xyz_m = ((gx + 0.5) * s,
+               (gy + 0.5) * s,
+               (gz + 0.5) * s)
+```
+
+The evaluator applies the inverse of the observation's `T_world_camera` to
+obtain `(x, y, z)` in camera coordinates. A finite point with `z > 0` is
+projected through the aligned RGB pinhole calibration:
+
+For a complete observation, the aligned depth frame is decoded and scaled
+once before voxel rejection, preserving the reference integrator's malformed
+image behavior. Evaluation still samples only the one projected pixel.
+
+```text
+u = fx * x / z + cx
+v = fy * y / z + cy
+```
+
+The continuous projection must lie in:
+
+```text
+-0.5 <= u < width  - 0.5
+-0.5 <= v < height - 0.5
+```
+
+Nearest-pixel sampling uses:
+
+```text
+pixel_u = floor(u + 0.5)
+pixel_v = floor(v + 0.5)
+```
+
+After converting the sampled depth to metres, the signed distance and proposed
+delta are:
+
+```text
+signed_distance_m = measured_depth_m - z
+tsdf_sum_delta = clip(signed_distance_m / truncation_m, -1, 1)
+weight_delta = 1
+```
+
+A positive value is on the camera/free-space side of the measured surface. A
+negative value is behind the surface. Finite positive depth contributes while
+the signed distance is at least `-truncation_m`; a voxel farther behind the
+surface is skipped. Positive distances may clamp to `+1`, matching the
+fixed-bounds reference TSDF.
+
+This defines the numerical result for one already planned voxel only. It does
+not trace a ray or decide whether additional camera-to-surface free-space
+blocks should be planned.
+
+## Immutable result and skip statuses
+
+Every result records the input address, observation sequence, world center,
+status, and `weight_delta`. Finite diagnostics from successfully completed
+stages are also retained: camera point, continuous projection, nearest pixel,
+whether depth was decoded, measured depth, signed distance, and proposed TSDF
+sum delta.
+
+An accepted result has:
+
+```text
+status = contributes
+tsdf_sum_delta in [-1, 1]
+weight_delta = 1
+```
+
+Skipped results have no TSDF sum delta and a zero weight delta. Their stable
+statuses are:
+
+| Status | Meaning |
+|---|---|
+| `missing-depth` | The selected observation has no exact depth sample. |
+| `missing-pose` | The selected observation has no exact known pose. |
+| `missing-depth-and-pose` | The selected observation has neither exact input. |
+| `camera-point-nonfinite` | Transforming the voxel produced a non-finite camera point. |
+| `camera-z-nonpositive` | The voxel is on or behind the camera plane. |
+| `projection-nonfinite` | Pinhole projection produced a non-finite coordinate. |
+| `projection-outside-image` | The continuous projection or rounded pixel is outside the image. |
+| `depth-invalid` | The sampled metric depth is zero, negative, or non-finite. |
+| `signed-distance-nonfinite` | Depth minus camera-space Z is non-finite. |
+| `behind-truncation` | The voxel is more than one truncation distance behind the surface. |
+
+The projection and pixel are outputs, not caller-supplied inputs. This keeps
+nearest-depth sampling identical to the deterministic dense reference rule.
+
+## Exact fixture proof
+
+The committed fixture plan uses:
+
+```text
+voxel_size_m = 0.125
+truncation_m = 0.5
+```
+
+Global voxel `(8, -1, -1)` resolves to block `(1, -1, -1)`, local coordinate
+`(0, 7, 7)`, block row `1`, array index `(1, 7, 7, 0)`, and storage flat index
+`1016`.
+
+The relevant command output is:
+
+```text
+TSDF BLOCK CONTRIBUTION CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+observation_sequence: 0
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+world_xyz_m: (1.062500000, -0.062500000, -0.062500000)
+camera_xyz_m: (0.062500000, 0.062500000, 1.062500000)
+projected_uv: (0.617647059, 0.617647059)
+pixel_uv: (1, 1)
+depth_decoded: yes
+measured_depth_m: 1.000000000
+signed_distance_m: -0.062500000
+evaluation: contributes
+proposed_delta: tsdf_sum=-0.125000000 weight=1
+contributions_applied: 0
+fusion_performed: no
+storage_mutated: no
+missing_blocks_created: no
+artifact_written: no
+```
+
+The voxel center transforms to camera depth `1.0625 m`. The nearest projected
+pixel contains `1.0 m`, so:
+
+```text
+signed distance = 1.0 - 1.0625 = -0.0625 m
+TSDF sum delta  = -0.0625 / 0.5 = -0.125
+weight delta    = 1
+applied deltas  = 0
+```
+
+The final boundary lines are as important as the numerical result. The
+temporary storage still has zero sums and weights, no missing block was
+created, no fusion ran, and no output artifact was written.
+
+## Explicitly deferred
+
+- iterating additional observations, voxels, blocks, frusta, or rays;
+- applying proposed deltas to TSDF sums and weights, normalization, weighting,
+  or any other fusion mutation;
+- deciding or planning full camera-to-surface free-space block coverage;
+- dynamic block insertion, eviction, streaming, or persistent block storage;
+- block-backed `.sftsdf` output and sparse-aware surface or mesh consumers;
+- color, confidence, normals, robust depth/pose outlier filtering, visibility,
+  and occlusion;
+- optimized CPU, parallel, Open3D, GPU, adaptive-resolution, submap, or
+  full-sequence implementations; and
+- floor/wall/opening extraction, Inspector work, pose estimation, SLAM,
+  semantics, localization, and `SpatialMapPackage` export.

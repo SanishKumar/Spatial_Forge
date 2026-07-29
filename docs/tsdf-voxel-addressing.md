@@ -115,6 +115,14 @@ planned empty storage using the previous checkpoint, resolves the queries, and
 then discards the storage. The addressing operation itself creates no block and
 the command writes no artifact.
 
+## Next read-only consumer
+
+A resolved `TsdfVoxelAddress` can now be evaluated against exactly one selected
+known-pose depth observation. That operation derives the voxel's world center,
+projects it to the nearest depth pixel, and returns an immutable proposed TSDF
+sum/weight delta or skip diagnostic. It still does not change storage. See
+[`tsdf-voxel-contribution.md`](tsdf-voxel-contribution.md).
+
 ## Explicitly deferred
 
 - dynamic block creation, insertion, eviction, or a mutable lookup cache;

@@ -23,13 +23,17 @@ This repository currently implements these narrow foundations:
   zeroed float64-sum and uint32-weight buffers;
 - deterministic signed global-voxel addressing into planned block rows and
   local `(z, y, x)` array positions, without allocating missing blocks;
+- read-only evaluation of one replay-selected observation at one planned
+  voxel, returning an immutable projective TSDF sum/weight delta when exact
+  depth and pose exist, or a skip diagnostic, without applying it;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-Sparse traversal and full-sequence optimization, robust outlier filtering,
-production meshing, normals, SLAM, map packages, mobile capture, and the visual
-inspector are deliberately not implemented yet.
+Applying block contributions, camera-to-surface free-space coverage, sparse
+traversal and full-sequence optimization, robust outlier filtering, production
+meshing, normals, SLAM, map packages, mobile capture, and the visual inspector
+are deliberately not implemented yet.
 
 ## Set up
 
@@ -290,6 +294,56 @@ API returns `None` and the CLI reports `unplanned`. It does not insert a block.
 Address resolution only computes indices; the zeroed sum and weight arrays are
 unchanged and no output file is written.
 
+Evaluate one resolved voxel against one selected known-pose depth observation:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-contribution `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession `
+  --observation-sequence 0 `
+  --voxel 8 -1 -1
+```
+
+Expected:
+
+```text
+TSDF BLOCK CONTRIBUTION CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+observation_sequence: 0
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+world_xyz_m: (1.062500000, -0.062500000, -0.062500000)
+camera_xyz_m: (0.062500000, 0.062500000, 1.062500000)
+projected_uv: (0.617647059, 0.617647059)
+pixel_uv: (1, 1)
+depth_decoded: yes
+measured_depth_m: 1.000000000
+signed_distance_m: -0.062500000
+evaluation: contributes
+proposed_delta: tsdf_sum=-0.125000000 weight=1
+contributions_applied: 0
+fusion_performed: no
+storage_mutated: no
+missing_blocks_created: no
+artifact_written: no
+```
+
+The voxel center is transformed into camera space, projected with the aligned
+RGB intrinsics, and sampled at the nearest depth pixel. The measured depth of
+`1.0 m` minus camera-space depth `1.0625 m` gives `-0.0625 m`; division by the
+plan's `0.5 m` truncation gives the proposed TSDF sum delta `-0.125`. A proposed
+weight of one describes what a later fusion operation could apply. This
+checkpoint applies zero contributions: it evaluates no other observation or
+voxel, runs no frame- or block-wide contribution loop, leaves both storage
+arrays zero, and writes no artifact.
+
+This single-voxel rule retains the reference TSDF sign and truncation
+conventions, but it does not decide which camera-to-surface free-space blocks
+should exist. Applying deltas, block/frame traversal, free-space coverage,
+fusion, and persistence remain separate later checkpoints. The exact result
+and skip contract is documented in
+[`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md).
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 
@@ -330,6 +384,8 @@ empty block allocation is in
 [`docs/tsdf-block-storage.md`](docs/tsdf-block-storage.md),
 signed voxel addressing is in
 [`docs/tsdf-voxel-addressing.md`](docs/tsdf-voxel-addressing.md),
+single-observation voxel evaluation is in
+[`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in

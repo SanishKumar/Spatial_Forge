@@ -23,6 +23,11 @@ from .tsdf_voxel_address import (
     compose_tsdf_global_voxel_index,
     locate_tsdf_voxel,
 )
+from .tsdf_voxel_contribution import (
+    TsdfContributionStatus,
+    TsdfVoxelContribution,
+    evaluate_tsdf_voxel_contribution,
+)
 from .tsdf_bounds import TsdfBoundsReport, infer_tsdf_bounds
 from .tum_importer import TumImportReport, import_tum_dataset
 
@@ -38,10 +43,13 @@ __all__ = [
     "TsdfBlockPlan",
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
+    "TsdfContributionStatus",
     "TsdfVoxelAddress",
+    "TsdfVoxelContribution",
     "TumImportReport",
     "allocate_empty_tsdf_blocks",
     "compose_tsdf_global_voxel_index",
+    "evaluate_tsdf_voxel_contribution",
     "extract_surface_points",
     "extract_triangle_mesh",
     "import_tum_dataset",
