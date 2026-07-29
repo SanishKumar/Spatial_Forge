@@ -43,6 +43,21 @@ class TsdfBlockStorage:
     tsdf_sums: np.ndarray
     weights: np.ndarray
 
+    def __post_init__(self) -> None:
+        block_indices, shape, payload_bytes = _preflight_storage_plan(
+            self.source_plan
+        )
+        if self.block_indices != block_indices:
+            raise TsdfError(
+                "TSDF block storage rows must match the source plan exactly"
+            )
+        _validate_storage_arrays(
+            self.tsdf_sums,
+            self.weights,
+            shape,
+            payload_bytes,
+        )
+
     @property
     def block_count(self) -> int:
         return len(self.block_indices)
@@ -97,17 +112,6 @@ def allocate_empty_tsdf_blocks(
             "cannot allocate empty TSDF block storage within the "
             f"{MAX_TSDF_BLOCK_STORAGE_BYTES}-byte reference limit"
         ) from error
-
-    if (
-        tsdf_sums.shape != shape
-        or weights.shape != shape
-        or tsdf_sums.dtype != TSDF_SUM_DTYPE
-        or weights.dtype != TSDF_WEIGHT_DTYPE
-        or not tsdf_sums.flags.c_contiguous
-        or not weights.flags.c_contiguous
-        or int(tsdf_sums.nbytes + weights.nbytes) != payload_bytes
-    ):
-        raise AssertionError("TSDF block storage allocation contract was lost")
 
     return TsdfBlockStorage(
         source_plan=plan,
@@ -186,3 +190,30 @@ def _preflight_storage_plan(
         TSDF_BLOCK_RESOLUTION,
     )
     return block_indices, shape, payload_bytes
+
+
+def _validate_storage_arrays(
+    tsdf_sums: np.ndarray,
+    weights: np.ndarray,
+    expected_shape: tuple[int, int, int, int],
+    expected_payload_bytes: int,
+) -> None:
+    if not isinstance(tsdf_sums, np.ndarray):
+        raise TsdfError("TSDF block sum storage must be a NumPy array")
+    if not isinstance(weights, np.ndarray):
+        raise TsdfError("TSDF block weight storage must be a NumPy array")
+    if tsdf_sums.shape != expected_shape or weights.shape != expected_shape:
+        raise TsdfError(
+            "TSDF block storage arrays do not match the canonical "
+            f"{expected_shape} shape"
+        )
+    if tsdf_sums.dtype != TSDF_SUM_DTYPE:
+        raise TsdfError("TSDF block sums must use float64 storage")
+    if weights.dtype != TSDF_WEIGHT_DTYPE:
+        raise TsdfError("TSDF block weights must use uint32 storage")
+    if not tsdf_sums.flags.c_contiguous or not weights.flags.c_contiguous:
+        raise TsdfError("TSDF block storage arrays must be C-contiguous")
+    if int(tsdf_sums.nbytes + weights.nbytes) != expected_payload_bytes:
+        raise TsdfError(
+            "TSDF block storage numeric payload size is inconsistent"
+        )

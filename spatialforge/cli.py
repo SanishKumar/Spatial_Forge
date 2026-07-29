@@ -35,6 +35,7 @@ from .tsdf_block_plan_loader import (
 )
 from .tsdf_block_storage import allocate_empty_tsdf_blocks
 from .tsdf_bounds import infer_tsdf_bounds
+from .tsdf_voxel_address import locate_tsdf_voxel
 from .tum_importer import import_tum_dataset
 
 
@@ -87,6 +88,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_allocate(
                 arguments.plan,
                 arguments.session,
+            )
+        if arguments.reconstruct_command == "tsdf-block-address":
+            return _run_tsdf_block_address(
+                arguments.plan,
+                arguments.session,
+                arguments.voxels,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -352,6 +359,40 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory to replay-match before allocation.",
+    )
+
+    block_address = reconstruct_commands.add_parser(
+        "tsdf-block-address",
+        help=(
+            "Resolve signed global voxel indices in replay-matched block "
+            "storage; does not create blocks, mutate state, or fuse."
+        ),
+        description=(
+            "Allocate replay-matched empty block storage, then resolve one "
+            "or more signed global voxel indices into planned block rows and "
+            "local array indices. Valid sparse misses are reported without "
+            "creating blocks."
+        ),
+    )
+    block_address.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose active blocks are addressed.",
+    )
+    block_address.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory to replay-match before addressing.",
+    )
+    block_address.add_argument(
+        "--voxel",
+        dest="voxels",
+        type=int,
+        nargs=3,
+        action="append",
+        required=True,
+        metavar=("GX", "GY", "GZ"),
+        help="Signed global voxel XYZ to resolve; may be repeated.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -771,6 +812,109 @@ def _run_tsdf_block_allocate(
         f"last={storage.block_indices[-1]}",
         file=sys.stdout,
     )
+    print(
+        f"plan_sha256: {plan.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_address(
+    plan_path: Path,
+    session_path: Path,
+    voxels: list[list[int]],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        before = (
+            storage.block_indices,
+            id(storage.tsdf_sums),
+            id(storage.weights),
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.payload_bytes,
+        )
+        results = tuple(
+            (
+                tuple(raw_voxel),
+                locate_tsdf_voxel(storage, tuple(raw_voxel)),
+            )
+            for raw_voxel in voxels
+        )
+        after = (
+            storage.block_indices,
+            id(storage.tsdf_sums),
+            id(storage.weights),
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.payload_bytes,
+        )
+        if after != before:
+            raise AssertionError("TSDF voxel addressing mutated block storage")
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK ADDRESS FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK ADDRESS FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    resolved = sum(address is not None for _, address in results)
+    print(f"TSDF BLOCK ADDRESS CHECK {plan.session_id}", file=sys.stdout)
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print("depth_decoded: no", file=sys.stdout)
+    print("geometry_recomputed: no", file=sys.stdout)
+    print("fusion_performed: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("addressing_created_blocks: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print(
+        "allocation: "
+        f"blocks={storage.block_count} "
+        f"voxel_slots={storage.voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        "queries: "
+        f"requested={len(results)} "
+        f"resolved={resolved} "
+        f"unplanned={len(results) - resolved}",
+        file=sys.stdout,
+    )
+    for position, (global_index, address) in enumerate(results):
+        if address is None:
+            print(
+                f"voxel[{position}]: status=unplanned "
+                f"global={global_index}",
+                file=sys.stdout,
+            )
+            continue
+        print(
+            f"voxel[{position}]: status=planned "
+            f"global={address.global_index_xyz} "
+            f"block={address.block_index_xyz} "
+            f"local={address.local_index_xyz} "
+            f"row={address.block_row} "
+            f"array={address.array_index_bzyx} "
+            f"local_flat={address.local_flat_index} "
+            f"storage_flat={address.storage_flat_index}",
+            file=sys.stdout,
+        )
     print(
         f"plan_sha256: {plan.artifact_digest_sha256}",
         file=sys.stdout,

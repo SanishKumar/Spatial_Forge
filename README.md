@@ -21,6 +21,8 @@ This repository currently implements these narrow foundations:
   of their current ScanSession replay binding;
 - deterministic allocation of replay-matched candidate blocks into temporary,
   zeroed float64-sum and uint32-weight buffers;
+- deterministic signed global-voxel addressing into planned block rows and
+  local `(z, y, x)` array positions, without allocating missing blocks;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
@@ -256,6 +258,38 @@ include Python, NumPy-header, allocator, or process-memory overhead. There is no
 TSDF update, free-space decision, fusion, authentication, or output artifact in
 this checkpoint.
 
+Resolve signed global voxel indices in that temporary storage:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-address `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession `
+  --voxel 7 -1 -1 `
+  --voxel 8 0 0 `
+  --voxel -1 0 0
+```
+
+Expected:
+
+```text
+depth_decoded: no
+geometry_recomputed: no
+fusion_performed: no
+storage_mutated: no
+addressing_created_blocks: no
+artifact_written: no
+allocation: blocks=8 voxel_slots=4096
+queries: requested=3 resolved=2 unplanned=1
+voxel[0]: status=planned global=(7, -1, -1) block=(0, -1, -1) local=(7, 7, 7) row=0 array=(0, 7, 7, 7) local_flat=511 storage_flat=511
+voxel[1]: status=planned global=(8, 0, 0) block=(1, 0, 0) local=(0, 0, 0) row=7 array=(7, 0, 0, 0) local_flat=0 storage_flat=3584
+voxel[2]: status=unplanned global=(-1, 0, 0)
+```
+
+The valid third query belongs to a block that is absent from the plan, so the
+API returns `None` and the CLI reports `unplanned`. It does not insert a block.
+Address resolution only computes indices; the zeroed sum and weight arrays are
+unchanged and no output file is written.
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 
@@ -294,6 +328,8 @@ TSDF block planning is in
 [`docs/tsdf-block-plan.md`](docs/tsdf-block-plan.md),
 empty block allocation is in
 [`docs/tsdf-block-storage.md`](docs/tsdf-block-storage.md),
+signed voxel addressing is in
+[`docs/tsdf-voxel-addressing.md`](docs/tsdf-voxel-addressing.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in

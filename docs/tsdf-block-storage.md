@@ -45,6 +45,33 @@ object keeps the immutable source plan and block-coordinate tuple, while the
 numeric buffers are intentionally mutable working state for a later fusion
 checkpoint.
 
+## Read-only signed addressing
+
+The first topology operation over this storage is:
+
+```python
+address = locate_tsdf_voxel(storage, global_index_xyz)
+```
+
+For a valid signed global voxel index in a planned block, it returns a frozen
+address containing the canonical block row, local XYZ coordinate, `(block, z,
+y, x)` array index, local flat index, and storage flat index. A valid index
+whose block is not planned returns `None`; addressing never inserts or
+allocates a missing block.
+
+The inverse integer operation is:
+
+```python
+global_index_xyz = compose_tsdf_global_voxel_index(
+    block_index_xyz,
+    local_index_xyz,
+)
+```
+
+Both operations leave block coordinates and numeric buffers unchanged. The
+full signed floor-division and range contract is documented in
+[`tsdf-voxel-addressing.md`](tsdf-voxel-addressing.md).
+
 ## Payload bound
 
 Each block has `8^3 = 512` voxel slots. Each slot reserves eight bytes for its
@@ -93,8 +120,8 @@ allocation from the replay-matched plan.
 - decoding depth, back-projecting samples, or regenerating block coordinates;
 - TSDF observations, sums, weight increments, normalization, or fusion;
 - camera-to-surface free-space, frustum, ray, visibility, or occlusion rules;
-- a lookup index for fusion, per-block provenance, color, confidence, or
-  normals;
+- a mutable lookup cache or fusion index, per-block provenance, color,
+  confidence, or normals;
 - persistence, checkpointing, a block-backed `.sftsdf`, or any other output
   artifact;
 - eviction, streaming, submaps, adaptive resolution, Open3D, GPU, or parallel
