@@ -661,6 +661,10 @@ class TsdfVoxelContributionTests(unittest.TestCase):
                 TsdfVoxelContribution(
                     address=address,
                     observation_sequence=0,
+                    source_plan_digest_sha256=(
+                        plan.artifact_digest_sha256
+                    ),
+                    replay_digest_sha256=plan.replay_digest_sha256,
                     status=TsdfContributionStatus.CONTRIBUTES,
                     world_xyz_m=(1.0625, -0.0625, -0.0625),
                 )

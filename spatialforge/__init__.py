@@ -28,6 +28,11 @@ from .tsdf_voxel_contribution import (
     TsdfVoxelContribution,
     evaluate_tsdf_voxel_contribution,
 )
+from .tsdf_voxel_update import (
+    MAX_TSDF_VOXEL_WEIGHT,
+    TsdfVoxelUpdateReceipt,
+    apply_tsdf_voxel_contribution,
+)
 from .tsdf_bounds import TsdfBoundsReport, infer_tsdf_bounds
 from .tum_importer import TumImportReport, import_tum_dataset
 
@@ -44,10 +49,12 @@ __all__ = [
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
     "TsdfContributionStatus",
+    "TsdfVoxelUpdateReceipt",
     "TsdfVoxelAddress",
     "TsdfVoxelContribution",
     "TumImportReport",
     "allocate_empty_tsdf_blocks",
+    "apply_tsdf_voxel_contribution",
     "compose_tsdf_global_voxel_index",
     "evaluate_tsdf_voxel_contribution",
     "extract_surface_points",
@@ -59,6 +66,7 @@ __all__ = [
     "load_scan_session",
     "load_tsdf_block_plan",
     "locate_tsdf_voxel",
+    "MAX_TSDF_VOXEL_WEIGHT",
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",

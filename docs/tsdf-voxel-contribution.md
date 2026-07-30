@@ -12,10 +12,10 @@ projective TSDF evaluation:
   --voxel 8 -1 -1
 ```
 
-The result describes the TSDF sum and weight deltas that a later fusion step
-could apply. This command applies neither delta. It evaluates no other voxel or
-observation, leaves the temporary block buffers unchanged, and writes no
-artifact.
+The result describes the TSDF sum and weight deltas that the separate
+single-slot update primitive can apply. This command applies neither delta. It
+evaluates no other voxel or observation, leaves the temporary block buffers
+unchanged, and writes no artifact.
 
 ## Public API
 
@@ -37,11 +37,26 @@ The inputs are:
 - a zero-based replay observation sequence selected by the plan's frame
   stride.
 
-The function returns a frozen `TsdfVoxelContribution`. The address is an input
-because planning and signed voxel addressing are already separate checkpoints.
-A valid global coordinate in an unplanned block remains an addressing miss;
-the CLI rejects it instead of creating a block or treating it as a measurement
-skip.
+The function returns a frozen `TsdfVoxelContribution`. In addition to its
+address, observation, numerical result, and diagnostics, every contribution
+records:
+
+```text
+source_plan_digest_sha256
+replay_digest_sha256
+```
+
+The source-plan digest identifies the exact loaded `.sftplan` bytes. The replay
+digest identifies the session-input snapshot used during evaluation. A later
+one-slot update compares both fields with its destination storage and current
+session before mutation. Matching SHA-256 values establish deterministic byte
+identity; they are not signatures, authentication, or proof that the inputs
+are trustworthy.
+
+The address is an input because planning and signed voxel addressing are
+already separate checkpoints. A valid global coordinate in an unplanned block
+remains an addressing miss; the CLI rejects it instead of creating a block or
+treating it as a measurement skip.
 
 The evaluator replay-checks the current session against the source plan before
 sampling and again after evaluation. A session mismatch, stale replay digest,
@@ -191,11 +206,31 @@ The final boundary lines are as important as the numerical result. The
 temporary storage still has zero sums and weights, no missing block was
 created, no fusion ran, and no output artifact was written.
 
+## Next one-slot consumer
+
+An accepted contribution can now be applied to one destination slot:
+
+```python
+receipt = apply_tsdf_voxel_contribution(
+    storage,
+    contribution,
+    session,
+)
+```
+
+The updater checks the contribution's plan and replay provenance, re-resolves
+its address, replay-checks the current session around the mutation, and returns
+an immutable before/after receipt. It does not make this evaluator mutating.
+The exact update, rollback, and repeated-application rules are documented in
+[`tsdf-voxel-update.md`](tsdf-voxel-update.md).
+
 ## Explicitly deferred
 
 - iterating additional observations, voxels, blocks, frusta, or rays;
-- applying proposed deltas to TSDF sums and weights, normalization, weighting,
-  or any other fusion mutation;
+- applying proposed deltas within this read-only evaluator; the separate
+  update primitive applies one accepted delta only;
+- normalization, sensor-dependent weighting, duplicate prevention, or a
+  multi-observation fusion loop;
 - deciding or planning full camera-to-surface free-space block coverage;
 - dynamic block insertion, eviction, streaming, or persistent block storage;
 - block-backed `.sftsdf` output and sparse-aware surface or mesh consumers;

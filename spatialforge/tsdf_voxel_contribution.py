@@ -34,6 +34,14 @@ def _is_finite_number(value: object) -> bool:
         return False
 
 
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 class TsdfContributionStatus(StrEnum):
     """Stable result categories for one read-only projective evaluation."""
 
@@ -56,6 +64,8 @@ class TsdfVoxelContribution:
 
     address: TsdfVoxelAddress
     observation_sequence: int
+    source_plan_digest_sha256: str
+    replay_digest_sha256: str
     status: TsdfContributionStatus
     world_xyz_m: _Point3
     camera_xyz_m: _Point3 | None = None
@@ -84,6 +94,14 @@ class TsdfVoxelContribution:
         if not isinstance(self.status, TsdfContributionStatus):
             raise TsdfError(
                 "TSDF voxel contribution status is not recognized"
+            )
+        if not _is_sha256(self.source_plan_digest_sha256):
+            raise TsdfError(
+                "TSDF voxel contribution source plan digest is invalid"
+            )
+        if not _is_sha256(self.replay_digest_sha256):
+            raise TsdfError(
+                "TSDF voxel contribution source replay digest is invalid"
             )
         _validate_result_point(self.world_xyz_m, "world_xyz_m")
         if self.camera_xyz_m is not None:
@@ -230,6 +248,8 @@ def evaluate_tsdf_voxel_contribution(
         result = _skipped(
             address,
             observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
             TsdfContributionStatus.MISSING_DEPTH_AND_POSE,
             world_xyz_m,
         )
@@ -237,6 +257,8 @@ def evaluate_tsdf_voxel_contribution(
         result = _skipped(
             address,
             observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
             TsdfContributionStatus.MISSING_DEPTH,
             world_xyz_m,
         )
@@ -244,6 +266,8 @@ def evaluate_tsdf_voxel_contribution(
         result = _skipped(
             address,
             observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
             TsdfContributionStatus.MISSING_POSE,
             world_xyz_m,
         )
@@ -252,6 +276,8 @@ def evaluate_tsdf_voxel_contribution(
         result = _evaluate_complete_observation(
             address,
             observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
             plan.truncation_m,
             session,
             observation.depth.data,
@@ -276,6 +302,8 @@ def evaluate_tsdf_voxel_contribution(
 def _evaluate_complete_observation(
     address: TsdfVoxelAddress,
     observation_sequence: int,
+    source_plan_digest_sha256: str,
+    replay_digest_sha256: str,
     truncation_m: float,
     session: ScanSession,
     depth_sample: object,
@@ -301,6 +329,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.CAMERA_POINT_NONFINITE,
             world_xyz_m,
             depth_decoded=True,
@@ -311,6 +341,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.CAMERA_Z_NONPOSITIVE,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -323,6 +355,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.PROJECTION_NONFINITE,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -336,6 +370,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.PROJECTION_OUTSIDE_IMAGE,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -353,6 +389,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.PROJECTION_OUTSIDE_IMAGE,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -365,6 +403,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.DEPTH_INVALID,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -378,6 +418,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.SIGNED_DISTANCE_NONFINITE,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -391,6 +433,8 @@ def _evaluate_complete_observation(
         return _skipped(
             address,
             observation_sequence,
+            source_plan_digest_sha256,
+            replay_digest_sha256,
             TsdfContributionStatus.BEHIND_TRUNCATION,
             world_xyz_m,
             camera_xyz_m=camera_xyz_m,
@@ -414,6 +458,8 @@ def _evaluate_complete_observation(
     return TsdfVoxelContribution(
         address=address,
         observation_sequence=observation_sequence,
+        source_plan_digest_sha256=source_plan_digest_sha256,
+        replay_digest_sha256=replay_digest_sha256,
         status=TsdfContributionStatus.CONTRIBUTES,
         world_xyz_m=world_xyz_m,
         camera_xyz_m=camera_xyz_m,
@@ -548,6 +594,8 @@ def _world_to_camera(
 def _skipped(
     address: TsdfVoxelAddress,
     observation_sequence: int,
+    source_plan_digest_sha256: str,
+    replay_digest_sha256: str,
     status: TsdfContributionStatus,
     world_xyz_m: _Point3,
     *,
@@ -561,6 +609,8 @@ def _skipped(
     return TsdfVoxelContribution(
         address=address,
         observation_sequence=observation_sequence,
+        source_plan_digest_sha256=source_plan_digest_sha256,
+        replay_digest_sha256=replay_digest_sha256,
         status=status,
         world_xyz_m=world_xyz_m,
         camera_xyz_m=camera_xyz_m,

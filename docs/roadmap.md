@@ -28,6 +28,9 @@ The project is intentionally advancing through small, testable checkpoints.
   voxel, including world-center transformation, aligned pinhole projection,
   nearest-depth sampling, signed-distance/truncation classification, and an
   immutable weight-one contribution or skip diagnostic.
+- Plan- and replay-bound application of one accepted immutable contribution
+  to exactly one addressed temporary TSDF block slot, with uint32 overflow
+  preflight, replay-bracketed rollback, and a frozen before/after receipt.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -41,12 +44,12 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. apply accepted single-voxel contributions across replay-selected
+1. traverse contribution evaluation and application across replay-selected
    observations and planned block addresses, decide and plan
-   camera-to-surface free-space coverage, update TSDF sums and weights, and
-   bind replay verification through mutation;
-2. sparse traversal, larger-volume artifacts and consumers, and an optimized
-   backend suitable for full sequences;
+   camera-to-surface free-space coverage, prevent duplicate observation
+   application, and report complete block-fusion diagnostics;
+2. culled, scalable sparse traversal, larger-volume artifacts and consumers,
+   and an optimized backend suitable for full sequences;
 3. robust depth/pose outlier filtering and configurable production bounds;
 4. full TUM/ARKitScenes sample runs and geometry accuracy reports;
 5. production mesh refinement: exact-zero cells, normals, connected-component
@@ -89,9 +92,10 @@ The suite must finish with `OK`.
 
 Then follow the point-cloud, fixed/automatic/sparse TSDF, candidate-block,
 strict plan verification, empty block allocation, signed voxel addressing,
-single-observation voxel contribution, surface-point, and triangle-mesh
-commands in the repository README. Their deterministic hashes, inferred
-bounds, dense/sparse parity, planned block coordinates, replay binding,
-zero-state storage layout, signed address round-trips, proposed contribution
-deltas, fusion weights, signed values, exact coordinates, topology, winding,
-and boundary counts provide checks independent of visual appearance.
+single-observation voxel contribution, single-slot contribution application,
+surface-point, and triangle-mesh commands in the repository README. Their
+deterministic hashes, inferred bounds, dense/sparse parity, planned block
+coordinates, replay binding, zero-state storage layout, signed address
+round-trips, proposed and applied contribution deltas, before/after receipts,
+fusion weights, signed values, exact coordinates, topology, winding, and
+boundary counts provide checks independent of visual appearance.

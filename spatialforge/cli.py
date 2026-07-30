@@ -37,6 +37,7 @@ from .tsdf_block_storage import allocate_empty_tsdf_blocks
 from .tsdf_bounds import infer_tsdf_bounds
 from .tsdf_voxel_address import locate_tsdf_voxel
 from .tsdf_voxel_contribution import evaluate_tsdf_voxel_contribution
+from .tsdf_voxel_update import apply_tsdf_voxel_contribution
 from .tum_importer import import_tum_dataset
 
 
@@ -98,6 +99,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "tsdf-block-contribution":
             return _run_tsdf_block_contribution(
+                arguments.plan,
+                arguments.session,
+                arguments.observation_sequence,
+                arguments.voxel,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-contribution-apply"
+        ):
+            return _run_tsdf_block_contribution_apply(
                 arguments.plan,
                 arguments.session,
                 arguments.observation_sequence,
@@ -440,6 +451,45 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar=("GX", "GY", "GZ"),
         help="One planned signed global voxel XYZ to evaluate.",
+    )
+
+    block_contribution_apply = reconstruct_commands.add_parser(
+        "tsdf-block-contribution-apply",
+        help=(
+            "Evaluate and apply one accepted contribution to one temporary "
+            "planned voxel slot."
+        ),
+        description=(
+            "Strictly load and replay-match a block plan, allocate temporary "
+            "storage, evaluate one selected observation at one planned "
+            "voxel, and apply that accepted contribution to exactly one "
+            "slot. The mutated storage is discarded and no artifact is "
+            "written."
+        ),
+    )
+    block_contribution_apply.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose temporary storage is updated.",
+    )
+    block_contribution_apply.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory to replay-bind through mutation.",
+    )
+    block_contribution_apply.add_argument(
+        "--observation-sequence",
+        type=int,
+        default=0,
+        help="Zero-based replay observation sequence (default: 0).",
+    )
+    block_contribution_apply.add_argument(
+        "--voxel",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("GX", "GY", "GZ"),
+        help="One planned signed global voxel XYZ to evaluate and update.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -1101,6 +1151,131 @@ def _run_tsdf_block_contribution(
     print("storage_mutated: no", file=sys.stdout)
     print("missing_blocks_created: no", file=sys.stdout)
     print("artifact_written: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {plan.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_contribution_apply(
+    plan_path: Path,
+    session_path: Path,
+    observation_sequence: int,
+    voxel: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        address = locate_tsdf_voxel(storage, tuple(voxel))
+        if address is None:
+            raise TsdfError(
+                f"global voxel {tuple(voxel)} is not in a planned block"
+            )
+        contribution = evaluate_tsdf_voxel_contribution(
+            storage,
+            address,
+            session,
+            observation_sequence,
+        )
+        storage_before = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+        receipt = apply_tsdf_voxel_contribution(
+            storage,
+            contribution,
+            session,
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTRIBUTION APPLY FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTRIBUTION APPLY FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTRIBUTION APPLY CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        f"observation_sequence: {contribution.observation_sequence}",
+        file=sys.stdout,
+    )
+    print(
+        "voxel: "
+        f"global={address.global_index_xyz} "
+        f"block={address.block_index_xyz} "
+        f"local={address.local_index_xyz} "
+        f"row={address.block_row} "
+        f"array={address.array_index_bzyx} "
+        f"storage_flat={address.storage_flat_index}",
+        file=sys.stdout,
+    )
+    print(f"evaluation: {contribution.status.value}", file=sys.stdout)
+    print(
+        "slot_before: "
+        f"tsdf_sum={receipt.tsdf_sum_before:.9f} "
+        f"weight={receipt.weight_before}",
+        file=sys.stdout,
+    )
+    print(
+        "applied_delta: "
+        f"tsdf_sum={contribution.tsdf_sum_delta:.9f} "
+        f"weight={contribution.weight_delta}",
+        file=sys.stdout,
+    )
+    print(
+        "slot_after: "
+        f"tsdf_sum={receipt.tsdf_sum_after:.9f} "
+        f"weight={receipt.weight_after}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_before: "
+        f"nonzero_sums={storage_before[0]} "
+        f"nonzero_weights={storage_before[1]} "
+        f"unknown_voxels={storage_before[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print("contributions_evaluated: 1", file=sys.stdout)
+    print("contributions_applied: 1", file=sys.stdout)
+    print("storage_slots_updated: 1", file=sys.stdout)
+    print("fusion_block_traversal_performed: no", file=sys.stdout)
+    print("ray_traversal_performed: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
     print(
         f"plan_sha256: {plan.artifact_digest_sha256}",
         file=sys.stdout,

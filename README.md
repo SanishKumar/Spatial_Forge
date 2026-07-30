@@ -26,11 +26,14 @@ This repository currently implements these narrow foundations:
 - read-only evaluation of one replay-selected observation at one planned
   voxel, returning an immutable projective TSDF sum/weight delta when exact
   depth and pose exist, or a skip diagnostic, without applying it;
+- plan- and replay-bound application of one accepted contribution to exactly
+  one addressed temporary storage slot, with an immutable before/after
+  receipt and rollback on a caught post-write replay failure;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-Applying block contributions, camera-to-surface free-space coverage, sparse
+Multi-observation block fusion, camera-to-surface free-space coverage, sparse
 traversal and full-sequence optimization, robust outlier filtering, production
 meshing, normals, SLAM, map packages, mobile capture, and the visual inspector
 are deliberately not implemented yet.
@@ -339,10 +342,68 @@ arrays zero, and writes no artifact.
 
 This single-voxel rule retains the reference TSDF sign and truncation
 conventions, but it does not decide which camera-to-surface free-space blocks
-should exist. Applying deltas, block/frame traversal, free-space coverage,
-fusion, and persistence remain separate later checkpoints. The exact result
-and skip contract is documented in
+should exist. This read-only command applies no delta. The one-slot command
+below demonstrates the separate scalar mutation primitive; block/frame
+traversal, free-space coverage, full fusion, and persistence remain later
+checkpoints. The exact result and skip contract is documented in
 [`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md).
+
+Apply that accepted contribution to its one temporary storage slot:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-contribution-apply `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession `
+  --observation-sequence 0 `
+  --voxel 8 -1 -1
+```
+
+Relevant output:
+
+```text
+TSDF BLOCK CONTRIBUTION APPLY CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+observation_sequence: 0
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+evaluation: contributes
+slot_before: tsdf_sum=0.000000000 weight=0
+applied_delta: tsdf_sum=-0.125000000 weight=1
+slot_after: tsdf_sum=-0.125000000 weight=1
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=1 nonzero_weights=1 unknown_voxels=4095
+contributions_evaluated: 1
+contributions_applied: 1
+storage_slots_updated: 1
+fusion_block_traversal_performed: no
+ray_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+artifact_written: no
+storage_persisted: no
+```
+
+The immutable receipt returned by the updater records the exact transition
+from sum/weight `(0, 0)`, through delta `(-0.125, 1)`, to `(-0.125, 1)`.
+Only that addressed slot changes:
+one previously unknown voxel becomes observed, so the nonzero counts become
+one and the unknown count falls from 4,096 to 4,095. A weight of one is one
+observation; it is not evidence of multi-view fusion.
+
+The contribution carries the source plan and replay SHA-256 digests. Before
+writing, the updater checks those values against the destination storage and
+current session replay. It checks replay again after the scalar writes and
+attempts to restore the prior slot values if a caught post-write failure or
+replay change occurs; an explicit error warns if rollback itself fails. This is
+an in-process rollback under exclusive access, not a persistent, crash-atomic,
+thread-safe transaction.
+
+There is no observation ledger: calling the API again with the same accepted
+contribution applies the same delta again while the replay and accumulator
+preconditions remain valid. Duplicate prevention, block/ray traversal,
+free-space planning, full fusion, normalization, and persistent output remain
+deferred. The exact mutation and failure contract is documented in
+[`docs/tsdf-voxel-update.md`](docs/tsdf-voxel-update.md).
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -386,6 +447,8 @@ signed voxel addressing is in
 [`docs/tsdf-voxel-addressing.md`](docs/tsdf-voxel-addressing.md),
 single-observation voxel evaluation is in
 [`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md),
+single-slot temporary voxel mutation is in
+[`docs/tsdf-voxel-update.md`](docs/tsdf-voxel-update.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in
