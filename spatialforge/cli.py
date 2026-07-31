@@ -35,6 +35,7 @@ from .tsdf_block_plan_loader import (
 )
 from .tsdf_block_storage import allocate_empty_tsdf_blocks
 from .tsdf_bounds import infer_tsdf_bounds
+from .tsdf_replay_depth_context import build_tsdf_replay_depth_context
 from .tsdf_voxel_address import locate_tsdf_voxel
 from .tsdf_voxel_contribution import evaluate_tsdf_voxel_contribution
 from .tsdf_voxel_traversal import traverse_tsdf_voxel_observations
@@ -84,6 +85,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "tsdf-block-plan-verify":
             return _run_tsdf_block_plan_verify(
+                arguments.plan,
+                arguments.session,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-replay-context"
+        ):
+            return _run_tsdf_block_replay_context(
                 arguments.plan,
                 arguments.session,
             )
@@ -362,6 +371,30 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory to match.",
+    )
+
+    block_replay_context = reconstruct_commands.add_parser(
+        "tsdf-block-replay-context",
+        help=(
+            "Build an immutable replay/depth context from a matched plan; "
+            "does not allocate TSDF storage or evaluate voxels."
+        ),
+        description=(
+            "Strictly load and replay-match a block plan, then decode each "
+            "ready selected depth frame once into an immutable in-memory "
+            "context. The context is discarded when this read-only "
+            "diagnostic exits."
+        ),
+    )
+    block_replay_context.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact to validate.",
+    )
+    block_replay_context.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory to replay and match.",
     )
 
     block_allocate = reconstruct_commands.add_parser(
@@ -872,6 +905,97 @@ def _run_tsdf_block_plan_verify(
     )
     print(
         f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_replay_context(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK REPLAY DEPTH CONTEXT FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK REPLAY DEPTH CONTEXT FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK REPLAY DEPTH CONTEXT CHECK {context.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={len(context.selected_observation_sequences)}",
+        file=sys.stdout,
+    )
+    for index, observation in enumerate(context.observations):
+        print(
+            f"observation[{index}]: "
+            f"sequence={observation.observation_sequence} "
+            f"status={observation.status.value} "
+            "depth_decoded="
+            f"{'yes' if observation.depth_m is not None else 'no'}",
+            file=sys.stdout,
+        )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in context.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(
+        f"ready_observations: {context.ready_observation_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"depth_frames_decoded: {context.depth_frames_decoded}",
+        file=sys.stdout,
+    )
+    print(
+        "depth_layout: "
+        f"shape=({context.camera.height}, {context.camera.width}) "
+        "dtype=float64 "
+        f"samples={context.depth_sample_count} "
+        f"payload_bytes={context.depth_payload_bytes}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("tsdf_storage_allocated: no", file=sys.stdout)
+    print("voxel_evaluation_performed: no", file=sys.stdout)
+    print("voxel_observation_traversal_performed: no", file=sys.stdout)
+    print("voxel_address_traversal_performed: no", file=sys.stdout)
+    print("fusion_block_traversal_performed: no", file=sys.stdout)
+    print("ray_traversal_performed: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {context.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {context.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

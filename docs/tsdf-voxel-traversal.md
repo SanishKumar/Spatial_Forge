@@ -219,12 +219,19 @@ path. This intentionally redundant behavior preserves the established safety
 contracts, but it is a diagnostic CPU reference rather than a scalable fusion
 loop.
 
-Before traversal expands to many voxel addresses, it needs a shared verified
-replay/depth context, culling, and an execution design that does not repeatedly
-rehash and decode the same inputs.
+A standalone [`TsdfReplayDepthContext`](tsdf-replay-depth-context.md) now
+prepares the canonical selected-observation tuple and immutable metric depth
+frames once. This traversal does not consume that context yet: its public API
+still accepts a `ScanSession`, and its evaluator and updater retain the
+repeated replay, hashing, and decoding behavior above. A separate checkpoint
+must add context-aware evaluation and guarded application with numerical,
+diagnostic, provenance, and rollback parity before traversal expands to many
+voxel addresses. Culling and the wider execution design also remain deferred.
 
 ## Explicitly deferred
 
+- consuming `TsdfReplayDepthContext` in contribution evaluation, guarded
+  application, or this traversal;
 - iterating any other planned voxel, block, frustum, or camera ray;
 - camera-to-surface free-space block planning, visibility, and occlusion;
 - dynamic block insertion, eviction, streaming, adaptive resolution, and

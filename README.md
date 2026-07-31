@@ -32,10 +32,16 @@ This repository currently implements these narrow foundations:
 - deterministic traversal of every replay observation selected by the plan
   for one addressed voxel, evaluating all results before mutation and then
   accumulating accepted contributions in canonical observation order;
+- plan- and replay-bound construction of a frozen in-memory
+  `TsdfReplayDepthContext` for every observation selected by the block plan,
+  decoding each ready aligned-depth frame exactly once into immutable,
+  C-contiguous float64 metric storage;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
+The prepared replay/depth context is not yet consumed by the single-voxel
+traversal, which still uses the deliberately redundant scalar reference path.
 Planned-address and block traversal, camera-to-surface free-space coverage,
 full block fusion, scalable sparse execution, robust outlier filtering,
 production meshing, normals, SLAM, map packages, mobile capture, and the visual
@@ -477,6 +483,60 @@ access, not crash atomicity or thread safety. The exact traversal, guard, and
 rollback contract is documented in
 [`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md).
 
+Prepare the shared selected-observation replay/depth snapshot independently:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-replay-context `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession
+```
+
+Relevant output:
+
+```text
+TSDF BLOCK REPLAY DEPTH CONTEXT CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+selection: frame_stride=1 total=2 selected=2
+observation[0]: sequence=0 status=ready depth_decoded=yes
+observation[1]: sequence=1 status=ready depth_decoded=yes
+status_counts: ready=2
+ready_observations: 2
+depth_frames_decoded: 2
+depth_layout: shape=(2, 2) dtype=float64 samples=8 payload_bytes=64
+context_immutable: yes
+tsdf_storage_allocated: no
+voxel_evaluation_performed: no
+voxel_observation_traversal_performed: no
+voxel_address_traversal_performed: no
+fusion_block_traversal_performed: no
+ray_traversal_performed: no
+full_fusion_performed: no
+artifact_written: no
+context_persisted: no
+plan_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
+replay_digest_sha256: dc001ae0ca01004a21ad227b12d57a7350bbc23904040453ca73fd955ef050b8
+```
+
+The plan selects sequences `0` and `1`. Both are ready, so the builder decodes
+their aligned `2 x 2` depth payloads once. The immutable float64 metric frames
+contain `1.0` and `0.9500000000000001`, respectively: eight samples and 64
+retained numeric bytes in total. The builder brackets preparation with equal
+replay digests and returns a frozen, bytes-backed in-memory snapshot. It does
+not allocate TSDF storage, evaluate or update a voxel, traverse observations
+for fusion, or write an artifact.
+
+The replay digest proves the inputs at construction time. It does not monitor
+the session folder afterward; later file changes cannot mutate an already
+built context. Rebuild the context when current folder contents are required.
+The retained numeric depth payload is capped at 512 MiB, although peak build
+memory is higher because decoding temporarily holds the decoder result, a
+mutable float64 frame, and its immutable byte copy. This standalone checkpoint
+does not yet reduce the cost of `tsdf-block-voxel-traverse`: wiring the context
+into evaluation and guarded application is the next separate phase. The exact
+snapshot, memory, and failure contract is documented in
+[`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md).
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 
@@ -523,6 +583,8 @@ single-slot temporary voxel mutation is in
 [`docs/tsdf-voxel-update.md`](docs/tsdf-voxel-update.md),
 single-voxel traversal across selected observations is in
 [`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md),
+immutable selected-observation replay/depth preparation is in
+[`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in

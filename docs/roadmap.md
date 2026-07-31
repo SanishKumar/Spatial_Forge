@@ -35,6 +35,10 @@ The project is intentionally advancing through small, testable checkpoints.
   one addressed voxel, with evaluate-all-then-apply ordering, stable skip
   accounting, an empty-target duplicate guard, and traversal-wide rollback
   after caught application-phase failures.
+- Plan- and replay-bound construction of a frozen in-memory
+  `TsdfReplayDepthContext` for every selected observation, decoding each ready
+  aligned-depth frame exactly once into immutable C-contiguous float64 metric
+  storage. This standalone context is not yet consumed by voxel traversal.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -48,18 +52,22 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. traverse planned voxel addresses and blocks, decide and plan
+1. make contribution evaluation and one-voxel traversal consume the prepared
+   `TsdfReplayDepthContext` without reopening depth payloads or replay-hashing
+   per selected observation, while preserving exact diagnostics, sequential
+   float64 accumulation, provenance checks, and traversal-wide rollback;
+2. traverse planned voxel addresses and blocks, decide and plan
    camera-to-surface free-space coverage, replace the single-voxel empty-target
    guard with an explicit cross-call observation/idempotency policy, and report
    complete block-fusion diagnostics;
-2. culled, scalable sparse traversal, larger-volume artifacts and consumers,
+3. culled, scalable sparse traversal, larger-volume artifacts and consumers,
    and an optimized backend suitable for full sequences;
-3. robust depth/pose outlier filtering and configurable production bounds;
-4. full TUM/ARKitScenes sample runs and geometry accuracy reports;
-5. production mesh refinement: exact-zero cells, normals, connected-component
+4. robust depth/pose outlier filtering and configurable production bounds;
+5. full TUM/ARKitScenes sample runs and geometry accuracy reports;
+6. production mesh refinement: exact-zero cells, normals, connected-component
    and quality validation, and an optimized extraction backend;
-6. gravity/floor alignment, floor and wall candidates, and openings; and
-7. a top-down/3D Inspector view.
+7. gravity/floor alignment, floor and wall candidates, and openings; and
+8. a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -97,11 +105,11 @@ The suite must finish with `OK`.
 Then follow the point-cloud, fixed/automatic/sparse TSDF, candidate-block,
 strict plan verification, empty block allocation, signed voxel addressing,
 single-observation voxel contribution, single-slot contribution application,
-single-voxel selected-observation traversal, surface-point, and triangle-mesh
-commands in the repository README. Their
+single-voxel selected-observation traversal, immutable replay/depth context,
+surface-point, and triangle-mesh commands in the repository README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block
 coordinates, replay binding, zero-state storage layout, signed address
 round-trips, proposed and applied contribution deltas, before/after receipts,
-selected/evaluated/applied traversal counts, fusion weights, signed values,
-exact coordinates, topology, winding, and boundary counts provide checks
-independent of visual appearance.
+selected/evaluated/applied traversal counts, immutable metric-depth layout,
+fusion weights, signed values, exact coordinates, topology, winding, and
+boundary counts provide checks independent of visual appearance.

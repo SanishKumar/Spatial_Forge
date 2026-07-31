@@ -18,6 +18,13 @@ from .tsdf_block_storage import (
     TsdfBlockStorage,
     allocate_empty_tsdf_blocks,
 )
+from .tsdf_replay_depth_context import (
+    MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES,
+    TsdfReplayDepthContext,
+    TsdfReplayDepthObservation,
+    TsdfReplayDepthStatus,
+    build_tsdf_replay_depth_context,
+)
 from .tsdf_voxel_address import (
     TsdfVoxelAddress,
     compose_tsdf_global_voxel_index,
@@ -53,6 +60,9 @@ __all__ = [
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
     "TsdfContributionStatus",
+    "TsdfReplayDepthContext",
+    "TsdfReplayDepthObservation",
+    "TsdfReplayDepthStatus",
     "TsdfVoxelTraversalReceipt",
     "TsdfVoxelUpdateReceipt",
     "TsdfVoxelAddress",
@@ -60,6 +70,7 @@ __all__ = [
     "TumImportReport",
     "allocate_empty_tsdf_blocks",
     "apply_tsdf_voxel_contribution",
+    "build_tsdf_replay_depth_context",
     "compose_tsdf_global_voxel_index",
     "evaluate_tsdf_voxel_contribution",
     "extract_surface_points",
@@ -72,6 +83,7 @@ __all__ = [
     "load_tsdf_block_plan",
     "locate_tsdf_voxel",
     "MAX_TSDF_VOXEL_WEIGHT",
+    "MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES",
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",
