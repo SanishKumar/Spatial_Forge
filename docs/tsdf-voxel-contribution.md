@@ -63,6 +63,39 @@ sampling and again after evaluation. A session mismatch, stale replay digest,
 out-of-range or unselected observation sequence, address/storage mismatch, or
 invalid reconstruction contract raises `TsdfError`.
 
+## Prepared-context public API
+
+The separate context-aware evaluator has the same one-observation, one-voxel,
+read-only result boundary:
+
+```python
+contribution = evaluate_tsdf_voxel_contribution_from_context(
+    storage,
+    address,
+    context,
+    observation_sequence,
+)
+```
+
+Its `context` must be a frozen `TsdfReplayDepthContext` whose session ID,
+source-plan digest, replay digest, frame selection, depth-sample counts, and
+paired-pixel capacity match the destination storage's strict-loaded plan. The
+address must still re-resolve exactly, and the requested sequence must be one
+of the context's canonical plan-selected observations.
+
+The evaluator takes no `ScanSession`. For a ready record, it uses the copied
+`T_world_camera`, a fresh read-only view of the immutable metric depth bytes,
+and the context camera. Missing-input context statuses map directly to the
+existing contribution skip statuses. The function returns the same frozen
+`TsdfVoxelContribution` type and applies the same projective rule below.
+
+Context construction already replay-hashed the source inputs, decoded each
+ready selected depth frame once, and copied the poses. This scalar evaluation
+does not replay or hash the session, reopen a depth file, decode depth, mutate
+storage, or iterate another observation or voxel. Its provenance is the
+context's construction-time plan and replay binding, not a new current-folder
+freshness check.
+
 ## Projective contribution rule
 
 For signed global voxel index `(gx, gy, gz)` and plan voxel edge length `s`,
@@ -206,6 +239,67 @@ The final boundary lines are as important as the numerical result. The
 temporary storage still has zero sums and weights, no missing block was
 created, no fusion ran, and no output artifact was written.
 
+## Exact prepared-context fixture proof
+
+Evaluate the same observation and voxel from the immutable replay/depth
+context:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-contribution `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0 `
+  --voxel 8 -1 -1
+```
+
+The exact output is:
+
+```text
+TSDF BLOCK CONTEXT CONTRIBUTION CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+context_selection: frame_stride=1 total=2 selected=2
+context_immutable: yes
+depth_source: replay-depth-context
+observation_sequence: 0
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+world_xyz_m: (1.062500000, -0.062500000, -0.062500000)
+camera_xyz_m: (0.062500000, 0.062500000, 1.062500000)
+projected_uv: (0.617647059, 0.617647059)
+pixel_uv: (1, 1)
+depth_decoded: yes
+measured_depth_m: 1.000000000
+signed_distance_m: -0.062500000
+evaluation: contributes
+proposed_delta: tsdf_sum=-0.125000000 weight=1
+evaluation_replay_hashing: no
+evaluation_depth_decoding: no
+contributions_applied: 0
+storage_mutated: no
+voxel_observation_traversal_performed: no
+voxel_address_traversal_performed: no
+fusion_block_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+artifact_written: no
+context_persisted: no
+plan_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
+replay_digest_sha256: dc001ae0ca01004a21ad227b12d57a7350bbc23904040453ca73fd955ef050b8
+```
+
+The command performs source I/O before this evaluation stage: it builds the
+full selected-observation context and allocates replay-matched temporary
+storage. `depth_decoded: yes` describes the already prepared record.
+`evaluation_replay_hashing: no` and `evaluation_depth_decoding: no` describe
+only the subsequent scalar evaluation. Its camera point, projection, pixel,
+measurement, signed distance, status, and proposed delta exactly match the
+session-backed proof above.
+
+The remaining boundary lines prove that this checkpoint still evaluates only
+sequence zero at one address. It applies no contribution, mutates no storage,
+does not invoke selected-observation or address traversal, creates no block,
+and writes or persists no artifact.
+
 ## Mutation consumers
 
 An accepted contribution can now be applied to one destination slot:
@@ -221,11 +315,13 @@ receipt = apply_tsdf_voxel_contribution(
 The updater checks the contribution's plan and replay provenance, re-resolves
 its address, replay-checks the current session around the mutation, and returns
 an immutable before/after receipt. It does not make this evaluator mutating.
+It is unchanged by the prepared-context evaluator and still requires a current
+`ScanSession`; this checkpoint does not add context-bound mutation.
 The exact update, rollback, and repeated-application rules are documented in
 [`tsdf-voxel-update.md`](tsdf-voxel-update.md).
 
-The selected-observation traversal calls this evaluator for one fixed address
-and every replay observation selected by the plan:
+The selected-observation traversal still calls the session-backed evaluator
+for one fixed address and every replay observation selected by the plan:
 
 ```python
 traversal = traverse_tsdf_voxel_observations(
@@ -238,8 +334,8 @@ traversal = traverse_tsdf_voxel_observations(
 It evaluates every selected sequence before applying any accepted result, then
 uses the separate updater in canonical observation order. Skips remain
 immutable diagnostics and are not passed to the updater. The traversal is a
-consumer of this read-only evaluator; it does not change the evaluator's
-single-observation contract. See
+consumer of the session-backed read-only evaluator; it does not call
+`evaluate_tsdf_voxel_contribution_from_context`. See
 [`tsdf-voxel-traversal.md`](tsdf-voxel-traversal.md).
 
 ## Explicitly deferred
@@ -249,6 +345,8 @@ single-observation contract. See
   while other voxels, blocks, frusta, and rays remain deferred;
 - applying proposed deltas within this read-only evaluator; the separate
   update primitive applies one accepted delta only;
+- context-bound guarded application and rewiring selected-observation
+  traversal to use the prepared-context evaluator;
 - normalization, sensor-dependent weighting, an observation ledger, or a
   block-wide multi-observation fusion loop;
 - deciding or planning full camera-to-surface free-space block coverage;

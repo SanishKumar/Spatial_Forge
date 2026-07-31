@@ -18,6 +18,10 @@ from .point_cloud import (
 from .replay import replay_session
 from .tsdf_block_plan_loader import TsdfBlockPlan
 from .tsdf_block_storage import TsdfBlockStorage
+from .tsdf_replay_depth_context import (
+    TsdfReplayDepthContext,
+    TsdfReplayDepthStatus,
+)
 from .tsdf_voxel_address import TsdfVoxelAddress, locate_tsdf_voxel
 
 _Point2 = tuple[float, float]
@@ -299,6 +303,120 @@ def evaluate_tsdf_voxel_contribution(
     return result
 
 
+def evaluate_tsdf_voxel_contribution_from_context(
+    storage: TsdfBlockStorage,
+    address: TsdfVoxelAddress,
+    context: TsdfReplayDepthContext,
+    observation_sequence: int,
+) -> TsdfVoxelContribution:
+    """Evaluate one prepared observation without replay or depth I/O."""
+
+    if not isinstance(storage, TsdfBlockStorage):
+        raise TsdfError(
+            "TSDF context contribution evaluation requires allocated "
+            "TsdfBlockStorage"
+        )
+    if not isinstance(address, TsdfVoxelAddress):
+        raise TsdfError(
+            "TSDF context contribution evaluation requires a "
+            "TsdfVoxelAddress"
+        )
+    if not isinstance(context, TsdfReplayDepthContext):
+        raise TsdfError(
+            "TSDF context contribution evaluation requires a prepared "
+            "TsdfReplayDepthContext"
+        )
+    if isinstance(observation_sequence, bool) or not isinstance(
+        observation_sequence,
+        int,
+    ):
+        raise TsdfError("observation_sequence: expected an integer")
+    if observation_sequence < 0:
+        raise TsdfError(
+            "observation_sequence: expected a non-negative integer"
+        )
+
+    resolved_address = locate_tsdf_voxel(
+        storage,
+        address.global_index_xyz,
+    )
+    if resolved_address != address:
+        raise TsdfError(
+            "TSDF voxel address does not match the allocated block storage"
+        )
+
+    plan = storage.source_plan
+    _validate_contribution_plan(plan)
+    _validate_contribution_context(plan, context)
+    if observation_sequence >= context.total_observations:
+        raise TsdfError(
+            "observation_sequence: outside context range "
+            f"[0, {context.total_observations - 1}]"
+        )
+    if observation_sequence % context.frame_stride != 0:
+        raise TsdfError(
+            "observation_sequence: not selected by the block plan's "
+            f"frame_stride={context.frame_stride}"
+        )
+
+    observation = context.observations[
+        observation_sequence // context.frame_stride
+    ]
+    if observation.observation_sequence != observation_sequence:
+        raise TsdfError(
+            "TSDF replay/depth context observation lookup is inconsistent"
+        )
+    world_xyz_m = _voxel_center_world_m(
+        address.global_index_xyz,
+        plan.voxel_size_m,
+    )
+    if observation.status is TsdfReplayDepthStatus.MISSING_DEPTH_AND_POSE:
+        return _skipped(
+            address,
+            observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
+            TsdfContributionStatus.MISSING_DEPTH_AND_POSE,
+            world_xyz_m,
+        )
+    if observation.status is TsdfReplayDepthStatus.MISSING_DEPTH:
+        return _skipped(
+            address,
+            observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
+            TsdfContributionStatus.MISSING_DEPTH,
+            world_xyz_m,
+        )
+    if observation.status is TsdfReplayDepthStatus.MISSING_POSE:
+        return _skipped(
+            address,
+            observation_sequence,
+            plan.artifact_digest_sha256,
+            plan.replay_digest_sha256,
+            TsdfContributionStatus.MISSING_POSE,
+            world_xyz_m,
+        )
+
+    transform = observation.t_world_camera
+    depth_m = observation.depth_m
+    if transform is None or depth_m is None:
+        raise TsdfError(
+            "ready TSDF replay/depth observation is incomplete"
+        )
+    return _evaluate_metric_observation(
+        address,
+        observation_sequence,
+        plan.artifact_digest_sha256,
+        plan.replay_digest_sha256,
+        plan.truncation_m,
+        context.camera,
+        transform,
+        depth_m,
+        world_xyz_m,
+    )
+
+
 def _evaluate_complete_observation(
     address: TsdfVoxelAddress,
     observation_sequence: int,
@@ -323,6 +441,32 @@ def _evaluate_complete_observation(
 
     with np.errstate(over="ignore", invalid="ignore"):
         depth_metres = depth_values * depth_scale_m
+
+    return _evaluate_metric_observation(
+        address,
+        observation_sequence,
+        source_plan_digest_sha256,
+        replay_digest_sha256,
+        truncation_m,
+        camera,
+        transform,
+        depth_metres,
+        world_xyz_m,
+    )
+
+
+def _evaluate_metric_observation(
+    address: TsdfVoxelAddress,
+    observation_sequence: int,
+    source_plan_digest_sha256: str,
+    replay_digest_sha256: str,
+    truncation_m: float,
+    camera: CameraCalibration,
+    transform: tuple[object, ...],
+    depth_metres: np.ndarray,
+    world_xyz_m: _Point3,
+) -> TsdfVoxelContribution:
+    """Evaluate one already-decoded metric depth frame."""
 
     camera_xyz_m = _world_to_camera(transform, world_xyz_m)
     if camera_xyz_m is None:
@@ -523,6 +667,45 @@ def _validate_contribution_plan(plan: TsdfBlockPlan) -> None:
         raise TsdfError(
             "TSDF block plan frame_stride must be a positive integer"
         )
+    for value, label in (
+        (plan.total_observations, "total_observations"),
+        (plan.selected_observations, "selected_observations"),
+        (plan.paired_observations, "paired_observations"),
+        (plan.valid_depth_points, "valid_depth_points"),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise TsdfError(
+                f"TSDF block plan {label} must be a positive integer"
+            )
+    for value, label in (
+        (plan.skipped_missing_depth, "skipped_missing_depth"),
+        (plan.skipped_missing_pose, "skipped_missing_pose"),
+        (plan.invalid_depth_samples, "invalid_depth_samples"),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise TsdfError(
+                f"TSDF block plan {label} must be a nonnegative integer"
+            )
+    expected_selected = (
+        (plan.total_observations - 1) // plan.frame_stride
+    ) + 1
+    if plan.selected_observations != expected_selected:
+        raise TsdfError(
+            "TSDF block plan selected observations do not match its stride"
+        )
+    if plan.paired_observations > plan.selected_observations:
+        raise TsdfError(
+            "TSDF block plan paired observations exceed selection"
+        )
+    skipped = plan.selected_observations - plan.paired_observations
+    if not (
+        max(plan.skipped_missing_depth, plan.skipped_missing_pose)
+        <= skipped
+        <= plan.skipped_missing_depth + plan.skipped_missing_pose
+    ):
+        raise TsdfError(
+            "TSDF block plan missing-input counts are inconsistent"
+        )
     expected_extent = plan.voxel_size_m * plan.block_resolution
     if (
         not math.isfinite(expected_extent)
@@ -530,6 +713,55 @@ def _validate_contribution_plan(plan: TsdfBlockPlan) -> None:
     ):
         raise TsdfError(
             "TSDF block plan block_extent_m does not match its voxel grid"
+        )
+
+
+def _validate_contribution_context(
+    plan: TsdfBlockPlan,
+    context: TsdfReplayDepthContext,
+) -> None:
+    if context.source_plan_digest_sha256 != plan.artifact_digest_sha256:
+        raise TsdfError(
+            "TSDF replay/depth context source plan digest does not match "
+            "block storage"
+        )
+    if context.replay_digest_sha256 != plan.replay_digest_sha256:
+        raise TsdfError(
+            "TSDF replay/depth context replay digest does not match block "
+            "storage"
+        )
+    if context.session_id != plan.session_id:
+        raise TsdfError(
+            "TSDF replay/depth context session_id does not match block "
+            "storage"
+        )
+
+    if (
+        context.frame_stride != plan.frame_stride
+        or context.total_observations != plan.total_observations
+        or context.selected_observation_count != plan.selected_observations
+    ):
+        raise TsdfError(
+            "TSDF replay/depth context selection does not match block plan"
+        )
+    if (
+        context.valid_depth_samples != plan.valid_depth_points
+        or context.invalid_depth_samples != plan.invalid_depth_samples
+    ):
+        raise TsdfError(
+            "TSDF replay/depth context sample counts do not match block plan"
+        )
+    expected_samples = (
+        plan.paired_observations
+        * context.camera.width
+        * context.camera.height
+    )
+    if (
+        plan.valid_depth_points + plan.invalid_depth_samples
+        != expected_samples
+    ):
+        raise TsdfError(
+            "TSDF block plan depth samples do not match context camera"
         )
 
 

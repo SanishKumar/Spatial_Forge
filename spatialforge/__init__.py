@@ -34,6 +34,7 @@ from .tsdf_voxel_contribution import (
     TsdfContributionStatus,
     TsdfVoxelContribution,
     evaluate_tsdf_voxel_contribution,
+    evaluate_tsdf_voxel_contribution_from_context,
 )
 from .tsdf_voxel_traversal import (
     TsdfVoxelTraversalReceipt,
@@ -73,6 +74,7 @@ __all__ = [
     "build_tsdf_replay_depth_context",
     "compose_tsdf_global_voxel_index",
     "evaluate_tsdf_voxel_contribution",
+    "evaluate_tsdf_voxel_contribution_from_context",
     "extract_surface_points",
     "extract_triangle_mesh",
     "import_tum_dataset",

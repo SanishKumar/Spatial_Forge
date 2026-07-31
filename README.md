@@ -36,12 +36,17 @@ This repository currently implements these narrow foundations:
   `TsdfReplayDepthContext` for every observation selected by the block plan,
   decoding each ready aligned-depth frame exactly once into immutable,
   C-contiguous float64 metric storage;
+- read-only evaluation of exactly one prepared context observation at one
+  planned voxel, reusing its copied pose and immutable metric depth without
+  evaluation-time replay hashing or depth decoding and returning the existing
+  frozen contribution/skip contract without mutation;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-The prepared replay/depth context is not yet consumed by the single-voxel
-traversal, which still uses the deliberately redundant scalar reference path.
+The prepared replay/depth context is consumed only by the separate scalar
+context evaluator. The single-voxel traversal and updater still use the
+deliberately redundant session-backed reference path.
 Planned-address and block traversal, camera-to-surface free-space coverage,
 full block fusion, scalable sparse execution, robust outlier filtering,
 production meshing, normals, SLAM, map packages, mobile capture, and the visual
@@ -531,11 +536,72 @@ the session folder afterward; later file changes cannot mutate an already
 built context. Rebuild the context when current folder contents are required.
 The retained numeric depth payload is capped at 512 MiB, although peak build
 memory is higher because decoding temporarily holds the decoder result, a
-mutable float64 frame, and its immutable byte copy. This standalone checkpoint
-does not yet reduce the cost of `tsdf-block-voxel-traverse`: wiring the context
-into evaluation and guarded application is the next separate phase. The exact
-snapshot, memory, and failure contract is documented in
+mutable float64 frame, and its immutable byte copy. The context now supports
+one read-only scalar evaluation, but `tsdf-block-voxel-traverse` and the
+one-slot updater do not consume it yet. The exact snapshot, memory, and failure
+contract is documented in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md).
+
+Evaluate exactly one prepared observation at one planned voxel:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-contribution `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0 `
+  --voxel 8 -1 -1
+```
+
+Relevant output:
+
+```text
+TSDF BLOCK CONTEXT CONTRIBUTION CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+context_selection: frame_stride=1 total=2 selected=2
+context_immutable: yes
+depth_source: replay-depth-context
+observation_sequence: 0
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+world_xyz_m: (1.062500000, -0.062500000, -0.062500000)
+camera_xyz_m: (0.062500000, 0.062500000, 1.062500000)
+projected_uv: (0.617647059, 0.617647059)
+pixel_uv: (1, 1)
+depth_decoded: yes
+measured_depth_m: 1.000000000
+signed_distance_m: -0.062500000
+evaluation: contributes
+proposed_delta: tsdf_sum=-0.125000000 weight=1
+evaluation_replay_hashing: no
+evaluation_depth_decoding: no
+contributions_applied: 0
+storage_mutated: no
+voxel_observation_traversal_performed: no
+voxel_address_traversal_performed: no
+fusion_block_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+artifact_written: no
+context_persisted: no
+plan_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
+replay_digest_sha256: dc001ae0ca01004a21ad227b12d57a7350bbc23904040453ca73fd955ef050b8
+```
+
+This command still performs source I/O before evaluation: it replay-verifies
+the plan, builds the full selected-observation context, decodes its ready depth
+frames, and allocates replay-matched temporary storage. The two evaluation
+labels apply only to the final one-observation scalar stage. That stage reads
+the copied pose and immutable metric depth from the context, performs no replay
+hashing or depth decode, evaluates no second observation or voxel, applies no
+delta, and leaves storage unchanged. `depth_decoded: yes` means the selected
+context record already contains decoded metric depth; it does not contradict
+`evaluation_depth_decoding: no`.
+
+The result exactly matches the session-backed fixture contribution, including
+its `-0.125` sum delta and weight one. This proves numerical and diagnostic
+parity for one address and one observation only. A context-bound guarded
+one-slot apply is the next checkpoint; rewiring all selected observations for
+one voxel follows separately.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:

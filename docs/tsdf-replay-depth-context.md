@@ -13,11 +13,11 @@ preparation. Each selected observation with exact depth and known pose is
 recorded as ready, its pose is copied, and its aligned depth payload is decoded
 exactly once into immutable C-contiguous float64 metric storage.
 
-The result is a self-contained construction-time measurement snapshot for a
-future traversal checkpoint. It is not a live view of the `.vgsession` folder.
-It does not allocate or mutate TSDF storage, evaluate a voxel, traverse voxel
-addresses or blocks, trace a frustum or ray, plan free space, perform fusion,
-or write an artifact.
+The result is a self-contained construction-time measurement snapshot for
+scalar evaluation and a future traversal checkpoint. It is not a live view of
+the `.vgsession` folder. The builder itself does not allocate or mutate TSDF
+storage, evaluate a voxel, traverse voxel addresses or blocks, trace a frustum
+or ray, plan free space, perform fusion, or write an artifact.
 
 ## Public API and immutable records
 
@@ -197,25 +197,44 @@ observations for a voxel, visit another address or block, perform fusion, or
 write or persist an artifact. The context exists only for the life of the
 process.
 
-## Not yet consumed by traversal
+## First scalar consumer; not yet consumed by traversal
 
-`traverse_tsdf_voxel_observations` does not accept or use this context yet. It
-still calls the existing scalar evaluator and updater, which repeatedly replay
-and hash session inputs, and depth is still decoded through the per-observation
-evaluation path for this traversal.
+One prepared observation can now be evaluated at one planned voxel without
+source I/O:
 
-Replacing that redundant reference path requires a context-aware contribution
-evaluator and guarded application path. The future consumer must validate the
-context's plan and replay provenance, preserve the exact existing skip and
-contribution transcript, retain canonical sequential float64 application and
-traversal-wide rollback, and prove numerical and diagnostic parity. Reuse tests
-must also show that many voxel evaluations do not reopen depth payloads or
-rehash the replay per observation.
+```python
+contribution = evaluate_tsdf_voxel_contribution_from_context(
+    storage,
+    address,
+    context,
+    observation_sequence,
+)
+```
+
+The evaluator validates the context against the destination plan, reads the
+selected copied pose and immutable metric depth, and returns the existing
+frozen `TsdfVoxelContribution` or skip status. It performs no evaluation-time
+replay hashing or depth decoding and does not mutate storage or iterate another
+observation or voxel. Context building remains the earlier I/O stage: it must
+replay-check the session and decode ready frames before this evaluator runs.
+
+`traverse_tsdf_voxel_observations` does not accept or use this context-aware
+primitive yet. It still calls the session-backed scalar evaluator and updater,
+which repeatedly replay and hash session inputs, and depth is still decoded
+through the per-observation evaluation path for that traversal.
+
+The next checkpoint is context-bound guarded application of one accepted
+contribution to one addressed slot, preserving the current provenance,
+overflow, byte-verification, and rollback guarantees without replaying the
+session for every update. Only after that should one-voxel traversal be rewired
+to the context-aware scalar primitives while preserving its transcript,
+canonical sequential float64 application, duplicate guard, and traversal-wide
+rollback.
 
 ## Explicitly deferred
 
-- consuming the context in contribution evaluation, scalar application, or
-  single-voxel traversal;
+- consuming the context in guarded scalar application or single-voxel
+  selected-observation traversal;
 - iterating planned voxel addresses, blocks, frusta, or camera rays;
 - culling, visibility, occlusion, and camera-to-surface free-space planning;
 - TSDF storage allocation or mutation, complete block fusion, normalization,
