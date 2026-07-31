@@ -28,6 +28,10 @@ from .tsdf_voxel_contribution import (
     TsdfVoxelContribution,
     evaluate_tsdf_voxel_contribution,
 )
+from .tsdf_voxel_traversal import (
+    TsdfVoxelTraversalReceipt,
+    traverse_tsdf_voxel_observations,
+)
 from .tsdf_voxel_update import (
     MAX_TSDF_VOXEL_WEIGHT,
     TsdfVoxelUpdateReceipt,
@@ -49,6 +53,7 @@ __all__ = [
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
     "TsdfContributionStatus",
+    "TsdfVoxelTraversalReceipt",
     "TsdfVoxelUpdateReceipt",
     "TsdfVoxelAddress",
     "TsdfVoxelContribution",
@@ -70,6 +75,7 @@ __all__ = [
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",
+    "traverse_tsdf_voxel_observations",
     "verify_tsdf_block_plan_replay",
 ]
 

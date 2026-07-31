@@ -206,7 +206,7 @@ The final boundary lines are as important as the numerical result. The
 temporary storage still has zero sums and weights, no missing block was
 created, no fusion ran, and no output artifact was written.
 
-## Next one-slot consumer
+## Mutation consumers
 
 An accepted contribution can now be applied to one destination slot:
 
@@ -224,13 +224,33 @@ an immutable before/after receipt. It does not make this evaluator mutating.
 The exact update, rollback, and repeated-application rules are documented in
 [`tsdf-voxel-update.md`](tsdf-voxel-update.md).
 
+The selected-observation traversal calls this evaluator for one fixed address
+and every replay observation selected by the plan:
+
+```python
+traversal = traverse_tsdf_voxel_observations(
+    storage,
+    address,
+    session,
+)
+```
+
+It evaluates every selected sequence before applying any accepted result, then
+uses the separate updater in canonical observation order. Skips remain
+immutable diagnostics and are not passed to the updater. The traversal is a
+consumer of this read-only evaluator; it does not change the evaluator's
+single-observation contract. See
+[`tsdf-voxel-traversal.md`](tsdf-voxel-traversal.md).
+
 ## Explicitly deferred
 
-- iterating additional observations, voxels, blocks, frusta, or rays;
+- directly iterating additional observations inside this evaluator; the
+  separate traversal covers all plan-selected observations for one address,
+  while other voxels, blocks, frusta, and rays remain deferred;
 - applying proposed deltas within this read-only evaluator; the separate
   update primitive applies one accepted delta only;
-- normalization, sensor-dependent weighting, duplicate prevention, or a
-  multi-observation fusion loop;
+- normalization, sensor-dependent weighting, an observation ledger, or a
+  block-wide multi-observation fusion loop;
 - deciding or planning full camera-to-surface free-space block coverage;
 - dynamic block insertion, eviction, streaming, or persistent block storage;
 - block-backed `.sftsdf` output and sparse-aware surface or mesh consumers;

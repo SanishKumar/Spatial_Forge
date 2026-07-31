@@ -29,14 +29,17 @@ This repository currently implements these narrow foundations:
 - plan- and replay-bound application of one accepted contribution to exactly
   one addressed temporary storage slot, with an immutable before/after
   receipt and rollback on a caught post-write replay failure;
+- deterministic traversal of every replay observation selected by the plan
+  for one addressed voxel, evaluating all results before mutation and then
+  accumulating accepted contributions in canonical observation order;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-Multi-observation block fusion, camera-to-surface free-space coverage, sparse
-traversal and full-sequence optimization, robust outlier filtering, production
-meshing, normals, SLAM, map packages, mobile capture, and the visual inspector
-are deliberately not implemented yet.
+Planned-address and block traversal, camera-to-surface free-space coverage,
+full block fusion, scalable sparse execution, robust outlier filtering,
+production meshing, normals, SLAM, map packages, mobile capture, and the visual
+inspector are deliberately not implemented yet.
 
 ## Set up
 
@@ -200,9 +203,10 @@ block_bounds: min=(0, -1, -1) max=(1, 0, 0)
 output_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
 ```
 
-This `.sftplan` is a deterministic surface-neighborhood plan only. Fusion does
-not consume it yet, and it deliberately does not plan the dense reference
-backend's full camera-to-surface free-space updates.
+This `.sftplan` is a deterministic surface-neighborhood plan only. The narrow
+address, contribution, update, and one-voxel traversal diagnostics below
+consume it, but block-wide fusion does not. It deliberately does not plan the
+dense reference backend's full camera-to-surface free-space updates.
 
 Strictly load that artifact and check it against the current session replay:
 
@@ -343,9 +347,9 @@ arrays zero, and writes no artifact.
 This single-voxel rule retains the reference TSDF sign and truncation
 conventions, but it does not decide which camera-to-surface free-space blocks
 should exist. This read-only command applies no delta. The one-slot command
-below demonstrates the separate scalar mutation primitive; block/frame
-traversal, free-space coverage, full fusion, and persistence remain later
-checkpoints. The exact result and skip contract is documented in
+below demonstrates the separate scalar mutation primitive; other-address and
+block traversal, free-space coverage, full fusion, and persistence remain
+later checkpoints. The exact result and skip contract is documented in
 [`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md).
 
 Apply that accepted contribution to its one temporary storage slot:
@@ -400,10 +404,78 @@ thread-safe transaction.
 
 There is no observation ledger: calling the API again with the same accepted
 contribution applies the same delta again while the replay and accumulator
-preconditions remain valid. Duplicate prevention, block/ray traversal,
-free-space planning, full fusion, normalization, and persistent output remain
-deferred. The exact mutation and failure contract is documented in
+preconditions remain valid. Persistent per-observation duplicate tracking,
+block/ray traversal, free-space planning, full fusion, normalization, and
+persistent output remain deferred. The exact mutation and failure contract is
+documented in
 [`docs/tsdf-voxel-update.md`](docs/tsdf-voxel-update.md).
+
+Traverse every observation selected by the plan for that same one voxel:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-voxel-traverse `
+  outputs/progress-blocks.sftplan `
+  tests/fixtures/minimal.vgsession `
+  --voxel 8 -1 -1
+```
+
+Relevant output:
+
+```text
+TSDF BLOCK VOXEL TRAVERSAL CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+selection: frame_stride=1 total=2 selected=2
+slot_before: tsdf_sum=0.000000000 weight=0
+observation[0]: sequence=0 status=contributes delta_sum=-0.125000000 delta_weight=1
+observation[1]: sequence=1 status=contributes delta_sum=-0.125000000 delta_weight=1
+status_counts: contributes=2
+accumulated_delta: tsdf_sum=-0.250000000 weight=2
+slot_after: tsdf_sum=-0.250000000 weight=2
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=1 nonzero_weights=1 unknown_voxels=4095
+contributions_evaluated: 2
+contributions_applied: 2
+contributions_skipped: 0
+duplicate_observation_applications: 0
+storage_slots_updated: 1
+voxel_observation_traversal_performed: yes
+voxel_address_traversal_performed: no
+fusion_block_traversal_performed: no
+ray_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+artifact_written: no
+storage_persisted: no
+```
+
+The committed plan selects observation sequences `0` and `1`. The traversal
+evaluates both before applying either result. Their sequential float64 deltas
+are `-0.125` and `-0.12499999999999978`, each with weight one, so the one fresh
+target slot changes from raw sum/weight `(0, 0)` to
+`(-0.24999999999999978, 2)`. Nine-decimal CLI formatting displays that sum as
+`-0.250000000`. The derived normalized value is approximately `-0.125`, but
+this checkpoint stores only the accumulator sum and weight. Exactly one voxel
+becomes observed; its weight of two proves that two distinct selected
+observation sequences contributed during this traversal.
+
+The command reports selected, evaluated, contributing, skipped, and applied
+counts together with the target's before/after state.
+`voxel_observation_traversal_performed: yes` means it traversed the selected
+observations for this address; `voxel_address_traversal_performed: no` and
+`fusion_block_traversal_performed: no` preserve the one-address boundary. No
+missing block is created and no artifact is written or persisted. The CLI
+allocates fresh empty storage on each invocation and discards it at exit.
+
+The traversal accepts only a canonical empty target. This is a coarse guard
+against applying a second traversal to the same live slot, not a persistent
+per-observation ledger. It evaluates all selected observations before the
+first write and restores the target to its initial state after a caught
+application-phase failure. That is bounded in-process rollback under exclusive
+access, not crash atomicity or thread safety. The exact traversal, guard, and
+rollback contract is documented in
+[`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md).
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -449,6 +521,8 @@ single-observation voxel evaluation is in
 [`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md),
 single-slot temporary voxel mutation is in
 [`docs/tsdf-voxel-update.md`](docs/tsdf-voxel-update.md),
+single-voxel traversal across selected observations is in
+[`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in

@@ -166,14 +166,25 @@ after  = (tsdf_sum -0.250, weight 2)
 ```
 
 That behavior is deterministic accumulation, not proof that two independent
-sensor observations were fused. A future traversal layer must decide ordering
-and prevent accidental duplicate application.
+sensor observations were fused. The scalar updater alone does not decide
+ordering or prevent accidental duplicate application.
+
+The selected-observation traversal is now that first narrow orchestration
+layer. It evaluates every plan-selected sequence for one fixed address before
+applying any result, applies accepted contributions in canonical sequence
+order, and accepts only a canonical empty target. The empty-target requirement
+prevents a second traversal from being applied to the same live slot, but it
+is deliberately coarser than a persistent per-observation ledger. The scalar
+updater remains reusable and retains the repeated-application behavior above.
+See [`tsdf-voxel-traversal.md`](tsdf-voxel-traversal.md).
 
 ## Explicitly deferred
 
-- iterating replay-selected observations or planned voxel/block ranges;
-- duplicate detection, idempotency, ordering, batching, and per-observation
-  provenance ledgers;
+- directly iterating replay-selected observations inside this scalar updater;
+  the separate traversal covers that axis for one empty target, while planned
+  voxel/block ranges remain deferred;
+- persistent duplicate detection, cross-call idempotency, nonempty-target
+  resume, batching, and per-observation provenance ledgers;
 - camera-to-surface free-space block planning, frustum/ray traversal,
   visibility, and occlusion;
 - normalization into final TSDF values, sensor-dependent weighting, weight
