@@ -42,7 +42,10 @@ from .tsdf_voxel_contribution import (
     evaluate_tsdf_voxel_contribution,
     evaluate_tsdf_voxel_contribution_from_context,
 )
-from .tsdf_voxel_traversal import traverse_tsdf_voxel_observations
+from .tsdf_voxel_traversal import (
+    traverse_tsdf_voxel_observations,
+    traverse_tsdf_voxel_observations_from_context,
+)
 from .tsdf_voxel_update import (
     apply_tsdf_voxel_contribution,
     apply_tsdf_voxel_contribution_from_context,
@@ -153,6 +156,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "tsdf-block-voxel-traverse":
             return _run_tsdf_block_voxel_traverse(
+                arguments.plan,
+                arguments.session,
+                arguments.voxel,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-voxel-traverse"
+        ):
+            return _run_tsdf_block_context_voxel_traverse(
                 arguments.plan,
                 arguments.session,
                 arguments.voxel,
@@ -665,6 +677,40 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Current .vgsession directory to replay-bind through traversal.",
     )
     block_voxel_traverse.add_argument(
+        "--voxel",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("GX", "GY", "GZ"),
+        help="One planned signed global voxel XYZ to traverse and update.",
+    )
+
+    block_context_voxel_traverse = reconstruct_commands.add_parser(
+        "tsdf-block-context-voxel-traverse",
+        help=(
+            "Use one prepared replay/depth context to evaluate every "
+            "selected observation for one temporary planned voxel."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, allocate temporary "
+            "storage, prepare one immutable replay/depth context, evaluate "
+            "every selected context observation for one planned voxel, and "
+            "apply accepted contributions in canonical sequence order. "
+            "The traversal performs no session replay, source I/O, or depth "
+            "decoding, and no artifact is written."
+        ),
+    )
+    block_context_voxel_traverse.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose temporary storage is updated.",
+    )
+    block_context_voxel_traverse.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_voxel_traverse.add_argument(
         "--voxel",
         type=int,
         nargs=3,
@@ -1793,6 +1839,192 @@ def _run_tsdf_block_contribution_apply(
     )
     print(
         f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_voxel_traverse(
+    plan_path: Path,
+    session_path: Path,
+    voxel: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        address = locate_tsdf_voxel(storage, tuple(voxel))
+        if address is None:
+            raise TsdfError(
+                f"global voxel {tuple(voxel)} is not in a planned block"
+            )
+        context = build_tsdf_replay_depth_context(plan, session)
+        storage_before = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+        receipt = traverse_tsdf_voxel_observations_from_context(
+            storage,
+            address,
+            context,
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT VOXEL TRAVERSAL FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT VOXEL TRAVERSAL FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT VOXEL TRAVERSAL CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "voxel: "
+        f"global={address.global_index_xyz} "
+        f"block={address.block_index_xyz} "
+        f"local={address.local_index_xyz} "
+        f"row={address.block_row} "
+        f"array={address.array_index_bzyx} "
+        f"storage_flat={address.storage_flat_index}",
+        file=sys.stdout,
+    )
+    print(
+        "selection: "
+        f"frame_stride={receipt.frame_stride} "
+        f"total={receipt.total_observations} "
+        f"selected={receipt.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        "slot_before: "
+        f"tsdf_sum={receipt.tsdf_sum_before:.9f} "
+        f"weight={receipt.weight_before}",
+        file=sys.stdout,
+    )
+    for position, contribution in enumerate(receipt.contributions):
+        if contribution.contributes:
+            delta_sum = f"{contribution.tsdf_sum_delta:.9f}"
+        else:
+            delta_sum = "none"
+        print(
+            f"observation[{position}]: "
+            f"sequence={contribution.observation_sequence} "
+            f"status={contribution.status.value} "
+            f"delta_sum={delta_sum} "
+            f"delta_weight={contribution.weight_delta}",
+            file=sys.stdout,
+        )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in receipt.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(
+        "accumulated_delta: "
+        f"tsdf_sum={receipt.tsdf_sum_delta:.9f} "
+        f"weight={receipt.weight_delta}",
+        file=sys.stdout,
+    )
+    print(
+        "slot_after: "
+        f"tsdf_sum={receipt.tsdf_sum_after:.9f} "
+        f"weight={receipt.weight_after}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_before: "
+        f"nonzero_sums={storage_before[0]} "
+        f"nonzero_weights={storage_before[1]} "
+        f"unknown_voxels={storage_before[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "traversal_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("traversal_session_replay: no", file=sys.stdout)
+    print("traversal_replay_hashing: no", file=sys.stdout)
+    print("traversal_source_io: no", file=sys.stdout)
+    print("traversal_depth_decoding: no", file=sys.stdout)
+    prepared_depth_access = any(
+        contribution.depth_decoded
+        for contribution in receipt.contributions
+    )
+    print(
+        "traversal_prepared_depth_access: "
+        f"{'yes' if prepared_depth_access else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_evaluated: {receipt.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_applied: {receipt.applied_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_skipped: {receipt.skipped_count}",
+        file=sys.stdout,
+    )
+    print("duplicate_observation_applications: 0", file=sys.stdout)
+    print(
+        f"storage_slots_updated: {receipt.storage_slots_updated}",
+        file=sys.stdout,
+    )
+    print("voxel_observation_traversal_performed: yes", file=sys.stdout)
+    print("voxel_address_traversal_performed: no", file=sys.stdout)
+    print("fusion_block_traversal_performed: no", file=sys.stdout)
+    print("ray_traversal_performed: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

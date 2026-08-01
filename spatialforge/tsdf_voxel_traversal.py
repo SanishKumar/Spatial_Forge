@@ -11,11 +11,15 @@ from .errors import SessionReplayError, TsdfError
 from .model import ScanSession
 from .replay import replay_session
 from .tsdf_block_storage import TsdfBlockStorage
+from .tsdf_replay_depth_context import TsdfReplayDepthContext
 from .tsdf_voxel_address import TsdfVoxelAddress, locate_tsdf_voxel
 from .tsdf_voxel_contribution import (
     TsdfContributionStatus,
     TsdfVoxelContribution,
+    _validate_contribution_context,
+    _validate_contribution_plan,
     evaluate_tsdf_voxel_contribution,
+    evaluate_tsdf_voxel_contribution_from_context,
 )
 from .tsdf_voxel_update import (
     MAX_TSDF_VOXEL_WEIGHT,
@@ -25,6 +29,7 @@ from .tsdf_voxel_update import (
     _validate_target_prestate,
     _validate_update_storage,
     apply_tsdf_voxel_contribution,
+    apply_tsdf_voxel_contribution_from_context,
 )
 
 
@@ -425,6 +430,160 @@ def traverse_tsdf_voxel_observations(
             raise
         raise TsdfError(
             f"cannot apply TSDF voxel traversal: {error}"
+        ) from error
+    return receipt
+
+
+def traverse_tsdf_voxel_observations_from_context(
+    storage: TsdfBlockStorage,
+    address: TsdfVoxelAddress,
+    context: TsdfReplayDepthContext,
+) -> TsdfVoxelTraversalReceipt:
+    """Evaluate and apply one context's selected observations to one slot."""
+
+    if not isinstance(storage, TsdfBlockStorage):
+        raise TsdfError(
+            "TSDF context voxel traversal requires allocated "
+            "TsdfBlockStorage"
+        )
+    if not isinstance(address, TsdfVoxelAddress):
+        raise TsdfError(
+            "TSDF context voxel traversal requires a TsdfVoxelAddress"
+        )
+    if not isinstance(context, TsdfReplayDepthContext):
+        raise TsdfError(
+            "TSDF context voxel traversal requires a prepared "
+            "TsdfReplayDepthContext"
+        )
+
+    _validate_update_storage(storage)
+    resolved_address = locate_tsdf_voxel(
+        storage,
+        address.global_index_xyz,
+    )
+    if resolved_address != address:
+        raise TsdfError(
+            "TSDF context voxel traversal address does not match "
+            "destination storage"
+        )
+
+    plan = storage.source_plan
+    _validate_contribution_plan(plan)
+    _validate_contribution_context(plan, context)
+    _validate_traversal_plan(plan)
+    selected_sequences = tuple(
+        range(0, plan.total_observations, plan.frame_stride)
+    )
+    if (
+        context.selected_observation_sequences != selected_sequences
+        or len(context.observations) != len(selected_sequences)
+    ):
+        raise TsdfError(
+            "TSDF replay/depth context observations are not the complete "
+            "canonical traversal selection"
+        )
+
+    array_index = address.array_index_bzyx
+    stored_sum = storage.tsdf_sums[array_index]
+    stored_weight = storage.weights[array_index]
+    tsdf_sum_before = float(stored_sum)
+    weight_before = int(stored_weight)
+    _validate_target_prestate(
+        stored_sum,
+        stored_weight,
+        tsdf_sum_before,
+        weight_before,
+    )
+    if weight_before != 0:
+        raise TsdfError(
+            "TSDF context voxel traversal requires a canonical empty "
+            "target slot"
+        )
+    layout_before = _storage_layout_identity(storage)
+    stored_sum_bytes = stored_sum.tobytes()
+    stored_weight_bytes = stored_weight.tobytes()
+
+    contributions = tuple(
+        evaluate_tsdf_voxel_contribution_from_context(
+            storage,
+            address,
+            context,
+            sequence,
+        )
+        for sequence in selected_sequences
+    )
+    _validate_contribution_transcript(
+        contributions,
+        selected_sequences,
+        address,
+        plan.artifact_digest_sha256,
+        plan.replay_digest_sha256,
+    )
+    _require_unchanged_empty_target(
+        storage,
+        address,
+        layout_before,
+        stored_sum_bytes,
+        stored_weight_bytes,
+    )
+
+    accepted = tuple(
+        contribution
+        for contribution in contributions
+        if contribution.contributes
+    )
+    if len(accepted) > MAX_TSDF_VOXEL_WEIGHT:
+        raise TsdfError(
+            "TSDF context voxel traversal accepted contribution count "
+            "exceeds uint32 capacity"
+        )
+
+    update_receipts: list[TsdfVoxelUpdateReceipt] = []
+    try:
+        for contribution in accepted:
+            update_receipts.append(
+                apply_tsdf_voxel_contribution_from_context(
+                    storage,
+                    contribution,
+                    context,
+                )
+            )
+        _require_expected_final_target(
+            storage,
+            address,
+            layout_before,
+            update_receipts,
+            stored_sum_bytes,
+            stored_weight_bytes,
+        )
+        receipt = TsdfVoxelTraversalReceipt(
+            address=address,
+            source_plan_digest_sha256=plan.artifact_digest_sha256,
+            replay_digest_sha256=plan.replay_digest_sha256,
+            frame_stride=plan.frame_stride,
+            total_observations=plan.total_observations,
+            selected_observation_sequences=selected_sequences,
+            contributions=contributions,
+            update_receipts=tuple(update_receipts),
+            tsdf_sum_before=tsdf_sum_before,
+            weight_before=weight_before,
+            tsdf_sum_after=float(storage.tsdf_sums[array_index]),
+            weight_after=int(storage.weights[array_index]),
+        )
+    except Exception as error:
+        _restore_target_or_fail(
+            storage,
+            array_index,
+            stored_sum,
+            stored_weight,
+            layout_before,
+            stored_sum_bytes,
+            stored_weight_bytes,
+        )
+        if isinstance(error, (TsdfError, SessionReplayError)):
+            raise
+        raise TsdfError(
+            f"cannot apply context-bound TSDF voxel traversal: {error}"
         ) from error
     return receipt
 

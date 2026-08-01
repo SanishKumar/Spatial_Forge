@@ -14,11 +14,11 @@ recorded as ready, its pose is copied, and its aligned depth payload is decoded
 exactly once into immutable C-contiguous float64 metric storage.
 
 The result is a self-contained construction-time measurement snapshot for
-scalar evaluation, guarded scalar application, and a future traversal
-checkpoint. It is not a live view of the `.vgsession` folder. The builder
-itself does not allocate or mutate TSDF storage, evaluate a voxel, traverse
-voxel addresses or blocks, trace a frustum or ray, plan free space, perform
-fusion, or write an artifact.
+scalar evaluation, guarded scalar application, and one-voxel selected-
+observation traversal. It is not a live view of the `.vgsession` folder. The
+builder itself does not allocate or mutate TSDF storage, evaluate a voxel,
+traverse voxel addresses or blocks, trace a frustum or ray, plan free space,
+perform fusion, or write an artifact.
 
 ## Public API and immutable records
 
@@ -198,7 +198,7 @@ observations for a voxel, visit another address or block, perform fusion, or
 write or persist an artifact. The context exists only for the life of the
 process.
 
-## Scalar consumers; not yet consumed by traversal
+## Scalar and one-voxel traversal consumers
 
 One prepared observation can now be evaluated at one planned voxel without
 source I/O:
@@ -239,20 +239,35 @@ payload. Its freshness guarantee is therefore the completed context build,
 not the later state of the session folder. See
 [`tsdf-context-voxel-update.md`](tsdf-context-voxel-update.md).
 
-`traverse_tsdf_voxel_observations` does not accept or use this context-aware
-scalar pair yet. It still calls the session-backed scalar evaluator and
-updater, which repeatedly replay and hash session inputs, and depth is still
-decoded through the per-observation evaluation path for that traversal.
+The context-backed traversal consumes the same snapshot and scalar pair:
 
-The next checkpoint is only to rewire that one-voxel traversal to the
-context-aware scalar primitives while preserving its transcript, canonical
-sequential float64 application, skip accounting, empty-target duplicate guard,
-and traversal-wide rollback.
+```python
+traversal = traverse_tsdf_voxel_observations_from_context(
+    storage,
+    address,
+    context,
+)
+```
+
+It uses the context-owned canonical selected sequence tuple, evaluates every
+record before the first write, retains skips in the frozen transcript, and
+applies accepted contributions in canonical order. Accumulation remains
+sequential float64, the target must start canonically empty, and a caught
+application-phase failure restores the complete target slot to its
+traversal-start state.
+
+The traversal accepts no `ScanSession`. It performs no traversal-time replay,
+hashing, source I/O, or depth decoding, although ready-observation evaluation
+necessarily reads immutable metric depth already stored in the context. Its
+source freshness is the context's completed construction-time replay bracket,
+not the current folder state. The session-backed
+`traverse_tsdf_voxel_observations` remains available as the deliberately
+redundant live-source reference path.
 
 ## Explicitly deferred
 
-- consuming the context in single-voxel selected-observation traversal;
-- iterating planned voxel addresses, blocks, frusta, or camera rays;
+- traversing multiple planned voxel addresses within one block, any second
+  block, a frustum, or a camera ray;
 - culling, visibility, occlusion, and camera-to-surface free-space planning;
 - multi-slot TSDF mutation, complete block fusion, normalization, color,
   confidence, normals, or topology updates;

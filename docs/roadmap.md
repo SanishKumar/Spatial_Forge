@@ -39,7 +39,8 @@ The project is intentionally advancing through small, testable checkpoints.
   `TsdfReplayDepthContext` for every selected observation, decoding each ready
   aligned-depth frame exactly once into immutable C-contiguous float64 metric
   storage. It is consumed by separate scalar context evaluation and
-  application APIs; voxel traversal remains session-backed.
+  application APIs plus a context-backed one-voxel traversal; the deliberately
+  redundant session-backed traversal remains available as a reference path.
 - Plan-bound read-only evaluation of one selected replay/depth-context
   observation at one planned voxel, using the copied pose and immutable metric
   depth without evaluation-time replay hashing or depth decoding and returning
@@ -49,6 +50,11 @@ The project is intentionally advancing through small, testable checkpoints.
   provenance, uint32 and accumulator preflight, exact scalar-write checks, an
   immutable receipt, and caught-failure rollback without application-time
   session replay, source I/O, or depth access.
+- Context-backed traversal of every prepared plan-selected observation for one
+  addressed voxel, preserving evaluate-all-before-apply ordering, canonical
+  sequence order, stable skips, the empty-target duplicate guard, sequential
+  float64 accumulation, and whole-target caught-failure rollback without
+  traversal-time replay, source I/O, or depth decoding.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -62,15 +68,14 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. make the one-voxel all-selected-observation traversal consume the
-   shared context and context-aware scalar primitives, preserving
-   evaluate-all-then-apply ordering, canonical sequence order, skip
-   accounting, the empty-target duplicate guard, sequential float64
-   accumulation, and traversal-wide rollback;
-2. traverse planned voxel addresses and blocks, decide and plan
-   camera-to-surface free-space coverage, replace the single-voxel empty-target
-   guard with an explicit cross-call observation/idempotency policy, and report
-   complete block-fusion diagnostics;
+1. traverse multiple planned voxel addresses within one already allocated
+   `8 x 8 x 8` block using one shared replay/depth context, while preserving
+   deterministic address order, per-voxel transcripts, failure isolation, and
+   the explicit boundary that no second block is visited;
+2. traverse planned blocks, decide and plan camera-to-surface free-space
+   coverage, replace the single-voxel empty-target guard with an explicit
+   cross-call observation/idempotency policy, and report complete block-fusion
+   diagnostics;
 3. culled, scalable sparse traversal, larger-volume artifacts and consumers,
    and an optimized backend suitable for full sequences;
 4. robust depth/pose outlier filtering and configurable production bounds;
@@ -118,7 +123,8 @@ strict plan verification, empty block allocation, signed voxel addressing,
 single-observation voxel contribution, single-slot contribution application,
 single-voxel selected-observation traversal, immutable replay/depth context,
 context-backed single-observation contribution, context-bound single-slot
-application, surface-point, and triangle-mesh commands in the repository
+application, context-backed single-voxel traversal, surface-point, and
+triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block
 coordinates, replay binding, zero-state storage layout, signed address

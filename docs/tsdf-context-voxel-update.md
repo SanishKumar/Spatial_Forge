@@ -178,23 +178,39 @@ addressed slot from `(0.0, 0)` to `(-0.125, 1)`. One of 4,096 slots becomes
 observed; the other 4,095 remain unknown. Weight one means one observation, not
 multi-view or block-wide fusion.
 
-## Repeated application and unchanged traversal
+## Repeated application and traversal consumer
 
 Like the session-backed scalar updater, this API has no observation ledger or
 idempotency token. Reapplying the same accepted contribution to the same live
 storage accumulates the same delta again when all preconditions still hold.
 
 The existing `apply_tsdf_voxel_contribution` remains session-backed and still
-replay-checks around each mutation. The existing
-`traverse_tsdf_voxel_observations` also remains unchanged: it accepts a
-`ScanSession` and calls the session-backed evaluator and updater for the one
-target voxel. Making that traversal consume the prepared context and both
-context-aware scalar primitives is the next checkpoint.
+replay-checks around each mutation. The existing session-backed
+`traverse_tsdf_voxel_observations` also remains available as a live-source
+reference path.
+
+Its context-backed sibling consumes this updater together with the prepared
+evaluator:
+
+```python
+traversal = traverse_tsdf_voxel_observations_from_context(
+    storage,
+    address,
+    context,
+)
+```
+
+It evaluates the complete context-selected transcript before mutation, then
+passes accepted contributions to this updater in canonical sequence order.
+Skips remain diagnostics. The traversal performs no replay, source I/O, or
+depth decoding; evaluation reads prepared metric depth, while application
+does not access depth. The canonical empty-target guard and whole-target
+caught-failure rollback belong to the traversal layer.
 
 ## Explicitly deferred
 
-- context-backed traversal across all selected observations for one voxel;
-- traversal of any other planned voxel, block, frustum, or camera ray;
+- traversal of multiple planned voxel addresses within one block or of any
+  second block, frustum, or camera ray;
 - camera-to-surface free-space planning, visibility, culling, and occlusion;
 - a persistent observation ledger, cross-call idempotency, nonempty-target
   resume, batching, and multi-slot transactions;

@@ -39,6 +39,7 @@ from .tsdf_voxel_contribution import (
 from .tsdf_voxel_traversal import (
     TsdfVoxelTraversalReceipt,
     traverse_tsdf_voxel_observations,
+    traverse_tsdf_voxel_observations_from_context,
 )
 from .tsdf_voxel_update import (
     MAX_TSDF_VOXEL_WEIGHT,
@@ -92,6 +93,7 @@ __all__ = [
     "reconstruct_point_cloud",
     "replay_session",
     "traverse_tsdf_voxel_observations",
+    "traverse_tsdf_voxel_observations_from_context",
     "verify_tsdf_block_plan_replay",
 ]
 

@@ -338,8 +338,8 @@ current `ScanSession`.
 The exact update, rollback, and repeated-application rules are documented in
 [`tsdf-voxel-update.md`](tsdf-voxel-update.md).
 
-The selected-observation traversal still calls the session-backed evaluator
-for one fixed address and every replay observation selected by the plan:
+The session-backed selected-observation traversal calls this evaluator for one
+fixed address and every replay observation selected by the plan:
 
 ```python
 traversal = traverse_tsdf_voxel_observations(
@@ -351,10 +351,25 @@ traversal = traverse_tsdf_voxel_observations(
 
 It evaluates every selected sequence before applying any accepted result, then
 uses the separate updater in canonical observation order. Skips remain
-immutable diagnostics and are not passed to the updater. The traversal is a
-consumer of the session-backed read-only evaluator; it does not call
-either context-aware scalar primitive. Rewiring this one-voxel traversal is
-the next checkpoint. See
+immutable diagnostics and are not passed to the updater. It remains the
+deliberately redundant live-source reference path.
+
+The context-backed sibling consumes the prepared evaluator and updater instead:
+
+```python
+traversal = traverse_tsdf_voxel_observations_from_context(
+    storage,
+    address,
+    context,
+)
+```
+
+It derives canonical selection from the context, evaluates every prepared
+record before mutation, and applies accepted results in the same sequence
+order. Evaluation reads prepared metric depth but performs no new replay,
+source I/O, or decoding. The traversal retains the same contribution and
+receipt transcript, skip accounting, empty-target duplicate guard, sequential
+float64 accumulation, and whole-target caught-failure rollback. See
 [`tsdf-voxel-traversal.md`](tsdf-voxel-traversal.md).
 
 ## Explicitly deferred
@@ -364,8 +379,8 @@ the next checkpoint. See
   while other voxels, blocks, frusta, and rays remain deferred;
 - applying proposed deltas within this read-only evaluator; the separate
   update primitive applies one accepted delta only;
-- rewiring selected-observation traversal to use both prepared-context scalar
-  primitives;
+- traversing multiple planned addresses within one block or visiting any
+  second block, frustum, or ray;
 - normalization, sensor-dependent weighting, an observation ledger, or a
   block-wide multi-observation fusion loop;
 - deciding or planning full camera-to-surface free-space block coverage;

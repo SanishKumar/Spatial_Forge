@@ -43,15 +43,18 @@ This repository currently implements these narrow foundations:
 - context-bound guarded application of one accepted prepared contribution to
   exactly one addressed temporary slot, using construction-time context
   provenance without application-time replay, source I/O, or depth access;
+- context-backed traversal of every prepared plan-selected observation for one
+  addressed voxel, evaluating the complete ordered transcript before mutation
+  and then applying accepted contributions without traversal-time replay,
+  source I/O, or depth decoding;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
-The prepared replay/depth context is consumed by separate scalar evaluation
-and guarded-application APIs. The existing session-backed updater remains
-available, and the single-voxel traversal still uses the deliberately
-redundant session-backed evaluator and updater.
-Planned-address and block traversal, camera-to-surface free-space coverage,
+The prepared replay/depth context is consumed by separate scalar evaluation,
+guarded-application, and one-voxel traversal APIs. The deliberately redundant
+session-backed scalar and traversal APIs remain available as reference paths.
+Multi-address and block traversal, camera-to-surface free-space coverage,
 full block fusion, scalable sparse execution, robust outlier filtering,
 production meshing, normals, SLAM, map packages, mobile capture, and the visual
 inspector are deliberately not implemented yet.
@@ -540,10 +543,10 @@ the session folder afterward; later file changes cannot mutate an already
 built context. Rebuild the context when current folder contents are required.
 The retained numeric depth payload is capped at 512 MiB, although peak build
 memory is higher because decoding temporarily holds the decoder result, a
-mutable float64 frame, and its immutable byte copy. The context now supports
-read-only scalar evaluation and guarded one-slot application, but
-`tsdf-block-voxel-traverse` does not consume it yet. The exact snapshot,
-memory, and failure contract is documented in
+mutable float64 frame, and its immutable byte copy. The context supports
+read-only scalar evaluation, guarded one-slot application, and a context-backed
+all-selected-observation traversal for one voxel. The exact snapshot, memory,
+and failure contract is documented in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md).
 
 Evaluate exactly one prepared observation at one planned voxel:
@@ -678,10 +681,83 @@ boundary. The context proves the source state captured by its completed build;
 the scalar updater does not detect later session-folder changes. It retains
 the existing accumulator, overflow, exact-write, receipt, and rollback
 guards, but has no post-write source-replay check to trigger rollback. The
-existing session-backed updater and traversal remain unchanged. Rewiring the
-one-voxel traversal to the context-aware scalar pair is the next checkpoint.
-The exact contract is documented in
+existing session-backed updater remains unchanged. The exact contract is
+documented in
 [`docs/tsdf-context-voxel-update.md`](docs/tsdf-context-voxel-update.md).
+
+Traverse every prepared selected observation for that same one voxel:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-voxel-traverse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --voxel 8 -1 -1
+```
+
+Relevant output:
+
+```text
+TSDF BLOCK CONTEXT VOXEL TRAVERSAL CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+context_selection: frame_stride=1 total=2 selected=2
+context_immutable: yes
+depth_source: replay-depth-context
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+selection: frame_stride=1 total=2 selected=2
+slot_before: tsdf_sum=0.000000000 weight=0
+observation[0]: sequence=0 status=contributes delta_sum=-0.125000000 delta_weight=1
+observation[1]: sequence=1 status=contributes delta_sum=-0.125000000 delta_weight=1
+status_counts: contributes=2
+accumulated_delta: tsdf_sum=-0.250000000 weight=2
+slot_after: tsdf_sum=-0.250000000 weight=2
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=1 nonzero_weights=1 unknown_voxels=4095
+context_provenance: matched
+traversal_source_freshness: construction-time-context
+traversal_session_replay: no
+traversal_replay_hashing: no
+traversal_source_io: no
+traversal_depth_decoding: no
+traversal_prepared_depth_access: yes
+contributions_evaluated: 2
+contributions_applied: 2
+contributions_skipped: 0
+duplicate_observation_applications: 0
+storage_slots_updated: 1
+voxel_observation_traversal_performed: yes
+voxel_address_traversal_performed: no
+fusion_block_traversal_performed: no
+ray_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+artifact_written: no
+storage_persisted: no
+context_persisted: no
+plan_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
+replay_digest_sha256: dc001ae0ca01004a21ad227b12d57a7350bbc23904040453ca73fd955ef050b8
+```
+
+The command still performs setup work before the traversal: temporary block
+allocation replay-verifies the plan, and context construction replay-brackets
+the snapshot and decodes each ready selected frame once. The traversal itself
+accepts no `ScanSession`; it reads prepared metric depth while evaluating ready
+records but performs no new replay, hashing, source I/O, or decoding. It
+evaluates every selected record before the first write, applies accepted
+contributions in canonical order with sequential float64 accumulation, and
+restores the whole target slot after a caught application-phase failure. The
+empty-target precondition remains a coarse duplicate guard rather than a
+persistent observation ledger.
+
+`traversal_prepared_depth_access: yes` is intentional: ready observations must
+sample the metric depth already stored in the immutable context. It does not
+contradict `traversal_source_io: no` or `traversal_depth_decoding: no`.
+
+This proves context-backed observation traversal for exactly one caller-chosen
+voxel. Traversing multiple addresses within one planned block is the next
+checkpoint; traversing all blocks, free-space coverage, and full fusion remain
+later work. See
+[`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md).
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:

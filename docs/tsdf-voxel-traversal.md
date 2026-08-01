@@ -1,12 +1,23 @@
 # Single-voxel selected-observation traversal
 
-This checkpoint traverses every replay observation selected by a loaded TSDF
-block plan for exactly one already planned voxel:
+This checkpoint traverses every observation selected by a loaded TSDF block
+plan for exactly one already planned voxel. The original session-backed
+reference command remains available:
 
 ```powershell
 .\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-voxel-traverse `
   outputs/progress-blocks.sftplan `
   tests/fixtures/minimal.vgsession `
+  --voxel 8 -1 -1
+```
+
+The context-backed sibling prepares the selected replay/depth snapshot once
+and consumes it for the complete one-voxel traversal:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-voxel-traverse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
   --voxel 8 -1 -1
 ```
 
@@ -17,11 +28,19 @@ accumulator.
 
 ## Public API and frozen receipt
 
+The two sibling APIs return the same frozen receipt contract:
+
 ```python
-receipt = traverse_tsdf_voxel_observations(
+session_receipt = traverse_tsdf_voxel_observations(
     storage,
     address,
     session,
+)
+
+context_receipt = traverse_tsdf_voxel_observations_from_context(
+    storage,
+    address,
+    context,
 )
 ```
 
@@ -29,7 +48,8 @@ The inputs are:
 
 - canonical temporary `TsdfBlockStorage` allocated from a strict-loaded plan;
 - one `TsdfVoxelAddress` that resolves exactly in that storage; and
-- the current loaded `ScanSession`.
+- either the current loaded `ScanSession` for the reference path or a matching
+  immutable `TsdfReplayDepthContext` for the context-backed path.
 
 The caller cannot supply observation sequences or change their order. The
 traversal derives the complete tuple selected by the plan's frame stride:
@@ -72,28 +92,31 @@ the accumulator sum and weight rather than a normalized TSDF value.
 
 The traversal performs these bounded stages:
 
-1. Validate the storage, address, plan/session identity, replay binding, and
-   writable canonical array layout.
+1. Validate the storage, address, writable canonical array layout, and either
+   the live plan/session binding or the construction-time plan/context binding.
 2. Require the addressed target to contain canonical positive `+0.0` and
    uint32 weight zero.
-3. Derive the complete ascending sequence tuple selected by the plan.
-4. Evaluate every sequence read-only with
-   `evaluate_tsdf_voxel_contribution`, preserving its result order.
-5. Validate the complete transcript and accepted-count capacity before the
-   first write.
+3. Derive the complete ascending sequence tuple selected by the plan and, for
+   the context path, require exact agreement with the context selection.
+4. Evaluate every sequence read-only with the matching session- or context-
+   backed scalar evaluator, preserving its result order.
+5. Validate the complete contribution transcript.
 6. Recheck that evaluation did not change the target or storage layout.
-7. Apply accepted contributions in the same order with
-   `apply_tsdf_voxel_contribution`; skipped results are retained but never
-   passed to the updater.
-8. Replay-check once more, verify the original address and storage layout plus
-   the exact expected final target bytes, and then construct the frozen
-   traversal receipt inside the rollback guard.
+7. Collect the accepted subsequence and preflight its uint32 capacity before
+   the first write.
+8. Apply accepted contributions in the same order with the matching scalar
+   updater; skipped results are retained but never passed to the updater.
+9. Verify the original address and storage layout plus the exact expected
+   final target bytes, then construct the frozen traversal receipt inside the
+   rollback guard. The session path also replay-checks current inputs; the
+   context path relies on its completed construction-time replay bracket.
 
 Missing depth, missing pose, invalid sampled depth, out-of-view projection,
 and the evaluator's other documented skip statuses are successful evaluated
 outcomes. They increase the skipped count and do not abort traversal. Invalid
-provenance, malformed storage, replay changes, depth-decoding errors, or other
-contract failures raise an error.
+provenance, malformed storage, live replay changes on the session path,
+context mismatches, depth-decoding errors during session evaluation or context
+construction, and other contract failures raise an error.
 
 Evaluating the complete transcript before mutation means an evaluation-stage
 failure leaves the target untouched. It also separates the deterministic
@@ -132,7 +155,7 @@ inconsistent. This is bounded in-process exception rollback under exclusive
 access. It is not crash-atomic, process-interruption-safe, lock-protected,
 thread-safe, safe for concurrent writers, or a persistent transaction.
 
-## Exact two-observation fixture proof
+## Exact session-backed two-observation fixture proof
 
 The committed plan has `frame_stride=1`, `total_observations=2`, and therefore
 selects sequences `(0, 1)`. Global voxel `(8, -1, -1)` resolves to array index
@@ -209,35 +232,102 @@ the in-memory result, and discards the storage when the process exits. Running
 the command twice therefore repeats the same fresh-storage proof. It does not
 demonstrate that calling the API twice on the same live storage is idempotent.
 
-## Reference implementation cost
+## Context-backed two-observation fixture proof
 
-This checkpoint composes the existing strict evaluator and guarded scalar
-updater. Those primitives replay-check their inputs around their own work, so
-one traversal repeatedly replays and hashes session inputs for each selected
-observation. Depth is also decoded through the existing single-observation
-path. This intentionally redundant behavior preserves the established safety
-contracts, but it is a diagnostic CPU reference rather than a scalable fusion
-loop.
+Run the context sibling against the same plan, session, and voxel:
 
-A standalone [`TsdfReplayDepthContext`](tsdf-replay-depth-context.md) now
-prepares the canonical selected-observation tuple and immutable metric depth
-frames once, and `evaluate_tsdf_voxel_contribution_from_context` can evaluate
-one of those observations at one voxel without evaluation-time source I/O.
-`apply_tsdf_voxel_contribution_from_context` can now apply one accepted result
-using matching construction-time context provenance without application-time
-session replay, source I/O, or depth access.
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-voxel-traverse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --voxel 8 -1 -1
+```
 
-This traversal does not call either context-aware scalar primitive yet: its
-public API still accepts a `ScanSession`, and its session-backed evaluator and
-updater retain the repeated replay, hashing, and decoding behavior above. The
-next checkpoint is only to rewire this one-voxel traversal with numerical,
-diagnostic, provenance, ordering, skip, duplicate-guard, and rollback parity.
-Culling and the wider execution design remain deferred.
+The ordered observations and before/after accumulator values match the
+session-backed proof exactly. The live command prints:
+
+```text
+TSDF BLOCK CONTEXT VOXEL TRAVERSAL CHECK scan-synthetic-0001
+artifact: valid
+session_replay: matched
+context_selection: frame_stride=1 total=2 selected=2
+context_immutable: yes
+depth_source: replay-depth-context
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7) row=1 array=(1, 7, 7, 0) storage_flat=1016
+selection: frame_stride=1 total=2 selected=2
+slot_before: tsdf_sum=0.000000000 weight=0
+observation[0]: sequence=0 status=contributes delta_sum=-0.125000000 delta_weight=1
+observation[1]: sequence=1 status=contributes delta_sum=-0.125000000 delta_weight=1
+status_counts: contributes=2
+accumulated_delta: tsdf_sum=-0.250000000 weight=2
+slot_after: tsdf_sum=-0.250000000 weight=2
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=1 nonzero_weights=1 unknown_voxels=4095
+context_provenance: matched
+traversal_source_freshness: construction-time-context
+traversal_session_replay: no
+traversal_replay_hashing: no
+traversal_source_io: no
+traversal_depth_decoding: no
+traversal_prepared_depth_access: yes
+contributions_evaluated: 2
+contributions_applied: 2
+contributions_skipped: 0
+duplicate_observation_applications: 0
+storage_slots_updated: 1
+voxel_observation_traversal_performed: yes
+voxel_address_traversal_performed: no
+fusion_block_traversal_performed: no
+ray_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+artifact_written: no
+storage_persisted: no
+context_persisted: no
+plan_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
+replay_digest_sha256: dc001ae0ca01004a21ad227b12d57a7350bbc23904040453ca73fd955ef050b8
+```
+
+`session_replay: matched` covers the command's setup: allocation verifies the
+plan and context construction replay-brackets the immutable snapshot. The four
+`traversal_*` source-work `no` lines cover only the later call that consumes
+the completed context. `traversal_prepared_depth_access: yes` is intentional:
+ready-observation evaluation reads the immutable metric samples already in the
+context, but does not decode or read source depth again. Application uses the
+prepared contribution and provenance and does not access depth.
+
+The traversal trusts construction-time context freshness. Session-folder
+changes after a successful context build cannot mutate the frozen snapshot and
+are not detected during this call. Rebuild the context, or perform an explicit
+live replay check outside the traversal, when current folder contents are
+required.
+
+## Reference and context execution costs
+
+The session-backed API composes the existing strict evaluator and guarded
+scalar updater. Those primitives replay-check their inputs around their own
+work, so one traversal repeatedly replays and hashes session inputs for each
+selected observation. Depth is also decoded through the existing single-
+observation path. This intentionally redundant behavior preserves the live-
+source reference contract, but it is not a scalable fusion loop.
+
+The context API composes
+`evaluate_tsdf_voxel_contribution_from_context` and
+`apply_tsdf_voxel_contribution_from_context`. Context construction prepares
+the canonical selected tuple and immutable metric frames once. The later
+traversal performs no replay, hashing, source I/O, or decoding while retaining
+numerical, diagnostic, provenance, ordering, skip, duplicate-guard, and
+rollback parity with the reference path.
+
+Both implementations remain diagnostic one-address CPU paths. The next
+checkpoint is multiple addresses within one already planned and allocated
+block; culling, block-wide execution, and the wider fusion design remain
+deferred.
 
 ## Explicitly deferred
 
-- consuming `TsdfReplayDepthContext` in this traversal;
-- iterating any other planned voxel, block, frustum, or camera ray;
+- iterating multiple planned addresses within one block, visiting any second
+  block, frustum, or camera ray;
 - camera-to-surface free-space block planning, visibility, and occlusion;
 - dynamic block insertion, eviction, streaming, adaptive resolution, and
   submaps;
