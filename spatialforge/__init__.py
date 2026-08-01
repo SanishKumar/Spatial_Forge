@@ -22,6 +22,11 @@ from .tsdf_block_traversal import (
     TsdfBlockTraversalReceipt,
     traverse_tsdf_block_voxels_from_context,
 )
+from .tsdf_plan_traversal import (
+    MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
+    TsdfPlanTraversalReceipt,
+    traverse_tsdf_plan_blocks_from_context,
+)
 from .tsdf_replay_depth_context import (
     MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES,
     TsdfReplayDepthContext,
@@ -68,6 +73,7 @@ __all__ = [
     "TsdfBlockStorage",
     "TsdfBlockTraversalReceipt",
     "TsdfContributionStatus",
+    "TsdfPlanTraversalReceipt",
     "TsdfReplayDepthContext",
     "TsdfReplayDepthObservation",
     "TsdfReplayDepthStatus",
@@ -94,10 +100,12 @@ __all__ = [
     "locate_tsdf_voxel",
     "MAX_TSDF_VOXEL_WEIGHT",
     "MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES",
+    "MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES",
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",
     "traverse_tsdf_block_voxels_from_context",
+    "traverse_tsdf_plan_blocks_from_context",
     "traverse_tsdf_voxel_observations",
     "traverse_tsdf_voxel_observations_from_context",
     "verify_tsdf_block_plan_replay",

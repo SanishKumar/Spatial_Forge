@@ -29,6 +29,12 @@ receipt = traverse_tsdf_block_voxels_from_context(
 )
 ```
 
+This API is also the exact child primitive used by
+`traverse_tsdf_plan_blocks_from_context`. The parent derives the complete
+active-block tuple and calls this operation once per canonical row; it does not
+broaden this direct API's one-selected-block input contract. See
+[`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+
 Its inputs are:
 
 - canonical temporary `TsdfBlockStorage` allocated from a strict-loaded plan;
@@ -137,9 +143,9 @@ whole-operation memory cost.
 
 The context's 512 MiB retained-depth limit and the storage's 64 MiB numeric
 limit are independent component limits, not a whole-process peak-memory bound
-once the complete diagnostic transcript is included. This remains a bounded
-CPU reference path rather than the optimized representation for plan-wide
-fusion.
+once the complete diagnostic transcript is included. The existing-plan parent
+composes this receipt-heavy CPU reference path; neither layer is the optimized
+representation for scalable or full fusion.
 
 ## Selected-block rollback
 
@@ -279,16 +285,17 @@ camera-to-surface blocks should exist. There is no ray or frustum traversal,
 visibility or occlusion test, culling rule, dynamic block insertion, color,
 confidence, normal, or topology integration.
 
-The next checkpoint is deterministic traversal across the plan's existing
-canonical block rows with the same shared context. Free-space coverage design,
-an explicit observation/idempotency policy, and complete fusion semantics
-remain separate later decisions.
+The existing-plan parent now traverses every canonical block row with the same
+shared context while retaining this complete child contract. That proves
+execution over the artifact's current surface-band tuple, not free-space-aware
+full fusion. The next phase is the separate design of camera-to-surface
+free-space activation and visibility/culling semantics.
 
 ## Explicitly deferred
 
 - visiting any second block in this call or accepting a block collection;
-- plan-row traversal, dynamic block creation, camera-to-surface free-space
-  planning, frustum/ray traversal, culling, visibility, and occlusion;
+- dynamic block creation, camera-to-surface free-space planning, frustum/ray
+  traversal, culling, visibility, and occlusion;
 - a persistent/resumable observation ledger, nonempty-block continuation, and
   general cross-call idempotency;
 - full fusion, normalization storage, color, confidence, normals, topology,

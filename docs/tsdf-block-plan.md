@@ -11,10 +11,10 @@ depth without fusing TSDF values:
   --truncation-m 0.5
 ```
 
-The result is a separate `.sftplan` diagnostic. Current TSDF integrators,
-surface extraction, and triangle meshing do not consume it. A separate
-allocation diagnostic now consumes only its canonical active-block coordinates
-to create empty in-memory buffers.
+The result is a separate `.sftplan` diagnostic. The dense/sparse reference TSDF
+artifacts, surface extraction, and triangle meshing do not consume it.
+Temporary block allocation and context-backed traversal diagnostics consume its
+canonical active-block coordinates in memory.
 
 ## Grid contract
 
@@ -59,7 +59,8 @@ TSDF values or fused during this command.
 
 This is deliberately a surface-band plan. The dense reference TSDF also
 updates positive free space from the camera toward the measured surface; those
-ray blocks are not represented here. A future block-backed fusion phase must
+ray blocks are not represented here. Traversing every existing active row does
+not change this coverage boundary. A complete block-backed fusion phase must
 define that semantic choice explicitly.
 
 ## Exact fixture proof
@@ -156,16 +157,40 @@ camera-to-surface free space, or write an artifact. The temporary storage
 contract is documented in
 [`tsdf-block-storage.md`](tsdf-block-storage.md).
 
+## Existing-plan traversal consumer
+
+The complete active-block tuple now has a bounded in-memory traversal consumer:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-plan-traverse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession
+```
+
+It requires the allocated row tuple to equal `active_blocks`, then visits every
+row in the artifact's canonical X-fastest order with one prepared replay/depth
+context. It neither selects a subset nor creates a coordinate. The retained
+`planned_voxel_slots * selected_observations` diagnostic workload is capped at
+262,144 outcomes.
+
+For the fixture this means all eight active rows: four direct surface blocks
+and four truncation-halo blocks. This is complete traversal of the artifact,
+not proof that the artifact is a complete fusion domain. Camera-to-surface
+free-space activation, visibility, and culling remain undefined. The exact
+execution and rollback contract is documented in
+[`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+
 ## Explicitly deferred
 
-- consuming the plan during TSDF fusion;
-- camera-to-surface free-space or frustum/ray block activation;
+- expanding the surface-band plan into a complete fusion domain;
+- camera-to-surface free-space or frustum/ray block activation, visibility,
+  and culling;
 - configurable block resolution and per-block observation provenance;
 - an immutable snapshot spanning every input-file read;
 - recomputing candidate geometry during verification;
 - artifact signatures, authentication, schema migration, or canonical
   rewriting;
-- replay verification bound through a future depth-fusion use;
+- persistent block-backed fusion artifacts and their replay/provenance binding;
 - larger `.sftsdf` volumes and sparse-aware surface or mesh traversal;
 - performance or full-sequence scalability claims;
 - Open3D, GPU, parallel, adaptive-resolution, or submap backends;

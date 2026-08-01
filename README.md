@@ -50,15 +50,18 @@ This repository currently implements these narrow foundations:
 - context-backed traversal of all 512 X-fastest voxel addresses in one
   caller-selected planned block, retaining one complete observation transcript
   per voxel and restoring the selected block after a caught failure;
+- context-backed traversal of every existing canonical block row in the plan,
+  retaining the complete nested block/voxel/observation transcript and
+  restoring all planned storage after a caught failure;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
 The prepared replay/depth context is consumed by separate scalar evaluation,
-guarded-application, one-voxel traversal, and one-selected-block traversal
-APIs. The deliberately redundant session-backed scalar and one-voxel traversal
-APIs remain available as reference paths. Traversal across the plan's block
-rows, camera-to-surface free-space coverage, full block fusion, scalable sparse
+guarded-application, one-voxel traversal, one-selected-block traversal, and
+existing-plan traversal APIs. The deliberately redundant session-backed
+scalar and one-voxel traversal APIs remain available as reference paths.
+Camera-to-surface free-space coverage, full block fusion, scalable sparse
 execution, robust outlier filtering, production meshing, normals, SLAM, map
 packages, mobile capture, and the visual inspector are deliberately not
 implemented yet.
@@ -226,10 +229,10 @@ output_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
 ```
 
 This `.sftplan` is a deterministic surface-neighborhood plan only. The narrow
-address, contribution, update, one-voxel traversal, and one-selected-block
-traversal diagnostics below consume it, but plan-wide fusion does not. It
-deliberately does not plan the dense reference backend's full
-camera-to-surface free-space updates.
+address, contribution, update, one-voxel, one-selected-block, and existing-plan
+traversal diagnostics below consume it. The latter visits every row already in
+the artifact, but the plan deliberately does not contain the dense reference
+backend's complete camera-to-surface free-space updates.
 
 Strictly load that artifact and check it against the current session replay:
 
@@ -551,8 +554,9 @@ The retained numeric depth payload is capped at 512 MiB, although peak build
 memory is higher because decoding temporarily holds the decoder result, a
 mutable float64 frame, and its immutable byte copy. The context supports
 read-only scalar evaluation, guarded one-slot application, and a context-backed
-all-selected-observation traversal for one voxel and one selected block. The
-exact snapshot, memory, and failure contract is documented in
+all-selected-observation traversal for one voxel, one selected block, or the
+complete existing plan block set. The exact snapshot, memory, and failure
+contract is documented in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md).
 
 Evaluate exactly one prepared observation at one planned voxel:
@@ -842,9 +846,81 @@ The `fusion_block_traversal_performed: yes` label means the contribution path
 covered all 512 slots of this one selected block. Its adjacent scope and
 multiple-block labels are why that does not mean full fusion.
 
-Traversing the plan's existing block rows is the next checkpoint. Designing
-camera-to-surface free-space coverage, an explicit observation/idempotency
-policy, and complete fusion remain separate later phases.
+Traverse every block row that already exists in the plan:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-plan-traverse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession
+```
+
+Key fixture output is:
+
+```text
+plan_blocks: active=8 surface=4 halo=4 resolution=8 voxel_slots=4096
+block_order: plan-canonical-x-fastest rows=0..7
+voxel_order: block-row-then-local-flat-x-fastest local_flat=0..511
+first_block: index=(0, -1, -1) row=0 storage_flat_range=0..511
+last_block: index=(1, 0, 0) row=7 storage_flat_range=3584..4095
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=584 nonzero_weights=584 unknown_voxels=3512
+status_counts: contributes=1168 projection-outside-image=5440 behind-truncation=1584
+plan_weight_sum_after: 1168
+plan_max_weight_after: 2
+traversal_session_replay: no
+traversal_replay_hashing: no
+traversal_source_io: no
+traversal_depth_decoding: no
+traversal_prepared_depth_access: yes
+traversal_workload: retained_outcomes=8192 maximum=262144
+blocks_traversed: 8
+block_transcripts_retained: 8
+voxel_addresses_traversed: 4096
+voxel_transcripts_retained: 4096
+voxel_observation_traversals: 4096
+contributions_evaluated: 8192
+contributions_applied: 1168
+contributions_skipped: 7024
+storage_slots_updated: 584
+fusion_block_traversal_performed: yes
+fusion_block_traversal_scope: existing-plan-block-set-only
+multiple_block_traversal_performed: yes
+planned_block_set_traversal_performed: yes
+all_existing_plan_blocks_traversed: yes
+unplanned_blocks_visited: 0
+free_space_coverage_planned: no
+ray_traversal_performed: no
+full_fusion_performed: no
+missing_blocks_created: no
+caught_failure_rollback_scope: complete-planned-storage
+artifact_written: no
+storage_persisted: no
+```
+
+The command follows the plan's complete X-fastest row tuple, then local-flat
+`0..511`, then the selected observation order. For this fixture that is
+`8 * 512 * 2 = 8,192` retained outcomes. It applies 1,168 weight-one
+contributions to 584 slots and keeps the other 3,512 slots unknown.
+
+The plan traversal accepts only canonical all-zero storage and rejects more
+than 262,144 retained outcomes before the first child. A caught later-block or
+final-validation failure restores every planned row to the preflight-proven
+all-zero bytes. The parent rollback uses fills on the existing arrays rather
+than allocating a second whole-storage copy. This remains exclusive-access,
+in-process rollback, not crash atomicity, thread safety, persistence, or an
+observation ledger.
+
+The traversal reuses one completed context and performs no traversal-time
+replay, hashing, source I/O, or decoding. It visits every existing surface and
+halo block but no unplanned block. Because the artifact still omits complete
+camera-to-surface free-space rays, this is full execution over the current
+plan—not full fusion. See
+[`docs/tsdf-context-plan-traversal.md`](docs/tsdf-context-plan-traversal.md).
+
+The next phase is the separate design of deterministic camera-to-surface
+free-space activation and visibility/culling semantics. Observation
+idempotency, complete fusion, persistence, and optimization remain later
+checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -896,6 +972,8 @@ single-voxel traversal across selected observations is in
 [`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md),
 single selected-block context traversal is in
 [`docs/tsdf-context-block-traversal.md`](docs/tsdf-context-block-traversal.md),
+existing-plan block-set context traversal is in
+[`docs/tsdf-context-plan-traversal.md`](docs/tsdf-context-plan-traversal.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

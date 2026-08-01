@@ -15,10 +15,11 @@ exactly once into immutable C-contiguous float64 metric storage.
 
 The result is a self-contained construction-time measurement snapshot for
 scalar evaluation, guarded scalar application, one-voxel selected-observation
-traversal, and one-selected-block traversal. It is not a live view of the
-`.vgsession` folder. The builder itself does not allocate or mutate TSDF
-storage, evaluate a voxel, traverse voxel addresses or blocks, trace a frustum
-or ray, plan free space, perform fusion, or write an artifact.
+traversal, one-selected-block traversal, and complete existing-plan traversal.
+It is not a live view of the `.vgsession` folder. The builder itself does not
+allocate or mutate TSDF storage, evaluate a voxel, traverse voxel addresses or
+blocks, trace a frustum or ray, plan free space, perform fusion, or write an
+artifact.
 
 ## Public API and immutable records
 
@@ -198,7 +199,7 @@ observations for a voxel, visit another address or block, perform fusion, or
 write or persist an artifact. The context exists only for the life of the
 process.
 
-## Scalar, one-voxel, and one-block consumers
+## Scalar, one-voxel, one-block, and existing-plan consumers
 
 One prepared observation can now be evaluated at one planned voxel without
 source I/O:
@@ -288,15 +289,36 @@ hashing, source I/O, or depth decoding. Ready child evaluations read the same
 immutable prepared metric depth. See
 [`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
 
+The complete existing active-block tuple can consume the same context:
+
+```python
+plan_traversal = traverse_tsdf_plan_blocks_from_context(
+    storage,
+    context,
+)
+```
+
+This parent derives every canonical row from `plan.active_blocks`, then composes
+the one-block operation with the identical context. It retains the complete
+nested transcript and rejects more than 262,144 contribution outcomes before
+the first child. The entire storage must begin as canonical all-zero bytes. A
+caught later-row failure restores every planned row to that preflight-known
+state without allocating a second whole-storage rollback copy.
+
+The plan traversal also accepts no `ScanSession` and performs no
+traversal-time replay, hashing, source I/O, or decoding. Ready evaluations read
+the context's immutable metric depth. Traversing every existing plan row does
+not add the camera-to-surface free-space blocks absent from that plan. See
+[`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+
 ## Explicitly deferred
 
-- traversing any second block, the plan's complete block-row tuple, a frustum,
-  or a camera ray;
+- traversing unplanned blocks, a frustum, or a camera ray;
 - culling, visibility, occlusion, and camera-to-surface free-space planning;
-- multi-block TSDF mutation, complete fusion, normalization, color, confidence,
-  normals, or topology updates;
+- dynamic multi-block mutation, complete fusion, normalization, color,
+  confidence, normals, or topology updates;
 - a persistent/resumable observation ledger, nonempty-target continuation,
-  cross-call idempotency, and general multi-block transactions;
+  cross-call idempotency, and general nonempty multi-block transactions;
 - context serialization, persistent or crash-atomic checkpoints, block-backed
   `.sftsdf` output, and sparse-aware surface or mesh consumers;
 - lazy depth decoding, paging, eviction, streaming, parallel construction,

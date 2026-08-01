@@ -140,11 +140,35 @@ The temporary storage is still process-local and is discarded by the CLI; the
 operation neither creates missing blocks nor persists an artifact. See
 [`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
 
+## Complete existing-plan consumer
+
+The next composition consumes every row already in the source plan:
+
+```python
+receipt = traverse_tsdf_plan_blocks_from_context(
+    storage,
+    context,
+)
+```
+
+It requires `storage.block_indices == plan.active_blocks`, traverses rows from
+zero through `block_count - 1` in canonical X-fastest plan order, and retains
+one complete block receipt per row. The complete numeric storage must contain
+canonical all-zero bytes before the first child. The diagnostic rejects more
+than 262,144 planned voxel/selected-observation outcomes before mutation.
+
+Because preflight proves the starting payload is all zero, caught-failure
+rollback fills the existing arrays with canonical float64 and uint32 zero and
+verifies their bytes and layout. It does not allocate a second whole-storage
+copy. The operation still creates no missing block, changes no block tuple,
+and writes no artifact. See
+[`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+
 ## Explicitly deferred
 
 - allocator-time decoding, back-projection, block-coordinate regeneration, or
   TSDF mutation; these remain separate consumer operations;
-- plan-wide TSDF traversal, normalized storage, or complete fusion;
+- normalized storage or complete spatial-domain fusion;
 - camera-to-surface free-space, frustum, ray, visibility, or occlusion rules;
 - a mutable lookup cache or fusion index, per-block provenance, color,
   confidence, or normals;

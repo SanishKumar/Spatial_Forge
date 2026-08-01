@@ -40,8 +40,9 @@ The project is intentionally advancing through small, testable checkpoints.
   aligned-depth frame exactly once into immutable C-contiguous float64 metric
   storage. It is consumed by separate scalar context evaluation and
   application APIs plus context-backed one-voxel and one-selected-block
-  traversals; the deliberately redundant session-backed one-voxel traversal
-  remains available as a reference path.
+  traversals plus traversal of the complete existing plan block set; the
+  deliberately redundant session-backed one-voxel traversal remains available
+  as a reference path.
 - Plan-bound read-only evaluation of one selected replay/depth-context
   observation at one planned voxel, using the copied pose and immutable metric
   depth without evaluation-time replay hashing or depth decoding and returning
@@ -60,6 +61,10 @@ The project is intentionally advancing through small, testable checkpoints.
   caller-selected planned block, retaining every per-voxel receipt, requiring
   an empty selected row before the first child, and restoring that complete
   row after a caught later-child failure without targeting a second block.
+- Context-backed traversal of every existing canonical active-block row in the
+  plan, retaining complete nested block/voxel/observation receipts, enforcing a
+  262,144-outcome diagnostic cap, and restoring the preflight-proven all-zero
+  planned storage after a caught later-block failure.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -73,20 +78,21 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. traverse the plan's existing canonical block rows with one shared
-   replay/depth context while preserving deterministic block/address order,
-   per-block and per-voxel transcripts, and bounded failure handling;
-2. separately decide and plan camera-to-surface free-space coverage, replace
-   the empty-target guard with an explicit cross-call
-   observation/idempotency policy, and define complete fusion diagnostics;
-3. culled, scalable sparse traversal, larger-volume artifacts and consumers,
-   and an optimized backend suitable for full sequences;
-4. robust depth/pose outlier filtering and configurable production bounds;
-5. full TUM/ARKitScenes sample runs and geometry accuracy reports;
-6. production mesh refinement: exact-zero cells, normals, connected-component
-   and quality validation, and an optimized extraction backend;
-7. gravity/floor alignment, floor and wall candidates, and openings; and
-8. a top-down/3D Inspector view.
+1. separately define and plan deterministic camera-to-surface free-space
+   activation together with visibility/culling semantics;
+2. replace the empty-storage guard with explicit observation provenance,
+   idempotency, and resumable/nonempty fusion, then define complete fusion
+   diagnostics over the chosen spatial domain;
+3. persist a block-backed TSDF artifact and connect normalization plus sparse
+   surface/mesh consumers;
+4. add culled, scalable sparse traversal and an optimized backend suitable for
+   full sequences;
+5. add robust depth/pose outlier filtering and configurable production bounds;
+6. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
+7. refine production meshing with exact-zero cells, normals,
+   connected-component and quality validation, and optimized extraction;
+8. add gravity/floor alignment, floor and wall candidates, and openings; and
+9. add a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -127,13 +133,14 @@ single-observation voxel contribution, single-slot contribution application,
 single-voxel selected-observation traversal, immutable replay/depth context,
 context-backed single-observation contribution, context-bound single-slot
 application, context-backed single-voxel traversal, context-backed
-single-selected-block traversal, surface-point, and triangle-mesh commands in
-the repository
+single-selected-block traversal, context-backed existing-plan traversal,
+surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block
 coordinates, replay binding, zero-state storage layout, signed address
 round-trips, proposed and applied contribution deltas, before/after receipts,
 selected/evaluated/applied traversal counts, canonical 512-address ordering,
-selected-block isolation, immutable metric-depth layout, fusion weights,
-signed values, exact coordinates, topology, winding, and boundary counts
-provide checks independent of visual appearance.
+selected-block isolation, complete plan-row ordering, bounded retained-outcome
+workload, whole-storage rollback scope, immutable metric-depth layout, fusion
+weights, signed values, exact coordinates, topology, winding, and boundary
+counts provide checks independent of visual appearance.
