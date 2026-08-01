@@ -223,16 +223,20 @@ A standalone [`TsdfReplayDepthContext`](tsdf-replay-depth-context.md) now
 prepares the canonical selected-observation tuple and immutable metric depth
 frames once, and `evaluate_tsdf_voxel_contribution_from_context` can evaluate
 one of those observations at one voxel without evaluation-time source I/O.
-This traversal does not call that primitive yet: its public API still accepts
-a `ScanSession`, and its session-backed evaluator and updater retain the
-repeated replay, hashing, and decoding behavior above. Context-bound guarded
-one-slot application is the next checkpoint; only then should this traversal
-be rewired with numerical, diagnostic, provenance, ordering, duplicate-guard,
-and rollback parity. Culling and the wider execution design remain deferred.
+`apply_tsdf_voxel_contribution_from_context` can now apply one accepted result
+using matching construction-time context provenance without application-time
+session replay, source I/O, or depth access.
+
+This traversal does not call either context-aware scalar primitive yet: its
+public API still accepts a `ScanSession`, and its session-backed evaluator and
+updater retain the repeated replay, hashing, and decoding behavior above. The
+next checkpoint is only to rewire this one-voxel traversal with numerical,
+diagnostic, provenance, ordering, skip, duplicate-guard, and rollback parity.
+Culling and the wider execution design remain deferred.
 
 ## Explicitly deferred
 
-- consuming `TsdfReplayDepthContext` in guarded application or this traversal;
+- consuming `TsdfReplayDepthContext` in this traversal;
 - iterating any other planned voxel, block, frustum, or camera ray;
 - camera-to-surface free-space block planning, visibility, and occlusion;
 - dynamic block insertion, eviction, streaming, adaptive resolution, and

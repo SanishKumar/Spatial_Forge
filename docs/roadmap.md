@@ -38,12 +38,17 @@ The project is intentionally advancing through small, testable checkpoints.
 - Plan- and replay-bound construction of a frozen in-memory
   `TsdfReplayDepthContext` for every selected observation, decoding each ready
   aligned-depth frame exactly once into immutable C-contiguous float64 metric
-  storage. It is consumed only by the separate scalar context evaluator;
-  voxel traversal remains session-backed.
+  storage. It is consumed by separate scalar context evaluation and
+  application APIs; voxel traversal remains session-backed.
 - Plan-bound read-only evaluation of one selected replay/depth-context
   observation at one planned voxel, using the copied pose and immutable metric
   depth without evaluation-time replay hashing or depth decoding and returning
   the existing frozen contribution/skip contract without mutation.
+- Context-bound guarded application of one accepted prepared contribution to
+  exactly one addressed temporary slot, preserving plan/context/storage
+  provenance, uint32 and accumulator preflight, exact scalar-write checks, an
+  immutable receipt, and caught-failure rollback without application-time
+  session replay, source I/O, or depth access.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -57,28 +62,23 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. add context-bound guarded application of one accepted contribution to
-   exactly one addressed temporary slot, preserving plan/replay provenance,
-   uint32 overflow preflight, exact target and layout verification, and
-   rollback while using construction-time context provenance instead of
-   replaying the session for every update;
-2. then make the one-voxel all-selected-observation traversal consume the
+1. make the one-voxel all-selected-observation traversal consume the
    shared context and context-aware scalar primitives, preserving
    evaluate-all-then-apply ordering, canonical sequence order, skip
    accounting, the empty-target duplicate guard, sequential float64
    accumulation, and traversal-wide rollback;
-3. traverse planned voxel addresses and blocks, decide and plan
+2. traverse planned voxel addresses and blocks, decide and plan
    camera-to-surface free-space coverage, replace the single-voxel empty-target
    guard with an explicit cross-call observation/idempotency policy, and report
    complete block-fusion diagnostics;
-4. culled, scalable sparse traversal, larger-volume artifacts and consumers,
+3. culled, scalable sparse traversal, larger-volume artifacts and consumers,
    and an optimized backend suitable for full sequences;
-5. robust depth/pose outlier filtering and configurable production bounds;
-6. full TUM/ARKitScenes sample runs and geometry accuracy reports;
-7. production mesh refinement: exact-zero cells, normals, connected-component
+4. robust depth/pose outlier filtering and configurable production bounds;
+5. full TUM/ARKitScenes sample runs and geometry accuracy reports;
+6. production mesh refinement: exact-zero cells, normals, connected-component
    and quality validation, and an optimized extraction backend;
-8. gravity/floor alignment, floor and wall candidates, and openings; and
-9. a top-down/3D Inspector view.
+7. gravity/floor alignment, floor and wall candidates, and openings; and
+8. a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -117,8 +117,9 @@ Then follow the point-cloud, fixed/automatic/sparse TSDF, candidate-block,
 strict plan verification, empty block allocation, signed voxel addressing,
 single-observation voxel contribution, single-slot contribution application,
 single-voxel selected-observation traversal, immutable replay/depth context,
-context-backed single-observation contribution, surface-point, and
-triangle-mesh commands in the repository README. Their
+context-backed single-observation contribution, context-bound single-slot
+application, surface-point, and triangle-mesh commands in the repository
+README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block
 coordinates, replay binding, zero-state storage layout, signed address
 round-trips, proposed and applied contribution deltas, before/after receipts,

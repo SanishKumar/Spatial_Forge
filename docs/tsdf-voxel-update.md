@@ -18,6 +18,11 @@ contribution/fusion traversal over other voxels, blocks, frusta, or rays. The
 storage exists only in this process, is discarded when the command exits, and
 is not serialized.
 
+This document describes the original session-backed updater, which remains
+unchanged. A separate context-bound sibling now applies one prepared
+contribution without application-time replay or source I/O; see
+[`tsdf-context-voxel-update.md`](tsdf-context-voxel-update.md).
+
 ## Public API and receipt
 
 ```python
@@ -152,6 +157,33 @@ Exactly one unknown slot becomes observed, so the nonzero sum and weight counts
 change from zero to one and the unknown count changes from 4,096 to 4,095.
 Weight one means one observation; it must not be reported as a multi-view fused
 voxel.
+
+## Context-bound sibling
+
+The separate API:
+
+```python
+receipt = apply_tsdf_voxel_contribution_from_context(
+    storage,
+    contribution,
+    context,
+)
+```
+
+reuses the same destination/accumulator checks, uint32 overflow protection,
+float64 transition, frozen receipt, exact scalar-write verification, and
+caught-write rollback core. Instead of accepting a live `ScanSession`, it
+requires a matching immutable `TsdfReplayDepthContext` and validates the
+context, contribution, destination plan, selected ready observation, and
+address together.
+
+The two APIs intentionally have different freshness boundaries. This
+session-backed updater replays immediately before and after mutation and can
+roll back after a caught ending-replay mismatch. The context-bound updater
+performs no application-time session replay, hashing, source I/O, or depth
+access. It trusts the context's completed construction-time replay bracket and
+cannot detect later session-folder changes. It therefore has no post-write
+source-change rollback trigger.
 
 ## Repeated application
 

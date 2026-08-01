@@ -302,7 +302,25 @@ and writes or persists no artifact.
 
 ## Mutation consumers
 
-An accepted contribution can now be applied to one destination slot:
+An accepted context-generated contribution can be applied to one destination
+slot with the same prepared context:
+
+```python
+receipt = apply_tsdf_voxel_contribution_from_context(
+    storage,
+    contribution,
+    context,
+)
+```
+
+This updater validates context/contribution/storage provenance and the exact
+destination, then returns an immutable before/after receipt. It uses the
+context's construction-time freshness and performs no application-time
+session replay, source I/O, or depth access. The exact boundary and rollback
+contract is documented in
+[`tsdf-context-voxel-update.md`](tsdf-context-voxel-update.md).
+
+The existing session-backed updater remains available:
 
 ```python
 receipt = apply_tsdf_voxel_contribution(
@@ -315,8 +333,8 @@ receipt = apply_tsdf_voxel_contribution(
 The updater checks the contribution's plan and replay provenance, re-resolves
 its address, replay-checks the current session around the mutation, and returns
 an immutable before/after receipt. It does not make this evaluator mutating.
-It is unchanged by the prepared-context evaluator and still requires a current
-`ScanSession`; this checkpoint does not add context-bound mutation.
+It is unchanged by the prepared-context scalar pair and still requires a
+current `ScanSession`.
 The exact update, rollback, and repeated-application rules are documented in
 [`tsdf-voxel-update.md`](tsdf-voxel-update.md).
 
@@ -335,7 +353,8 @@ It evaluates every selected sequence before applying any accepted result, then
 uses the separate updater in canonical observation order. Skips remain
 immutable diagnostics and are not passed to the updater. The traversal is a
 consumer of the session-backed read-only evaluator; it does not call
-`evaluate_tsdf_voxel_contribution_from_context`. See
+either context-aware scalar primitive. Rewiring this one-voxel traversal is
+the next checkpoint. See
 [`tsdf-voxel-traversal.md`](tsdf-voxel-traversal.md).
 
 ## Explicitly deferred
@@ -345,8 +364,8 @@ consumer of the session-backed read-only evaluator; it does not call
   while other voxels, blocks, frusta, and rays remain deferred;
 - applying proposed deltas within this read-only evaluator; the separate
   update primitive applies one accepted delta only;
-- context-bound guarded application and rewiring selected-observation
-  traversal to use the prepared-context evaluator;
+- rewiring selected-observation traversal to use both prepared-context scalar
+  primitives;
 - normalization, sensor-dependent weighting, an observation ledger, or a
   block-wide multi-observation fusion loop;
 - deciding or planning full camera-to-surface free-space block coverage;

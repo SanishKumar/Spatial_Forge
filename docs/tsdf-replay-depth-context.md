@@ -14,10 +14,11 @@ recorded as ready, its pose is copied, and its aligned depth payload is decoded
 exactly once into immutable C-contiguous float64 metric storage.
 
 The result is a self-contained construction-time measurement snapshot for
-scalar evaluation and a future traversal checkpoint. It is not a live view of
-the `.vgsession` folder. The builder itself does not allocate or mutate TSDF
-storage, evaluate a voxel, traverse voxel addresses or blocks, trace a frustum
-or ray, plan free space, perform fusion, or write an artifact.
+scalar evaluation, guarded scalar application, and a future traversal
+checkpoint. It is not a live view of the `.vgsession` folder. The builder
+itself does not allocate or mutate TSDF storage, evaluate a voxel, traverse
+voxel addresses or blocks, trace a frustum or ray, plan free space, perform
+fusion, or write an artifact.
 
 ## Public API and immutable records
 
@@ -197,7 +198,7 @@ observations for a voxel, visit another address or block, perform fusion, or
 write or persist an artifact. The context exists only for the life of the
 process.
 
-## First scalar consumer; not yet consumed by traversal
+## Scalar consumers; not yet consumed by traversal
 
 One prepared observation can now be evaluated at one planned voxel without
 source I/O:
@@ -218,27 +219,43 @@ replay hashing or depth decoding and does not mutate storage or iterate another
 observation or voxel. Context building remains the earlier I/O stage: it must
 replay-check the session and decode ready frames before this evaluator runs.
 
-`traverse_tsdf_voxel_observations` does not accept or use this context-aware
-primitive yet. It still calls the session-backed scalar evaluator and updater,
-which repeatedly replay and hash session inputs, and depth is still decoded
-through the per-observation evaluation path for that traversal.
+An accepted context-generated contribution can also be applied to one
+addressed temporary slot:
 
-The next checkpoint is context-bound guarded application of one accepted
-contribution to one addressed slot, preserving the current provenance,
-overflow, byte-verification, and rollback guarantees without replaying the
-session for every update. Only after that should one-voxel traversal be rewired
-to the context-aware scalar primitives while preserving its transcript,
-canonical sequential float64 application, duplicate guard, and traversal-wide
-rollback.
+```python
+receipt = apply_tsdf_voxel_contribution_from_context(
+    storage,
+    contribution,
+    context,
+)
+```
+
+This updater matches context, contribution, plan, and destination provenance;
+validates the selected ready observation and exact destination; and preserves
+the accumulator, uint32 overflow, exact-write, immutable receipt, one-slot,
+and caught-write rollback rules. It accepts no `ScanSession`, performs no
+application-time replay or source I/O, and does not access the retained depth
+payload. Its freshness guarantee is therefore the completed context build,
+not the later state of the session folder. See
+[`tsdf-context-voxel-update.md`](tsdf-context-voxel-update.md).
+
+`traverse_tsdf_voxel_observations` does not accept or use this context-aware
+scalar pair yet. It still calls the session-backed scalar evaluator and
+updater, which repeatedly replay and hash session inputs, and depth is still
+decoded through the per-observation evaluation path for that traversal.
+
+The next checkpoint is only to rewire that one-voxel traversal to the
+context-aware scalar primitives while preserving its transcript, canonical
+sequential float64 application, skip accounting, empty-target duplicate guard,
+and traversal-wide rollback.
 
 ## Explicitly deferred
 
-- consuming the context in guarded scalar application or single-voxel
-  selected-observation traversal;
+- consuming the context in single-voxel selected-observation traversal;
 - iterating planned voxel addresses, blocks, frusta, or camera rays;
 - culling, visibility, occlusion, and camera-to-surface free-space planning;
-- TSDF storage allocation or mutation, complete block fusion, normalization,
-  color, confidence, normals, or topology updates;
+- multi-slot TSDF mutation, complete block fusion, normalization, color,
+  confidence, normals, or topology updates;
 - a persistent/resumable observation ledger, nonempty-target continuation,
   cross-call idempotency, and multi-slot batch transactions;
 - context serialization, persistent or crash-atomic checkpoints, block-backed

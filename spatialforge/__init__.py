@@ -44,6 +44,7 @@ from .tsdf_voxel_update import (
     MAX_TSDF_VOXEL_WEIGHT,
     TsdfVoxelUpdateReceipt,
     apply_tsdf_voxel_contribution,
+    apply_tsdf_voxel_contribution_from_context,
 )
 from .tsdf_bounds import TsdfBoundsReport, infer_tsdf_bounds
 from .tum_importer import TumImportReport, import_tum_dataset
@@ -71,6 +72,7 @@ __all__ = [
     "TumImportReport",
     "allocate_empty_tsdf_blocks",
     "apply_tsdf_voxel_contribution",
+    "apply_tsdf_voxel_contribution_from_context",
     "build_tsdf_replay_depth_context",
     "compose_tsdf_global_voxel_index",
     "evaluate_tsdf_voxel_contribution",

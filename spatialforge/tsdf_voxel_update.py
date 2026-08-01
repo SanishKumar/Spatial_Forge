@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -11,16 +12,23 @@ from .errors import SessionReplayError, TsdfError
 from .model import ScanSession
 from .replay import replay_session
 from .tsdf_block_plan import TSDF_BLOCK_RESOLUTION
+from .tsdf_block_plan_loader import TsdfBlockPlan
 from .tsdf_block_storage import (
     TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL,
     TSDF_BLOCK_VOXELS,
     TsdfBlockStorage,
     _validate_storage_arrays,
 )
+from .tsdf_replay_depth_context import (
+    TsdfReplayDepthContext,
+    TsdfReplayDepthStatus,
+)
 from .tsdf_voxel_address import locate_tsdf_voxel
 from .tsdf_voxel_contribution import (
     TsdfContributionStatus,
     TsdfVoxelContribution,
+    _validate_contribution_context,
+    _validate_contribution_plan,
 )
 
 MAX_TSDF_VOXEL_WEIGHT = int(np.iinfo(np.uint32).max)
@@ -130,6 +138,94 @@ def apply_tsdf_voxel_contribution(
         raise TsdfError(
             "TSDF voxel update requires a loaded ScanSession"
         )
+    _validate_accepted_contribution(contribution)
+    plan = _validate_contribution_storage_provenance(storage, contribution)
+    if plan.session_id != session.session_id:
+        raise TsdfError(
+            "TSDF block plan session_id does not match the loaded session"
+        )
+    _validate_update_destination(storage, contribution)
+
+    starting_replay = replay_session(session)
+    if starting_replay.digest_sha256 != contribution.replay_digest_sha256:
+        raise TsdfError(
+            "TSDF contribution replay digest does not match current session "
+            "inputs"
+        )
+
+    def validate_ending_replay() -> None:
+        ending_replay = replay_session(session)
+        if (
+            ending_replay.digest_sha256
+            != contribution.replay_digest_sha256
+            or ending_replay.digest_sha256
+            != starting_replay.digest_sha256
+        ):
+            raise TsdfError(
+                "session inputs changed while applying a TSDF contribution"
+            )
+
+    return _apply_tsdf_voxel_contribution_core(
+        storage,
+        contribution,
+        postwrite_validation=validate_ending_replay,
+        unexpected_error_prefix="cannot apply TSDF voxel contribution",
+    )
+
+
+def apply_tsdf_voxel_contribution_from_context(
+    storage: TsdfBlockStorage,
+    contribution: TsdfVoxelContribution,
+    context: TsdfReplayDepthContext,
+) -> TsdfVoxelUpdateReceipt:
+    """Apply one accepted contribution using construction-time provenance."""
+
+    if not isinstance(storage, TsdfBlockStorage):
+        raise TsdfError(
+            "TSDF context voxel update requires allocated TsdfBlockStorage"
+        )
+    if not isinstance(contribution, TsdfVoxelContribution):
+        raise TsdfError(
+            "TSDF context voxel update requires a TsdfVoxelContribution"
+        )
+    if not isinstance(context, TsdfReplayDepthContext):
+        raise TsdfError(
+            "TSDF context voxel update requires a TsdfReplayDepthContext"
+        )
+    _validate_accepted_contribution(contribution)
+
+    plan = storage.source_plan
+    _validate_contribution_plan(plan)
+    _validate_contribution_context(plan, context)
+    _validate_contribution_storage_provenance(storage, contribution)
+    if (
+        contribution.source_plan_digest_sha256
+        != context.source_plan_digest_sha256
+    ):
+        raise TsdfError(
+            "TSDF contribution source plan does not match replay/depth "
+            "context"
+        )
+    if contribution.replay_digest_sha256 != context.replay_digest_sha256:
+        raise TsdfError(
+            "TSDF contribution replay digest does not match replay/depth "
+            "context"
+        )
+    _validate_context_contribution_observation(context, contribution)
+    _validate_update_destination(storage, contribution)
+    return _apply_tsdf_voxel_contribution_core(
+        storage,
+        contribution,
+        postwrite_validation=None,
+        unexpected_error_prefix=(
+            "cannot apply context-bound TSDF voxel contribution"
+        ),
+    )
+
+
+def _validate_accepted_contribution(
+    contribution: TsdfVoxelContribution,
+) -> None:
     if (
         contribution.status is not TsdfContributionStatus.CONTRIBUTES
         or not contribution.contributes
@@ -142,6 +238,11 @@ def apply_tsdf_voxel_contribution(
             "TSDF voxel update requires an accepted finite contribution"
         )
 
+
+def _validate_contribution_storage_provenance(
+    storage: TsdfBlockStorage,
+    contribution: TsdfVoxelContribution,
+) -> TsdfBlockPlan:
     plan = storage.source_plan
     if contribution.source_plan_digest_sha256 != plan.artifact_digest_sha256:
         raise TsdfError(
@@ -153,11 +254,37 @@ def apply_tsdf_voxel_contribution(
             "TSDF contribution replay digest does not match destination "
             "storage"
         )
-    if plan.session_id != session.session_id:
+    return plan
+
+
+def _validate_context_contribution_observation(
+    context: TsdfReplayDepthContext,
+    contribution: TsdfVoxelContribution,
+) -> None:
+    sequence = contribution.observation_sequence
+    if sequence >= context.total_observations:
         raise TsdfError(
-            "TSDF block plan session_id does not match the loaded session"
+            "TSDF contribution observation is outside replay/depth context"
+        )
+    if sequence % context.frame_stride != 0:
+        raise TsdfError(
+            "TSDF contribution observation is not selected by context"
+        )
+    observation = context.observations[sequence // context.frame_stride]
+    if observation.observation_sequence != sequence:
+        raise TsdfError(
+            "TSDF replay/depth context observation lookup is inconsistent"
+        )
+    if observation.status is not TsdfReplayDepthStatus.READY:
+        raise TsdfError(
+            "TSDF context voxel update requires a ready observation"
         )
 
+
+def _validate_update_destination(
+    storage: TsdfBlockStorage,
+    contribution: TsdfVoxelContribution,
+) -> None:
     _validate_update_storage(storage)
     resolved_address = locate_tsdf_voxel(
         storage,
@@ -168,13 +295,14 @@ def apply_tsdf_voxel_contribution(
             "TSDF contribution address does not match destination storage"
         )
 
-    starting_replay = replay_session(session)
-    if starting_replay.digest_sha256 != contribution.replay_digest_sha256:
-        raise TsdfError(
-            "TSDF contribution replay digest does not match current session "
-            "inputs"
-        )
 
+def _apply_tsdf_voxel_contribution_core(
+    storage: TsdfBlockStorage,
+    contribution: TsdfVoxelContribution,
+    *,
+    postwrite_validation: Callable[[], None] | None,
+    unexpected_error_prefix: str,
+) -> TsdfVoxelUpdateReceipt:
     array_index = contribution.address.array_index_bzyx
     stored_sum = storage.tsdf_sums[array_index]
     stored_weight = storage.weights[array_index]
@@ -233,16 +361,8 @@ def apply_tsdf_voxel_contribution(
             raise TsdfError(
                 "TSDF voxel update could not verify its scalar writes"
             )
-        ending_replay = replay_session(session)
-        if (
-            ending_replay.digest_sha256
-            != contribution.replay_digest_sha256
-            or ending_replay.digest_sha256
-            != starting_replay.digest_sha256
-        ):
-            raise TsdfError(
-                "session inputs changed while applying a TSDF contribution"
-            )
+        if postwrite_validation is not None:
+            postwrite_validation()
     except Exception as error:
         if wrote_target:
             _restore_target_or_fail(
@@ -257,7 +377,7 @@ def apply_tsdf_voxel_contribution(
         if isinstance(error, (TsdfError, SessionReplayError)):
             raise
         raise TsdfError(
-            f"cannot apply TSDF voxel contribution: {error}"
+            f"{unexpected_error_prefix}: {error}"
         ) from error
     return receipt
 
