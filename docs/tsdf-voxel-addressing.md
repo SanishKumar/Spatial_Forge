@@ -115,7 +115,7 @@ planned empty storage using the previous checkpoint, resolves the queries, and
 then discards the storage. The addressing operation itself creates no block and
 the command writes no artifact.
 
-## Next read-only consumer
+## Downstream consumers
 
 A resolved `TsdfVoxelAddress` can now be evaluated against exactly one selected
 known-pose depth observation. That operation derives the voxel's world center,
@@ -123,11 +123,27 @@ projects it to the nearest depth pixel, and returns an immutable proposed TSDF
 sum/weight delta or skip diagnostic. It still does not change storage. See
 [`tsdf-voxel-contribution.md`](tsdf-voxel-contribution.md).
 
+The context-backed one-selected-block traversal deterministically composes the
+same integer operations for every local-flat position in one planned row:
+
+```text
+local_flat = 0..511
+local_xyz  = (local_flat % 8, (local_flat // 8) % 8, local_flat // 64)
+```
+
+For each local coordinate it calls
+`compose_tsdf_global_voxel_index`, resolves the result with
+`locate_tsdf_voxel`, and requires the exact expected block row, local index,
+array index, and contiguous storage-flat offset. This makes the address order
+and one-block boundary independently checkable; addressing itself remains
+read-only. See
+[`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
+
 ## Explicitly deferred
 
 - dynamic block creation, insertion, eviction, or a mutable lookup cache;
-- using TSDF sums or weights as geometry, changing their values, depth decoding,
-  back-projection, replanning, fusion, or free-space decisions;
+- using sums or weights as geometry, depth decoding, back-projection,
+  replanning, fusion, or free-space decisions inside the addressing API;
 - world-coordinate quantization, interpolation, neighbor/stencil iteration,
   frustum or ray traversal, visibility, and occlusion;
 - a dense global flat index or finite global volume AABB;

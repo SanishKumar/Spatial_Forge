@@ -18,6 +18,10 @@ from .tsdf_block_storage import (
     TsdfBlockStorage,
     allocate_empty_tsdf_blocks,
 )
+from .tsdf_block_traversal import (
+    TsdfBlockTraversalReceipt,
+    traverse_tsdf_block_voxels_from_context,
+)
 from .tsdf_replay_depth_context import (
     MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES,
     TsdfReplayDepthContext,
@@ -62,6 +66,7 @@ __all__ = [
     "TsdfBlockPlan",
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
+    "TsdfBlockTraversalReceipt",
     "TsdfContributionStatus",
     "TsdfReplayDepthContext",
     "TsdfReplayDepthObservation",
@@ -92,6 +97,7 @@ __all__ = [
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",
+    "traverse_tsdf_block_voxels_from_context",
     "traverse_tsdf_voxel_observations",
     "traverse_tsdf_voxel_observations_from_context",
     "verify_tsdf_block_plan_replay",

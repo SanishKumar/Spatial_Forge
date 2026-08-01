@@ -34,9 +34,14 @@ from .tsdf_block_plan_loader import (
     verify_tsdf_block_plan_replay,
 )
 from .tsdf_block_storage import allocate_empty_tsdf_blocks
+from .tsdf_block_traversal import traverse_tsdf_block_voxels_from_context
 from .tsdf_bounds import infer_tsdf_bounds
 from .tsdf_replay_depth_context import build_tsdf_replay_depth_context
-from .tsdf_voxel_address import TsdfVoxelAddress, locate_tsdf_voxel
+from .tsdf_voxel_address import (
+    TsdfVoxelAddress,
+    compose_tsdf_global_voxel_index,
+    locate_tsdf_voxel,
+)
 from .tsdf_voxel_contribution import (
     TsdfVoxelContribution,
     evaluate_tsdf_voxel_contribution,
@@ -168,6 +173,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.voxel,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-block-traverse"
+        ):
+            return _run_tsdf_block_context_block_traverse(
+                arguments.plan,
+                arguments.session,
+                arguments.block,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -717,6 +731,39 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar=("GX", "GY", "GZ"),
         help="One planned signed global voxel XYZ to traverse and update.",
+    )
+
+    block_context_block_traverse = reconstruct_commands.add_parser(
+        "tsdf-block-context-block-traverse",
+        help=(
+            "Use one prepared replay/depth context to traverse all 512 "
+            "voxels in one selected planned block."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, allocate temporary "
+            "storage, prepare one immutable replay/depth context, and "
+            "traverse every voxel in exactly one selected planned block in "
+            "canonical local-flat order. No second block, ray, or free-space "
+            "coverage is traversed, and no artifact is written."
+        ),
+    )
+    block_context_block_traverse.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose temporary storage is updated.",
+    )
+    block_context_block_traverse.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_block_traverse.add_argument(
+        "--block",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("BX", "BY", "BZ"),
+        help="Exactly one planned signed block XYZ to traverse.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -1839,6 +1886,246 @@ def _run_tsdf_block_contribution_apply(
     )
     print(
         f"replay_digest_sha256: {plan.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_block_traverse(
+    plan_path: Path,
+    session_path: Path,
+    block: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        block_index_xyz = tuple(block)
+        first_global_index = compose_tsdf_global_voxel_index(
+            block_index_xyz,
+            (0, 0, 0),
+        )
+        first_address = locate_tsdf_voxel(storage, first_global_index)
+        if first_address is None:
+            raise TsdfError(
+                f"TSDF block {block_index_xyz} is not planned in "
+                "destination storage"
+            )
+        block_row = first_address.block_row
+        block_before = (
+            int((storage.tsdf_sums[block_row] != 0.0).sum()),
+            int((storage.weights[block_row] != 0).sum()),
+            int((storage.weights[block_row] == 0).sum()),
+        )
+        storage_before = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = traverse_tsdf_block_voxels_from_context(
+            storage,
+            block_index_xyz,
+            context,
+        )
+        block_after = (
+            int((storage.tsdf_sums[block_row] != 0.0).sum()),
+            int((storage.weights[block_row] != 0).sum()),
+            int((storage.weights[block_row] == 0).sum()),
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT BLOCK TRAVERSAL FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT BLOCK TRAVERSAL FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    first_voxel = receipt.voxel_receipts[0].address
+    last_voxel = receipt.voxel_receipts[-1].address
+    print(
+        f"TSDF BLOCK CONTEXT BLOCK TRAVERSAL CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "block: "
+        f"index={receipt.block_index_xyz} "
+        f"row={receipt.block_row} "
+        f"resolution={receipt.block_resolution} "
+        f"voxel_slots={receipt.voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_flat_range: "
+        f"{first_voxel.storage_flat_index}.."
+        f"{last_voxel.storage_flat_index}",
+        file=sys.stdout,
+    )
+    print(
+        "address_order: local-flat-x-fastest "
+        f"local_flat=0..{receipt.voxel_count - 1}",
+        file=sys.stdout,
+    )
+    print(
+        "first_voxel: "
+        f"global={first_voxel.global_index_xyz} "
+        f"local={first_voxel.local_index_xyz} "
+        f"array={first_voxel.array_index_bzyx} "
+        f"storage_flat={first_voxel.storage_flat_index}",
+        file=sys.stdout,
+    )
+    print(
+        "last_voxel: "
+        f"global={last_voxel.global_index_xyz} "
+        f"local={last_voxel.local_index_xyz} "
+        f"array={last_voxel.array_index_bzyx} "
+        f"storage_flat={last_voxel.storage_flat_index}",
+        file=sys.stdout,
+    )
+    print(
+        "selection: "
+        f"frame_stride={receipt.frame_stride} "
+        f"total={receipt.total_observations} "
+        f"selected={len(receipt.selected_observation_sequences)}",
+        file=sys.stdout,
+    )
+    print(
+        "block_before: "
+        f"nonzero_sums={block_before[0]} "
+        f"nonzero_weights={block_before[1]} "
+        f"unknown_voxels={block_before[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "block_after: "
+        f"nonzero_sums={block_after[0]} "
+        f"nonzero_weights={block_after[1]} "
+        f"unknown_voxels={block_after[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_before: "
+        f"nonzero_sums={storage_before[0]} "
+        f"nonzero_weights={storage_before[1]} "
+        f"unknown_voxels={storage_before[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in receipt.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(
+        f"block_weight_sum_after: {receipt.weight_delta}",
+        file=sys.stdout,
+    )
+    print(
+        f"block_max_weight_after: {receipt.maximum_weight_after}",
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "traversal_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("traversal_session_replay: no", file=sys.stdout)
+    print("traversal_replay_hashing: no", file=sys.stdout)
+    print("traversal_source_io: no", file=sys.stdout)
+    print("traversal_depth_decoding: no", file=sys.stdout)
+    print(
+        "traversal_prepared_depth_access: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        f"voxel_addresses_traversed: {receipt.voxel_address_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"voxel_transcripts_retained: {len(receipt.voxel_receipts)}",
+        file=sys.stdout,
+    )
+    print(
+        "voxel_observation_traversals: "
+        f"{receipt.voxel_observation_traversal_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_evaluated: {receipt.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_applied: {receipt.applied_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_skipped: {receipt.skipped_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"storage_slots_updated: {receipt.storage_slots_updated}",
+        file=sys.stdout,
+    )
+    print("blocks_traversed: 1", file=sys.stdout)
+    print("additional_blocks_visited: 0", file=sys.stdout)
+    print("voxel_observation_traversal_performed: yes", file=sys.stdout)
+    print("voxel_address_traversal_performed: yes", file=sys.stdout)
+    print("selected_block_traversal_performed: yes", file=sys.stdout)
+    print("fusion_block_traversal_performed: yes", file=sys.stdout)
+    print(
+        "fusion_block_traversal_scope: selected-planned-block-only",
+        file=sys.stdout,
+    )
+    print("multiple_block_traversal_performed: no", file=sys.stdout)
+    print("planned_block_set_traversal_performed: no", file=sys.stdout)
+    print("free_space_coverage_planned: no", file=sys.stdout)
+    print("ray_traversal_performed: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("caught_failure_rollback_scope: selected-block", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

@@ -39,8 +39,9 @@ The project is intentionally advancing through small, testable checkpoints.
   `TsdfReplayDepthContext` for every selected observation, decoding each ready
   aligned-depth frame exactly once into immutable C-contiguous float64 metric
   storage. It is consumed by separate scalar context evaluation and
-  application APIs plus a context-backed one-voxel traversal; the deliberately
-  redundant session-backed traversal remains available as a reference path.
+  application APIs plus context-backed one-voxel and one-selected-block
+  traversals; the deliberately redundant session-backed one-voxel traversal
+  remains available as a reference path.
 - Plan-bound read-only evaluation of one selected replay/depth-context
   observation at one planned voxel, using the copied pose and immutable metric
   depth without evaluation-time replay hashing or depth decoding and returning
@@ -55,6 +56,10 @@ The project is intentionally advancing through small, testable checkpoints.
   sequence order, stable skips, the empty-target duplicate guard, sequential
   float64 accumulation, and whole-target caught-failure rollback without
   traversal-time replay, source I/O, or depth decoding.
+- Context-backed traversal of all 512 canonical X-fastest addresses in one
+  caller-selected planned block, retaining every per-voxel receipt, requiring
+  an empty selected row before the first child, and restoring that complete
+  row after a caught later-child failure without targeting a second block.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -68,14 +73,12 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. traverse multiple planned voxel addresses within one already allocated
-   `8 x 8 x 8` block using one shared replay/depth context, while preserving
-   deterministic address order, per-voxel transcripts, failure isolation, and
-   the explicit boundary that no second block is visited;
-2. traverse planned blocks, decide and plan camera-to-surface free-space
-   coverage, replace the single-voxel empty-target guard with an explicit
-   cross-call observation/idempotency policy, and report complete block-fusion
-   diagnostics;
+1. traverse the plan's existing canonical block rows with one shared
+   replay/depth context while preserving deterministic block/address order,
+   per-block and per-voxel transcripts, and bounded failure handling;
+2. separately decide and plan camera-to-surface free-space coverage, replace
+   the empty-target guard with an explicit cross-call
+   observation/idempotency policy, and define complete fusion diagnostics;
 3. culled, scalable sparse traversal, larger-volume artifacts and consumers,
    and an optimized backend suitable for full sequences;
 4. robust depth/pose outlier filtering and configurable production bounds;
@@ -123,12 +126,14 @@ strict plan verification, empty block allocation, signed voxel addressing,
 single-observation voxel contribution, single-slot contribution application,
 single-voxel selected-observation traversal, immutable replay/depth context,
 context-backed single-observation contribution, context-bound single-slot
-application, context-backed single-voxel traversal, surface-point, and
-triangle-mesh commands in the repository
+application, context-backed single-voxel traversal, context-backed
+single-selected-block traversal, surface-point, and triangle-mesh commands in
+the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block
 coordinates, replay binding, zero-state storage layout, signed address
 round-trips, proposed and applied contribution deltas, before/after receipts,
-selected/evaluated/applied traversal counts, immutable metric-depth layout,
-fusion weights, signed values, exact coordinates, topology, winding, and
-boundary counts provide checks independent of visual appearance.
+selected/evaluated/applied traversal counts, canonical 512-address ordering,
+selected-block isolation, immutable metric-depth layout, fusion weights,
+signed values, exact coordinates, topology, winding, and boundary counts
+provide checks independent of visual appearance.

@@ -47,17 +47,21 @@ This repository currently implements these narrow foundations:
   addressed voxel, evaluating the complete ordered transcript before mutation
   and then applying accepted contributions without traversal-time replay,
   source I/O, or depth decoding;
+- context-backed traversal of all 512 X-fastest voxel addresses in one
+  caller-selected planned block, retaining one complete observation transcript
+  per voxel and restoring the selected block after a caught failure;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
 The prepared replay/depth context is consumed by separate scalar evaluation,
-guarded-application, and one-voxel traversal APIs. The deliberately redundant
-session-backed scalar and traversal APIs remain available as reference paths.
-Multi-address and block traversal, camera-to-surface free-space coverage,
-full block fusion, scalable sparse execution, robust outlier filtering,
-production meshing, normals, SLAM, map packages, mobile capture, and the visual
-inspector are deliberately not implemented yet.
+guarded-application, one-voxel traversal, and one-selected-block traversal
+APIs. The deliberately redundant session-backed scalar and one-voxel traversal
+APIs remain available as reference paths. Traversal across the plan's block
+rows, camera-to-surface free-space coverage, full block fusion, scalable sparse
+execution, robust outlier filtering, production meshing, normals, SLAM, map
+packages, mobile capture, and the visual inspector are deliberately not
+implemented yet.
 
 ## Set up
 
@@ -222,9 +226,10 @@ output_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
 ```
 
 This `.sftplan` is a deterministic surface-neighborhood plan only. The narrow
-address, contribution, update, and one-voxel traversal diagnostics below
-consume it, but block-wide fusion does not. It deliberately does not plan the
-dense reference backend's full camera-to-surface free-space updates.
+address, contribution, update, one-voxel traversal, and one-selected-block
+traversal diagnostics below consume it, but plan-wide fusion does not. It
+deliberately does not plan the dense reference backend's full
+camera-to-surface free-space updates.
 
 Strictly load that artifact and check it against the current session replay:
 
@@ -365,9 +370,10 @@ arrays zero, and writes no artifact.
 This single-voxel rule retains the reference TSDF sign and truncation
 conventions, but it does not decide which camera-to-surface free-space blocks
 should exist. This read-only command applies no delta. The one-slot command
-below demonstrates the separate scalar mutation primitive; other-address and
-block traversal, free-space coverage, full fusion, and persistence remain
-later checkpoints. The exact result and skip contract is documented in
+and traversal commands below demonstrate separate mutation consumers; this
+scalar command itself still visits no other observation, address, or block.
+Free-space coverage, full fusion, and persistence remain later checkpoints.
+The exact result and skip contract is documented in
 [`docs/tsdf-voxel-contribution.md`](docs/tsdf-voxel-contribution.md).
 
 Apply that accepted contribution to its one temporary storage slot:
@@ -545,8 +551,8 @@ The retained numeric depth payload is capped at 512 MiB, although peak build
 memory is higher because decoding temporarily holds the decoder result, a
 mutable float64 frame, and its immutable byte copy. The context supports
 read-only scalar evaluation, guarded one-slot application, and a context-backed
-all-selected-observation traversal for one voxel. The exact snapshot, memory,
-and failure contract is documented in
+all-selected-observation traversal for one voxel and one selected block. The
+exact snapshot, memory, and failure contract is documented in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md).
 
 Evaluate exactly one prepared observation at one planned voxel:
@@ -754,10 +760,91 @@ sample the metric depth already stored in the immutable context. It does not
 contradict `traversal_source_io: no` or `traversal_depth_decoding: no`.
 
 This proves context-backed observation traversal for exactly one caller-chosen
-voxel. Traversing multiple addresses within one planned block is the next
-checkpoint; traversing all blocks, free-space coverage, and full fusion remain
-later work. See
-[`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md).
+voxel. It is also the child primitive used by the one-selected-block checkpoint
+below. See [`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md).
+
+Traverse every voxel in exactly one selected planned block:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-block-traverse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --block 1 -1 -1
+```
+
+Key output for the committed fixture is:
+
+```text
+block: index=(1, -1, -1) row=1 resolution=8 voxel_slots=512
+storage_flat_range: 512..1023
+address_order: local-flat-x-fastest local_flat=0..511
+first_voxel: global=(8, -8, -8) local=(0, 0, 0) array=(1, 0, 0, 0) storage_flat=512
+last_voxel: global=(15, -1, -1) local=(7, 7, 7) array=(1, 7, 7, 7) storage_flat=1023
+block_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=512
+block_after: nonzero_sums=102 nonzero_weights=102 unknown_voxels=410
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=102 nonzero_weights=102 unknown_voxels=3994
+status_counts: contributes=204 projection-outside-image=424 behind-truncation=396
+block_weight_sum_after: 204
+block_max_weight_after: 2
+traversal_session_replay: no
+traversal_replay_hashing: no
+traversal_source_io: no
+traversal_depth_decoding: no
+traversal_prepared_depth_access: yes
+voxel_addresses_traversed: 512
+voxel_transcripts_retained: 512
+voxel_observation_traversals: 512
+contributions_evaluated: 1024
+contributions_applied: 204
+contributions_skipped: 820
+storage_slots_updated: 102
+blocks_traversed: 1
+additional_blocks_visited: 0
+voxel_observation_traversal_performed: yes
+voxel_address_traversal_performed: yes
+selected_block_traversal_performed: yes
+fusion_block_traversal_performed: yes
+fusion_block_traversal_scope: selected-planned-block-only
+multiple_block_traversal_performed: no
+planned_block_set_traversal_performed: no
+free_space_coverage_planned: no
+full_fusion_performed: no
+missing_blocks_created: no
+caught_failure_rollback_scope: selected-block
+artifact_written: no
+storage_persisted: no
+```
+
+The traversal derives all local-flat positions `0..511`, with X changing
+fastest, and retains a complete one-voxel receipt for every address. Each child
+evaluates both selected observations before changing its own slot. Across the
+block, this yields 1,024 contribution outcomes: 204 accepted and applied, 820
+skipped, and 102 updated voxel slots. Every other allocated block remains
+unchanged.
+
+The selected block must be canonically empty before the first child starts. A
+caught failure at a later address restores the complete selected block to its
+starting bytes. This is bounded one-block in-process rollback under exclusive
+access, not crash atomicity, thread safety, persistence, or an observation
+ledger. Evaluate-all-before-apply remains a per-voxel guarantee; earlier
+voxels may already be updated when a later voxel is evaluated.
+
+The command's setup replay-verifies allocation and builds the immutable depth
+context. The later block traversal itself performs no replay, hashing, source
+I/O, or depth decoding, although ready evaluations read prepared metric depth.
+It targets no second block, creates no missing block, makes no free-space,
+visibility, or culling decision, performs no plan-wide/full fusion, and writes
+no artifact. The exact contract is documented in
+[`docs/tsdf-context-block-traversal.md`](docs/tsdf-context-block-traversal.md).
+
+The `fusion_block_traversal_performed: yes` label means the contribution path
+covered all 512 slots of this one selected block. Its adjacent scope and
+multiple-block labels are why that does not mean full fusion.
+
+Traversing the plan's existing block rows is the next checkpoint. Designing
+camera-to-surface free-space coverage, an explicit observation/idempotency
+policy, and complete fusion remain separate later phases.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -807,6 +894,8 @@ context-bound single-slot mutation is in
 [`docs/tsdf-context-voxel-update.md`](docs/tsdf-context-voxel-update.md),
 single-voxel traversal across selected observations is in
 [`docs/tsdf-voxel-traversal.md`](docs/tsdf-voxel-traversal.md),
+single selected-block context traversal is in
+[`docs/tsdf-context-block-traversal.md`](docs/tsdf-context-block-traversal.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

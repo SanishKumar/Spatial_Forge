@@ -26,6 +26,12 @@ traverse another voxel or block, trace a camera ray or frustum, decide
 free-space block coverage, create missing blocks, or persist the temporary
 accumulator.
 
+The context-backed API is also the child primitive for the separate
+one-selected-block traversal. This document's guarantees remain scoped to one
+address; block ordering, whole-selected-block preflight, and block-wide
+rollback are documented in
+[`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
+
 ## Public API and frozen receipt
 
 The two sibling APIs return the same frozen receipt contract:
@@ -319,21 +325,23 @@ traversal performs no replay, hashing, source I/O, or decoding while retaining
 numerical, diagnostic, provenance, ordering, skip, duplicate-guard, and
 rollback parity with the reference path.
 
-Both implementations remain diagnostic one-address CPU paths. The next
-checkpoint is multiple addresses within one already planned and allocated
-block; culling, block-wide execution, and the wider fusion design remain
-deferred.
+Both implementations remain diagnostic one-address CPU paths. The context path
+is now composed by `traverse_tsdf_block_voxels_from_context` for every address
+in one selected planned block. That parent retains these receipts in canonical
+X-fastest order and adds whole-selected-block preflight and caught-failure
+rollback. It does not change this child's per-voxel evaluation and accumulation
+contract.
 
 ## Explicitly deferred
 
-- iterating multiple planned addresses within one block, visiting any second
-  block, frustum, or camera ray;
+- directly accepting multiple addresses or a block coordinate in these
+  one-voxel APIs, or visiting any second block, frustum, or camera ray;
 - camera-to-surface free-space block planning, visibility, and occlusion;
 - dynamic block insertion, eviction, streaming, adaptive resolution, and
   submaps;
 - a persistent/resumable observation ledger, nonempty-target continuation,
   and general cross-call idempotency;
-- multi-slot batch transactions, persistent or crash-atomic checkpoints,
+- multi-block transactions, persistent or crash-atomic checkpoints,
   block-backed `.sftsdf` output, and sparse-aware surface or mesh consumers;
 - normalized TSDF output, sensor-dependent or robust weighting, application
   weight caps below uint32, and depth/pose outlier filtering;

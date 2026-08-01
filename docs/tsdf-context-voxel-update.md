@@ -209,8 +209,10 @@ caught-failure rollback belong to the traversal layer.
 
 ## Explicitly deferred
 
-- traversal of multiple planned voxel addresses within one block or of any
-  second block, frustum, or camera ray;
+- directly traversing addresses inside this scalar updater; the separate
+  [`traverse_tsdf_block_voxels_from_context`](tsdf-context-block-traversal.md)
+  consumer now covers all 512 addresses of one selected planned block, while
+  any second block, frustum, or camera ray remains deferred;
 - camera-to-surface free-space planning, visibility, culling, and occlusion;
 - a persistent observation ledger, cross-call idempotency, nonempty-target
   resume, batching, and multi-slot transactions;

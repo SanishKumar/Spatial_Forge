@@ -14,11 +14,11 @@ recorded as ready, its pose is copied, and its aligned depth payload is decoded
 exactly once into immutable C-contiguous float64 metric storage.
 
 The result is a self-contained construction-time measurement snapshot for
-scalar evaluation, guarded scalar application, and one-voxel selected-
-observation traversal. It is not a live view of the `.vgsession` folder. The
-builder itself does not allocate or mutate TSDF storage, evaluate a voxel,
-traverse voxel addresses or blocks, trace a frustum or ray, plan free space,
-perform fusion, or write an artifact.
+scalar evaluation, guarded scalar application, one-voxel selected-observation
+traversal, and one-selected-block traversal. It is not a live view of the
+`.vgsession` folder. The builder itself does not allocate or mutate TSDF
+storage, evaluate a voxel, traverse voxel addresses or blocks, trace a frustum
+or ray, plan free space, perform fusion, or write an artifact.
 
 ## Public API and immutable records
 
@@ -198,7 +198,7 @@ observations for a voxel, visit another address or block, perform fusion, or
 write or persist an artifact. The context exists only for the life of the
 process.
 
-## Scalar and one-voxel traversal consumers
+## Scalar, one-voxel, and one-block consumers
 
 One prepared observation can now be evaluated at one planned voxel without
 source I/O:
@@ -264,15 +264,39 @@ not the current folder state. The session-backed
 `traverse_tsdf_voxel_observations` remains available as the deliberately
 redundant live-source reference path.
 
+The same immutable context can be reused across every address in one selected
+planned block:
+
+```python
+block_traversal = traverse_tsdf_block_voxels_from_context(
+    storage,
+    block_index_xyz,
+    context,
+)
+```
+
+This parent operation derives all 512 local-flat addresses in canonical
+X-fastest order and invokes the context one-voxel traversal once per address.
+It retains all 512 child receipts and aggregates their contribution statuses.
+The selected row must be canonically empty before the first child. A caught
+later-child or final-validation failure restores that whole selected row.
+
+Evaluate-all-before-apply ordering remains local to each voxel; the block
+operation does not evaluate every address before making its first write. It
+still accepts no `ScanSession` and performs no traversal-time replay, source
+hashing, source I/O, or depth decoding. Ready child evaluations read the same
+immutable prepared metric depth. See
+[`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
+
 ## Explicitly deferred
 
-- traversing multiple planned voxel addresses within one block, any second
-  block, a frustum, or a camera ray;
+- traversing any second block, the plan's complete block-row tuple, a frustum,
+  or a camera ray;
 - culling, visibility, occlusion, and camera-to-surface free-space planning;
-- multi-slot TSDF mutation, complete block fusion, normalization, color,
-  confidence, normals, or topology updates;
+- multi-block TSDF mutation, complete fusion, normalization, color, confidence,
+  normals, or topology updates;
 - a persistent/resumable observation ledger, nonempty-target continuation,
-  cross-call idempotency, and multi-slot batch transactions;
+  cross-call idempotency, and general multi-block transactions;
 - context serialization, persistent or crash-atomic checkpoints, block-backed
   `.sftsdf` output, and sparse-aware surface or mesh consumers;
 - lazy depth decoding, paging, eviction, streaming, parallel construction,

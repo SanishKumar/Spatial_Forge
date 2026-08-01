@@ -115,10 +115,36 @@ These lines demonstrate the narrow checkpoint: deterministic block order,
 exact shape and dtypes, a completely unknown zero state, and bounded numeric
 allocation from the replay-matched plan.
 
+## One-selected-block consumer
+
+The first complete-row mutation consumer is:
+
+```python
+receipt = traverse_tsdf_block_voxels_from_context(
+    storage,
+    block_index_xyz,
+    context,
+)
+```
+
+It selects one already allocated canonical block row, requires all 512 of that
+row's sum/weight slots to be canonically empty, and traverses every local-flat
+address from `0` through `511` in X-fastest order. The operation composes the
+existing context one-voxel traversal and retains one frozen child receipt for
+every address.
+
+The selected row is the only mutation target. Other rows may already contain
+valid accumulator state and must remain unchanged. A caught failure restores
+the complete selected row from its exact 6,144-byte numeric starting payload.
+The temporary storage is still process-local and is discarded by the CLI; the
+operation neither creates missing blocks nor persists an artifact. See
+[`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
+
 ## Explicitly deferred
 
-- decoding depth, back-projecting samples, or regenerating block coordinates;
-- TSDF observations, sums, weight increments, normalization, or fusion;
+- allocator-time decoding, back-projection, block-coordinate regeneration, or
+  TSDF mutation; these remain separate consumer operations;
+- plan-wide TSDF traversal, normalized storage, or complete fusion;
 - camera-to-surface free-space, frustum, ray, visibility, or occlusion rules;
 - a mutable lookup cache or fusion index, per-block provenance, color,
   confidence, or normals;

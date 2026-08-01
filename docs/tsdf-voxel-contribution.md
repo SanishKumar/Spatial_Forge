@@ -379,8 +379,10 @@ float64 accumulation, and whole-target caught-failure rollback. See
   while other voxels, blocks, frusta, and rays remain deferred;
 - applying proposed deltas within this read-only evaluator; the separate
   update primitive applies one accepted delta only;
-- traversing multiple planned addresses within one block or visiting any
-  second block, frustum, or ray;
+- directly traversing addresses inside this scalar evaluator; the separate
+  [`traverse_tsdf_block_voxels_from_context`](tsdf-context-block-traversal.md)
+  consumer now covers all 512 addresses of one selected planned block, while
+  any second block, frustum, or ray remains deferred;
 - normalization, sensor-dependent weighting, an observation ledger, or a
   block-wide multi-observation fusion loop;
 - deciding or planning full camera-to-surface free-space block coverage;
