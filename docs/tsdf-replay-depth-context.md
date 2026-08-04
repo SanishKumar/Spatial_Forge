@@ -335,9 +335,13 @@ is not a geometric supercover and does not conservatively cover the nearest-
 pixel footprint. See
 [`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
 
+A second consumer aggregates those same one-observation transcripts across the
+complete canonical selection against this one prepared context, so no
+observation is replayed or decoded a second time. See
+[`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md).
+
 ## Explicitly deferred
 
-- aggregating block-ray receipts across multiple selected observations;
 - converting reported unplanned coordinates into an expanded plan or
   traversable storage domain;
 - conservative nearest-pixel or voxel-center coverage, frustum traversal,
