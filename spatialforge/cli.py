@@ -43,8 +43,15 @@ from .tsdf_observation_block_rays import (
     MAX_TSDF_OBSERVATION_BLOCK_RAY_OUTCOMES,
     trace_tsdf_observation_block_rays_from_context,
 )
+from .tsdf_plan_block_ray_survey import (
+    MAX_TSDF_PLAN_BLOCK_RAY_SURVEY_OUTCOMES,
+    survey_tsdf_plan_block_rays_from_context,
+)
 from .tsdf_bounds import infer_tsdf_bounds
-from .tsdf_replay_depth_context import build_tsdf_replay_depth_context
+from .tsdf_replay_depth_context import (
+    TsdfReplayDepthStatus,
+    build_tsdf_replay_depth_context,
+)
 from .tsdf_voxel_address import (
     TsdfVoxelAddress,
     compose_tsdf_global_voxel_index,
@@ -207,6 +214,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.observation_sequence,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-plan-rays"
+        ):
+            return _run_tsdf_block_context_plan_rays(
+                arguments.plan,
+                arguments.session,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -845,6 +860,32 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="Exactly one nonnegative plan-selected observation sequence.",
+    )
+
+    block_context_plan_rays = reconstruct_commands.add_parser(
+        "tsdf-block-context-plan-rays",
+        help=(
+            "Aggregate every selected observation's pixel-center block rays."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, and trace the closed camera-to-"
+            "measured-surface centerline segments of every plan-selected "
+            "observation in canonical order. This diagnostic reports the "
+            "combined existing and unplanned coverage with per-block "
+            "observation support; it does not expand the plan, allocate "
+            "TSDF storage, fuse voxels, or write an artifact."
+        ),
+    )
+    block_context_plan_rays.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_plan_rays.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -2629,6 +2670,205 @@ def _run_tsdf_block_context_observation_rays(
         file=sys.stdout,
     )
     print("multiple_observation_coverage_computed: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_plan_rays(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = survey_tsdf_plan_block_rays_from_context(plan, context)
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN RAY SURVEY FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN RAY SURVEY FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    status_counts = dict(receipt.observation_status_counts)
+    print(
+        f"TSDF BLOCK CONTEXT PLAN RAY SURVEY CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "observations: "
+        f"selected={receipt.observation_count} "
+        f"traced={receipt.traced_observation_count} "
+        + " ".join(
+            f"{status.value.replace('-', '_')}="
+            f"{status_counts.get(status, 0)}"
+            for status in TsdfReplayDepthStatus
+        ),
+        file=sys.stdout,
+    )
+    print(
+        "observation_order: canonical-frame-stride "
+        f"sequences={receipt.selected_observation_sequences[0]}.."
+        f"{receipt.selected_observation_sequences[-1]}",
+        file=sys.stdout,
+    )
+    first_observation = receipt.observation_receipts[0]
+    last_observation = receipt.observation_receipts[-1]
+    print(
+        "first_observation: "
+        f"sequence={first_observation.observation_sequence} "
+        f"status={first_observation.observation_status.value} "
+        f"covered_blocks={len(first_observation.covered_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "last_observation: "
+        f"sequence={last_observation.observation_sequence} "
+        f"status={last_observation.observation_status.value} "
+        f"covered_blocks={len(last_observation.covered_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "image: "
+        f"width={receipt.image_size[0]} "
+        f"height={receipt.image_size[1]}",
+        file=sys.stdout,
+    )
+    print(
+        "pixel_outcomes: "
+        f"total={receipt.pixel_count} "
+        f"traversed={receipt.traversed_ray_count} "
+        f"depth_invalid={receipt.invalid_depth_count}",
+        file=sys.stdout,
+    )
+    print(
+        "ray_block_visits: "
+        f"total={receipt.block_visit_count} "
+        f"unique={len(receipt.covered_block_indices)} "
+        f"duplicate={receipt.duplicate_block_visit_count} "
+        f"maximum_per_ray={receipt.maximum_blocks_per_ray}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_blocks: "
+        f"total={len(receipt.covered_block_indices)} "
+        f"nonterminal={len(receipt.nonterminal_block_indices)} "
+        f"surface_endpoint={len(receipt.surface_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_partition: "
+        f"existing_plan={len(receipt.existing_plan_block_indices)} "
+        f"unplanned={len(receipt.unplanned_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_support: "
+        f"multi_observation={len(receipt.multi_observation_block_indices)} "
+        f"maximum_observations={receipt.maximum_block_observation_count}",
+        file=sys.stdout,
+    )
+    print("coverage_order: canonical-x-fastest", file=sys.stdout)
+    if receipt.covered_block_indices:
+        print(
+            f"first_covered_block: {receipt.covered_block_indices[0]}",
+            file=sys.stdout,
+        )
+        print(
+            f"last_covered_block: {receipt.covered_block_indices[-1]}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_covered_block: none", file=sys.stdout)
+        print("last_covered_block: none", file=sys.stdout)
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "survey_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("survey_session_replay: no", file=sys.stdout)
+    print("survey_replay_hashing: no", file=sys.stdout)
+    print("survey_source_io: no", file=sys.stdout)
+    print("survey_depth_decoding: no", file=sys.stdout)
+    print(
+        "survey_prepared_depth_access: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "survey_workload: "
+        f"retained_outcomes={receipt.retained_outcome_count} "
+        f"maximum={MAX_TSDF_PLAN_BLOCK_RAY_SURVEY_OUTCOMES}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_scope: all-plan-selected-observations",
+        file=sys.stdout,
+    )
+    print(
+        "visibility_rule: positive-finite-depth-stops-at-measured-surface",
+        file=sys.stdout,
+    )
+    print(
+        "block_traversal_rule: closed-half-open-grid-thin-dda-"
+        "simultaneous-exact-ties",
+        file=sys.stdout,
+    )
+    print(
+        "ray_traversal_performed: "
+        f"{'yes' if receipt.traversed_ray_count else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "centerline_ray_coverage_computed: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "multiple_observation_coverage_computed: "
+        f"{'yes' if receipt.traced_observation_count > 1 else 'no'}",
+        file=sys.stdout,
+    )
+    print("all_selected_observations_surveyed: yes", file=sys.stdout)
+    print(
+        "conservative_nearest_pixel_free_space_coverage_proven: no",
+        file=sys.stdout,
+    )
+    print("coverage_approved_for_expansion: no", file=sys.stdout)
     print("plan_expanded: no", file=sys.stdout)
     print("missing_blocks_created: no", file=sys.stdout)
     print("storage_allocated: no", file=sys.stdout)

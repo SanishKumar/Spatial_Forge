@@ -70,6 +70,12 @@ The project is intentionally advancing through small, testable checkpoints.
   row-major thin-DDA paths, deduplicating them in canonical block order, and
   partitioning existing versus unplanned coordinates without expanding the
   plan, allocating storage, or fusing voxels.
+- Context-backed aggregation of those one-observation ray transcripts across
+  the plan's complete canonical selected-observation tuple, re-deriving the
+  combined canonical coverage union, its existing/unplanned partition, and
+  per-block observation-support counts from the retained children, under a
+  preflighted and accumulated 262,144-outcome cap, still without approving
+  coverage, expanding the plan, allocating storage, or fusing voxels.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -83,26 +89,24 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. aggregate the deterministic one-observation centerline-ray receipts across
-   the context's complete selected-observation tuple without expanding a plan;
-2. define a conservative nearest-pixel or voxel-center coverage proof together
+1. define a conservative nearest-pixel or voxel-center coverage proof together
    with the remaining frustum, visibility, occlusion, and culling semantics;
-3. define how approved coverage coordinates become a canonical expanded
+2. define how approved coverage coordinates become a canonical expanded
    fusion domain while invalid or absent depth remains unknown rather than
    free;
-4. replace the empty-storage guard with explicit observation provenance,
+3. replace the empty-storage guard with explicit observation provenance,
    idempotency, and resumable/nonempty fusion, then define complete fusion
    diagnostics over the chosen spatial domain;
-5. persist a block-backed TSDF artifact and connect normalization plus sparse
+4. persist a block-backed TSDF artifact and connect normalization plus sparse
    surface/mesh consumers;
-6. add culled, scalable sparse traversal and an optimized backend suitable for
+5. add culled, scalable sparse traversal and an optimized backend suitable for
    full sequences;
-7. add robust depth/pose outlier filtering and configurable production bounds;
-8. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
-9. refine production meshing with exact-zero cells, normals,
+6. add robust depth/pose outlier filtering and configurable production bounds;
+7. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
+8. refine production meshing with exact-zero cells, normals,
    connected-component and quality validation, and optimized extraction;
-10. add gravity/floor alignment, floor and wall candidates, and openings; and
-11. add a top-down/3D Inspector view.
+9. add gravity/floor alignment, floor and wall candidates, and openings; and
+10. add a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -144,7 +148,8 @@ single-voxel selected-observation traversal, immutable replay/depth context,
 context-backed single-observation contribution, context-bound single-slot
 application, context-backed single-voxel traversal, context-backed
 single-selected-block traversal, context-backed existing-plan traversal,
-one-observation context-backed block-ray tracing,
+one-observation context-backed block-ray tracing, complete selected-observation
+block-ray survey,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block
@@ -154,5 +159,6 @@ selected/evaluated/applied traversal counts, canonical 512-address ordering,
 selected-block isolation, complete plan-row ordering, bounded retained-outcome
 workload, whole-storage rollback scope, immutable metric-depth layout,
 row-major pixel outcomes, exact thin-DDA tie handling, canonical covered-block
-partitions, fusion weights, signed values, exact coordinates, topology,
+partitions, per-block observation support, fusion weights, signed values,
+exact coordinates, topology,
 winding, and boundary counts provide checks independent of visual appearance.

@@ -286,12 +286,13 @@ pixel free-space coverage. See
 
 ## Precisely deferred next phases
 
-The next phase should aggregate those same deterministic one-observation ray
-receipts across the context's complete canonical observation selection. It
-should not simultaneously expand the plan, fuse storage, add persistence, or
-optimize execution.
+Those same deterministic one-observation ray receipts are now aggregated
+across the context's complete canonical observation selection, still without
+expanding the plan, fusing storage, adding persistence, or optimizing
+execution. See
+[`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md).
 
-After that, separate checkpoints remain for:
+Separate checkpoints remain for:
 
 1. conservative nearest-pixel or voxel-center coverage plus frustum,
    visibility, occlusion, and culling policy;

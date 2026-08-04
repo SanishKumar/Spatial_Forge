@@ -292,11 +292,11 @@ full fusion.
 
 A separate diagnostic can now trace the thin camera-to-measured-surface block
 rays for exactly one prepared observation. It reports existing and unplanned
-coordinates without changing this one-block operation or the artifact. The
-next narrow phase is aggregation of those one-observation receipts across the
-complete selected tuple; conservative nearest-pixel coverage, plan expansion,
-and fusion remain later work. See
-[`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
+coordinates without changing this one-block operation or the artifact. Those
+receipts are now also aggregated across the complete selected tuple;
+conservative nearest-pixel coverage, plan expansion, and fusion remain later
+work. See [`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md)
+and [`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md).
 
 ## Explicitly deferred
 

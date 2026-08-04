@@ -264,9 +264,10 @@ are reported as unplanned without modifying the source plan.
 
 ## Precisely deferred next phases
 
-The next checkpoint should aggregate these same ordered one-observation
-receipts across the context's complete selected-observation tuple. That phase
-must still keep coverage computation separate from choosing and publishing an
+These ordered one-observation receipts are now aggregated across the context's
+complete selected-observation tuple by
+[`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md). That phase
+still keeps coverage computation separate from choosing and publishing an
 expanded plan.
 
 Later checkpoints remain for:
