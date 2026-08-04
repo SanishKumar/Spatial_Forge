@@ -288,14 +288,22 @@ confidence, normal, or topology integration.
 The existing-plan parent now traverses every canonical block row with the same
 shared context while retaining this complete child contract. That proves
 execution over the artifact's current surface-band tuple, not free-space-aware
-full fusion. The next phase is the separate design of camera-to-surface
-free-space activation and visibility/culling semantics.
+full fusion.
+
+A separate diagnostic can now trace the thin camera-to-measured-surface block
+rays for exactly one prepared observation. It reports existing and unplanned
+coordinates without changing this one-block operation or the artifact. The
+next narrow phase is aggregation of those one-observation receipts across the
+complete selected tuple; conservative nearest-pixel coverage, plan expansion,
+and fusion remain later work. See
+[`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
 
 ## Explicitly deferred
 
 - visiting any second block in this call or accepting a block collection;
-- dynamic block creation, camera-to-surface free-space planning, frustum/ray
-  traversal, culling, visibility, and occlusion;
+- dynamic block creation, multi-observation block-ray aggregation,
+  conservative nearest-pixel free-space planning, frustum traversal, culling,
+  visibility, and occlusion;
 - a persistent/resumable observation ledger, nonempty-block continuation, and
   general cross-call idempotency;
 - full fusion, normalization storage, color, confidence, normals, topology,

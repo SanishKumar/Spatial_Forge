@@ -39,6 +39,10 @@ from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     traverse_tsdf_plan_blocks_from_context,
 )
+from .tsdf_observation_block_rays import (
+    MAX_TSDF_OBSERVATION_BLOCK_RAY_OUTCOMES,
+    trace_tsdf_observation_block_rays_from_context,
+)
 from .tsdf_bounds import infer_tsdf_bounds
 from .tsdf_replay_depth_context import build_tsdf_replay_depth_context
 from .tsdf_voxel_address import (
@@ -194,6 +198,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_context_plan_traverse(
                 arguments.plan,
                 arguments.session,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-observation-rays"
+        ):
+            return _run_tsdf_block_context_observation_rays(
+                arguments.plan,
+                arguments.session,
+                arguments.observation_sequence,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -801,6 +814,37 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory used to prepare the context.",
+    )
+
+    block_context_observation_rays = reconstruct_commands.add_parser(
+        "tsdf-block-context-observation-rays",
+        help=(
+            "Trace one prepared observation's pixel-center block rays."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, and trace closed camera-to-"
+            "measured-surface centerline segments for exactly one selected "
+            "observation. This diagnostic reports existing and unplanned "
+            "block coordinates; it does not expand the plan, allocate TSDF "
+            "storage, fuse voxels, or write an artifact."
+        ),
+    )
+    block_context_observation_rays.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_observation_rays.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_observation_rays.add_argument(
+        "--observation-sequence",
+        type=int,
+        required=True,
+        help="Exactly one nonnegative plan-selected observation sequence.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -2394,6 +2438,203 @@ def _run_tsdf_block_context_plan_traverse(
     )
     print("artifact_written: no", file=sys.stdout)
     print("storage_persisted: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_observation_rays(
+    plan_path: Path,
+    session_path: Path,
+    observation_sequence: int,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = trace_tsdf_observation_block_rays_from_context(
+            plan,
+            context,
+            observation_sequence,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT OBSERVATION RAY TRACE FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT OBSERVATION RAY TRACE FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT OBSERVATION RAY TRACE CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "observation: "
+        f"sequence={receipt.observation_sequence} "
+        f"status={receipt.observation_status.value}",
+        file=sys.stdout,
+    )
+    if receipt.camera_origin_world_m is None:
+        print("camera_origin_world_m: none", file=sys.stdout)
+    else:
+        print(
+            "camera_origin_world_m: "
+            f"{_format_triplet(receipt.camera_origin_world_m)}",
+            file=sys.stdout,
+        )
+    print(
+        "image: "
+        f"width={receipt.image_size[0]} "
+        f"height={receipt.image_size[1]}",
+        file=sys.stdout,
+    )
+    print(
+        "pixel_outcomes: "
+        f"total={receipt.pixel_count} "
+        f"traversed={receipt.traversed_ray_count} "
+        f"depth_invalid={receipt.invalid_depth_count}",
+        file=sys.stdout,
+    )
+    print(
+        "ray_block_visits: "
+        f"total={receipt.block_visit_count} "
+        f"unique={len(receipt.covered_block_indices)} "
+        f"duplicate={receipt.duplicate_block_visit_count} "
+        f"maximum_per_ray={receipt.maximum_blocks_per_ray}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_blocks: "
+        f"total={len(receipt.covered_block_indices)} "
+        f"nonterminal={len(receipt.nonterminal_block_indices)} "
+        f"surface_endpoint={len(receipt.surface_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_partition: "
+        f"existing_plan={len(receipt.existing_plan_block_indices)} "
+        f"unplanned={len(receipt.unplanned_block_indices)}",
+        file=sys.stdout,
+    )
+    print("coverage_order: canonical-x-fastest", file=sys.stdout)
+    if receipt.covered_block_indices:
+        print(
+            f"first_covered_block: {receipt.covered_block_indices[0]}",
+            file=sys.stdout,
+        )
+        print(
+            f"last_covered_block: {receipt.covered_block_indices[-1]}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_covered_block: none", file=sys.stdout)
+        print("last_covered_block: none", file=sys.stdout)
+    traversed_rays = tuple(
+        ray for ray in receipt.ray_receipts if ray.traversed
+    )
+    if traversed_rays:
+        first_ray = traversed_rays[0]
+        last_ray = traversed_rays[-1]
+        print(
+            "first_ray: "
+            f"pixel={first_ray.pixel_uv} "
+            f"depth_m={first_ray.measured_depth_m:.9f} "
+            f"blocks={len(first_ray.block_indices)} "
+            f"surface={first_ray.surface_world_m}",
+            file=sys.stdout,
+        )
+        print(
+            "last_ray: "
+            f"pixel={last_ray.pixel_uv} "
+            f"depth_m={last_ray.measured_depth_m:.9f} "
+            f"blocks={len(last_ray.block_indices)} "
+            f"surface={last_ray.surface_world_m}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_ray: none", file=sys.stdout)
+        print("last_ray: none", file=sys.stdout)
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "trace_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("trace_session_replay: no", file=sys.stdout)
+    print("trace_replay_hashing: no", file=sys.stdout)
+    print("trace_source_io: no", file=sys.stdout)
+    print("trace_depth_decoding: no", file=sys.stdout)
+    print(
+        "trace_prepared_depth_access: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "trace_workload: "
+        f"retained_outcomes={receipt.retained_outcome_count} "
+        f"maximum={MAX_TSDF_OBSERVATION_BLOCK_RAY_OUTCOMES}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_scope: one-prepared-observation-only",
+        file=sys.stdout,
+    )
+    print(
+        "visibility_rule: positive-finite-depth-stops-at-measured-surface",
+        file=sys.stdout,
+    )
+    print(
+        "block_traversal_rule: closed-half-open-grid-thin-dda-"
+        "simultaneous-exact-ties",
+        file=sys.stdout,
+    )
+    print(
+        "ray_traversal_performed: "
+        f"{'yes' if receipt.traversed_ray_count else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "centerline_ray_coverage_computed: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "conservative_nearest_pixel_free_space_coverage_proven: no",
+        file=sys.stdout,
+    )
+    print("multiple_observation_coverage_computed: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
     print("context_persisted: no", file=sys.stdout)
     print(
         f"plan_sha256: {receipt.source_plan_digest_sha256}",

@@ -15,11 +15,11 @@ exactly once into immutable C-contiguous float64 metric storage.
 
 The result is a self-contained construction-time measurement snapshot for
 scalar evaluation, guarded scalar application, one-voxel selected-observation
-traversal, one-selected-block traversal, and complete existing-plan traversal.
-It is not a live view of the `.vgsession` folder. The builder itself does not
-allocate or mutate TSDF storage, evaluate a voxel, traverse voxel addresses or
-blocks, trace a frustum or ray, plan free space, perform fusion, or write an
-artifact.
+traversal, one-selected-block traversal, complete existing-plan traversal, and
+read-only block-ray tracing for one selected observation. It is not a live view
+of the `.vgsession` folder. The builder itself does not allocate or mutate TSDF
+storage, evaluate a voxel, traverse voxel addresses or blocks, trace a frustum
+or ray, plan free space, perform fusion, or write an artifact.
 
 ## Public API and immutable records
 
@@ -199,7 +199,7 @@ observations for a voxel, visit another address or block, perform fusion, or
 write or persist an artifact. The context exists only for the life of the
 process.
 
-## Scalar, one-voxel, one-block, and existing-plan consumers
+## Scalar, traversal, and one-observation block-ray consumers
 
 One prepared observation can now be evaluated at one planned voxel without
 source I/O:
@@ -311,10 +311,37 @@ the context's immutable metric depth. Traversing every existing plan row does
 not add the camera-to-surface free-space blocks absent from that plan. See
 [`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
 
+Exactly one selected prepared observation can also be inspected without TSDF
+storage:
+
+```python
+ray_trace = trace_tsdf_observation_block_rays_from_context(
+    plan,
+    context,
+    observation_sequence,
+)
+```
+
+For each positive finite pixel, this diagnostic back-projects the immutable
+prepared depth and traces a closed thin-DDA segment from the copied camera
+origin to the measured surface. It retains row-major per-pixel paths and a
+canonical union partitioned into existing-plan and unplanned coordinates.
+Invalid depth retains a `depth-invalid` pixel outcome with no invented ray.
+
+This one-observation consumer accepts no `ScanSession` and performs no
+trace-time replay, hashing, source I/O, or depth decoding. It does not mutate
+the plan, allocate storage, or fuse a value. Its simultaneous exact-tie rule
+is not a geometric supercover and does not conservatively cover the nearest-
+pixel footprint. See
+[`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
+
 ## Explicitly deferred
 
-- traversing unplanned blocks, a frustum, or a camera ray;
-- culling, visibility, occlusion, and camera-to-surface free-space planning;
+- aggregating block-ray receipts across multiple selected observations;
+- converting reported unplanned coordinates into an expanded plan or
+  traversable storage domain;
+- conservative nearest-pixel or voxel-center coverage, frustum traversal,
+  culling, visibility, and cross-ray/cross-view occlusion policy;
 - dynamic multi-block mutation, complete fusion, normalization, color,
   confidence, normals, or topology updates;
 - a persistent/resumable observation ledger, nonempty-target continuation,

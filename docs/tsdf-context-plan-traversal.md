@@ -272,25 +272,36 @@ free-space rays. Traversing every existing row proves complete execution over
 that artifact; it does not prove that the artifact covers the desired full
 fusion domain.
 
-This checkpoint also has no visibility, occlusion, or culling rule; observation
-ledger; nonempty resume policy; persistent TSDF artifact; stored normalization;
-color, confidence, normals, or topology integration; or block-backed surface
-and mesh consumer. `full_fusion_performed: no` is therefore intentional.
+This traversal itself also has no visibility, occlusion, or culling rule;
+observation ledger; nonempty resume policy; persistent TSDF artifact; stored
+normalization; color, confidence, normals, or topology integration; or block-
+backed surface and mesh consumer. `full_fusion_performed: no` is therefore
+intentional.
+
+A separate diagnostic can now trace thin pixel-center block rays for exactly
+one prepared observation and report their existing-plan/unplanned partition.
+It does not alter this traversal's row tuple or prove conservative nearest-
+pixel free-space coverage. See
+[`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
 
 ## Precisely deferred next phases
 
-The next phase should separately define deterministic camera-to-surface
-free-space activation and the associated visibility/culling semantics. It
-should not simultaneously add persistence or optimization.
+The next phase should aggregate those same deterministic one-observation ray
+receipts across the context's complete canonical observation selection. It
+should not simultaneously expand the plan, fuse storage, add persistence, or
+optimize execution.
 
 After that, separate checkpoints remain for:
 
-1. explicit observation provenance, idempotency, and resumable/nonempty fusion;
-2. complete fusion diagnostics over the chosen spatial domain;
-3. a persistent block-backed TSDF artifact, normalization contract, and
+1. conservative nearest-pixel or voxel-center coverage plus frustum,
+   visibility, occlusion, and culling policy;
+2. incorporating approved coordinates into an expanded fusion domain;
+3. explicit observation provenance, idempotency, and resumable/nonempty fusion;
+4. complete fusion diagnostics over the chosen spatial domain;
+5. a persistent block-backed TSDF artifact, normalization contract, and
    sparse surface/mesh consumers;
-4. scalable traversal, bounded streaming, optimized CPU, parallelism, or GPU;
-5. robust depth/pose filtering, production bounds, real-dataset accuracy, and
+6. scalable traversal, bounded streaming, optimized CPU, parallelism, or GPU;
+7. robust depth/pose filtering, production bounds, real-dataset accuracy, and
    production meshing; and
-6. structural extraction, Inspector work, pose estimation, SLAM, semantics,
+8. structural extraction, Inspector work, pose estimation, SLAM, semantics,
    localization, and `SpatialMapPackage` export.

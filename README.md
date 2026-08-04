@@ -53,18 +53,23 @@ This repository currently implements these narrow foundations:
 - context-backed traversal of every existing canonical block row in the plan,
   retaining the complete nested block/voxel/observation transcript and
   restoring all planned storage after a caught failure;
+- read-only tracing of every positive finite pixel-center ray for exactly one
+  prepared observation from the copied camera origin to its measured surface,
+  retaining deterministic thin-DDA block paths and reporting existing versus
+  unplanned coordinates without expanding the plan;
 - deterministic, depth-derived world-aligned TSDF volume bounds;
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
 The prepared replay/depth context is consumed by separate scalar evaluation,
 guarded-application, one-voxel traversal, one-selected-block traversal, and
-existing-plan traversal APIs. The deliberately redundant session-backed
-scalar and one-voxel traversal APIs remain available as reference paths.
-Camera-to-surface free-space coverage, full block fusion, scalable sparse
-execution, robust outlier filtering, production meshing, normals, SLAM, map
-packages, mobile capture, and the visual inspector are deliberately not
-implemented yet.
+existing-plan traversal APIs, plus the separate one-observation block-ray
+diagnostic. The deliberately redundant session-backed scalar and one-voxel
+traversal APIs remain available as reference paths. Multi-observation and
+conservative nearest-pixel free-space coverage, plan expansion, full block
+fusion, scalable sparse execution, robust outlier filtering, production
+meshing, normals, SLAM, map packages, mobile capture, and the visual inspector
+are deliberately not implemented yet.
 
 ## Set up
 
@@ -230,9 +235,12 @@ output_sha256: 372c7c5d49eff1a30317ceb8b67cb3c40683f1d9d2a6179a049772f763d6f79d
 
 This `.sftplan` is a deterministic surface-neighborhood plan only. The narrow
 address, contribution, update, one-voxel, one-selected-block, and existing-plan
-traversal diagnostics below consume it. The latter visits every row already in
-the artifact, but the plan deliberately does not contain the dense reference
-backend's complete camera-to-surface free-space updates.
+traversal diagnostics below consume it. The one-observation block-ray
+diagnostic also uses its grid and provenance while reporting covered
+coordinates that are absent from the active tuple. It does not insert them.
+The existing-plan traversal visits every row already in the artifact, but the
+plan deliberately does not contain the dense reference backend's complete
+camera-to-surface free-space updates.
 
 Strictly load that artifact and check it against the current session replay:
 
@@ -917,10 +925,61 @@ camera-to-surface free-space rays, this is full execution over the current
 plan—not full fusion. See
 [`docs/tsdf-context-plan-traversal.md`](docs/tsdf-context-plan-traversal.md).
 
-The next phase is the separate design of deterministic camera-to-surface
-free-space activation and visibility/culling semantics. Observation
-idempotency, complete fusion, persistence, and optimization remain later
-checkpoints.
+Trace the pixel-center block rays for one prepared observation:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-observation-rays `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0
+```
+
+Key fixture output is:
+
+```text
+observation: sequence=0 status=ready
+camera_origin_world_m: (0.000000000, 0.000000000, 0.000000000)
+image: width=2 height=2
+pixel_outcomes: total=4 traversed=4 depth_invalid=0
+ray_block_visits: total=11 unique=8 duplicate=3 maximum_per_ray=3
+coverage_blocks: total=8 nonterminal=4 surface_endpoint=4
+coverage_partition: existing_plan=8 unplanned=0
+trace_workload: retained_outcomes=15 maximum=262144
+coverage_scope: one-prepared-observation-only
+block_traversal_rule: closed-half-open-grid-thin-dda-simultaneous-exact-ties
+ray_traversal_performed: yes
+centerline_ray_coverage_computed: yes
+conservative_nearest_pixel_free_space_coverage_proven: no
+multiple_observation_coverage_computed: no
+plan_expanded: no
+missing_blocks_created: no
+storage_allocated: no
+storage_mutated: no
+full_fusion_performed: no
+artifact_written: no
+```
+
+For each positive finite pixel, this command traces the closed segment from the
+copied camera origin to the measured surface. It uses lower-inclusive, upper-
+exclusive block ownership and advances all exactly tied DDA axes together.
+The result is a thin centerline trace, **not a supercover**: blocks touched only
+along a zero-measure side or corner are excluded. Invalid depth produces no
+ray and never invents free space.
+
+The eight unique fixture coordinates already belong to the source plan, so
+this particular run reports no unplanned block. The command still does not
+modify that plan. A nonterminal centerline block also does not prove that a
+whole block or nearest-pixel viewing cone is free. The `nonterminal` aggregate
+means a block appears before the final position in at least one ray path; that
+same coordinate can still be another ray's surface endpoint. The command
+allocates no TSDF storage, fuses nothing, and writes no artifact. The exact
+contract is in
+[`docs/tsdf-observation-block-rays.md`](docs/tsdf-observation-block-rays.md).
+
+The next phase is aggregation of these same deterministic receipts across the
+complete selected-observation tuple. Conservative nearest-pixel coverage,
+plan expansion, observation idempotency, complete fusion, persistence, and
+optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -974,6 +1033,8 @@ single selected-block context traversal is in
 [`docs/tsdf-context-block-traversal.md`](docs/tsdf-context-block-traversal.md),
 existing-plan block-set context traversal is in
 [`docs/tsdf-context-plan-traversal.md`](docs/tsdf-context-plan-traversal.md),
+one-observation camera-to-surface block-ray tracing is in
+[`docs/tsdf-observation-block-rays.md`](docs/tsdf-observation-block-rays.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

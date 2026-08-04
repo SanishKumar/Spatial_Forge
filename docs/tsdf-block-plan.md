@@ -175,16 +175,41 @@ context. It neither selects a subset nor creates a coordinate. The retained
 
 For the fixture this means all eight active rows: four direct surface blocks
 and four truncation-halo blocks. This is complete traversal of the artifact,
-not proof that the artifact is a complete fusion domain. Camera-to-surface
-free-space activation, visibility, and culling remain undefined. The exact
-execution and rollback contract is documented in
+not proof that the artifact is a complete fusion domain. Free-space activation
+and visibility/culling remain undefined by this artifact. The exact execution
+and rollback contract is documented in
 [`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+
+## One-observation block-ray diagnostic
+
+One prepared observation can now report camera-to-measured-surface centerline
+block paths separately from the artifact's active tuple:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-observation-rays `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0
+```
+
+The source plan supplies the grid, selection, and provenance. Positive finite
+depth pixels produce closed thin-DDA paths; invalid depth produces no ray. The
+canonical covered-block union is partitioned into coordinates already present
+in `active_blocks` and coordinates absent from it.
+
+This is a read-only comparison. It does not change the artifact's
+`free_space_rule: not-planned`, append an active coordinate, publish a revised
+plan, allocate storage, or fuse voxels. The thin pixel-center paths are not a
+geometric supercover or proof of conservative nearest-pixel free-space
+coverage. See
+[`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
 
 ## Explicitly deferred
 
 - expanding the surface-band plan into a complete fusion domain;
-- camera-to-surface free-space or frustum/ray block activation, visibility,
-  and culling;
+- aggregating one-observation ray receipts across the complete selected tuple;
+- conservative nearest-pixel or voxel-center coverage, frustum activation,
+  visibility, occlusion, and culling;
 - configurable block resolution and per-block observation provenance;
 - an immutable snapshot spanning every input-file read;
 - recomputing candidate geometry during verification;
