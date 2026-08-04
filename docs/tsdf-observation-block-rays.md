@@ -270,10 +270,16 @@ complete selected-observation tuple by
 still keeps coverage computation separate from choosing and publishing an
 expanded plan.
 
+The conservative nearest-pixel coverage this file says it does not provide is
+now defined for one pixel in
+[`tsdf-pixel-footprint-coverage.md`](tsdf-pixel-footprint-coverage.md). That
+rule covers the pixel's whole sampling wedge and provably contains the
+centreline path traced here.
+
 Later checkpoints remain for:
 
-1. defining a conservative nearest-pixel or voxel-center coverage proof and
-   any frustum, visibility, occlusion, or culling policy;
+1. the companion per-voxel sampling proof and any frustum, visibility,
+   occlusion, or culling policy;
 2. combining approved coverage coordinates with the surface/truncation plan,
    allocating missing blocks, and preserving per-observation provenance;
 3. explicit idempotency and resumable/nonempty fusion over that chosen domain;

@@ -47,6 +47,10 @@ from .tsdf_plan_block_ray_survey import (
     MAX_TSDF_PLAN_BLOCK_RAY_SURVEY_OUTCOMES,
     survey_tsdf_plan_block_rays_from_context,
 )
+from .tsdf_pixel_footprint_coverage import (
+    MAX_TSDF_PIXEL_FOOTPRINT_CANDIDATE_BLOCKS,
+    evaluate_tsdf_pixel_footprint_coverage_from_context,
+)
 from .tsdf_bounds import infer_tsdf_bounds
 from .tsdf_replay_depth_context import (
     TsdfReplayDepthStatus,
@@ -222,6 +226,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_context_plan_rays(
                 arguments.plan,
                 arguments.session,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-pixel-footprint"
+        ):
+            return _run_tsdf_block_context_pixel_footprint(
+                arguments.plan,
+                arguments.session,
+                arguments.observation_sequence,
+                arguments.pixel,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -886,6 +900,46 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory used to prepare the context.",
+    )
+
+    block_context_pixel_footprint = reconstruct_commands.add_parser(
+        "tsdf-block-context-pixel-footprint",
+        help=(
+            "Cover one prepared pixel's conservative nearest-pixel wedge."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, and conservatively cover the "
+            "nearest-pixel sampling wedge of exactly one pixel of one "
+            "selected observation. This diagnostic reports a superset of "
+            "the blocks that could contain voxel centres sampling that "
+            "measurement; it does not expand the plan, allocate TSDF "
+            "storage, fuse voxels, or write an artifact."
+        ),
+    )
+    block_context_pixel_footprint.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_pixel_footprint.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_pixel_footprint.add_argument(
+        "--observation-sequence",
+        type=int,
+        required=True,
+        help="Exactly one nonnegative plan-selected observation sequence.",
+    )
+    block_context_pixel_footprint.add_argument(
+        "--pixel",
+        type=int,
+        nargs=2,
+        required=True,
+        metavar=("U", "V"),
+        help="Exactly one nonnegative image pixel column and row.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -2869,6 +2923,204 @@ def _run_tsdf_block_context_plan_rays(
         file=sys.stdout,
     )
     print("coverage_approved_for_expansion: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_pixel_footprint(
+    plan_path: Path,
+    session_path: Path,
+    observation_sequence: int,
+    pixel: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = evaluate_tsdf_pixel_footprint_coverage_from_context(
+            plan,
+            context,
+            observation_sequence,
+            tuple(pixel),
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT PIXEL FOOTPRINT FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT PIXEL FOOTPRINT FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT PIXEL FOOTPRINT CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "observation: "
+        f"sequence={receipt.observation_sequence} "
+        f"status={receipt.observation_status.value}",
+        file=sys.stdout,
+    )
+    print(
+        "pixel: "
+        f"uv={receipt.pixel_uv} "
+        f"image={receipt.image_size[0]}x{receipt.image_size[1]}",
+        file=sys.stdout,
+    )
+    print(f"footprint_status: {receipt.status.value}", file=sys.stdout)
+    if receipt.camera_origin_world_m is None:
+        print("camera_origin_world_m: none", file=sys.stdout)
+    else:
+        print(
+            "camera_origin_world_m: "
+            f"{_format_triplet(receipt.camera_origin_world_m)}",
+            file=sys.stdout,
+        )
+    if receipt.measured_depth_m is None:
+        print("measured_depth_m: none", file=sys.stdout)
+    else:
+        print(
+            f"measured_depth_m: {receipt.measured_depth_m:.9f}",
+            file=sys.stdout,
+        )
+    print(
+        "sampling_rule: nearest-pixel-half-open-unit-square",
+        file=sys.stdout,
+    )
+    print(
+        "wedge_rule: apex-to-measured-depth-convex-pyramid",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_rule: conservative-plane-superset-of-half-open-cells",
+        file=sys.stdout,
+    )
+    if receipt.footprint_corners_world_m:
+        print(
+            "first_footprint_corner_world_m: "
+            f"{_format_triplet(receipt.footprint_corners_world_m[0])}",
+            file=sys.stdout,
+        )
+        print(
+            "last_footprint_corner_world_m: "
+            f"{_format_triplet(receipt.footprint_corners_world_m[-1])}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_footprint_corner_world_m: none", file=sys.stdout)
+        print("last_footprint_corner_world_m: none", file=sys.stdout)
+    print(
+        "candidate_blocks: "
+        f"total={receipt.candidate_block_count} "
+        f"min={receipt.candidate_min_block_index} "
+        f"max={receipt.candidate_max_block_index}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_blocks: "
+        f"covered={receipt.covered_block_count} "
+        f"rejected={receipt.rejected_candidate_count}",
+        file=sys.stdout,
+    )
+    print(
+        "centerline_blocks: "
+        f"total={receipt.centerline_block_count} "
+        f"footprint_only={len(receipt.footprint_only_block_indices)}",
+        file=sys.stdout,
+    )
+    print("centerline_contained_in_coverage: yes", file=sys.stdout)
+    print(
+        "widens_centerline_coverage: "
+        f"{'yes' if receipt.widens_centerline_coverage else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_partition: "
+        f"existing_plan={len(receipt.existing_plan_block_indices)} "
+        f"unplanned={len(receipt.unplanned_block_indices)}",
+        file=sys.stdout,
+    )
+    print("coverage_order: canonical-x-fastest", file=sys.stdout)
+    if receipt.covered_block_indices:
+        print(
+            f"first_covered_block: {receipt.covered_block_indices[0]}",
+            file=sys.stdout,
+        )
+        print(
+            f"last_covered_block: {receipt.covered_block_indices[-1]}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_covered_block: none", file=sys.stdout)
+        print("last_covered_block: none", file=sys.stdout)
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "coverage_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("coverage_session_replay: no", file=sys.stdout)
+    print("coverage_replay_hashing: no", file=sys.stdout)
+    print("coverage_source_io: no", file=sys.stdout)
+    print("coverage_depth_decoding: no", file=sys.stdout)
+    print(
+        "coverage_prepared_depth_access: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_workload: "
+        f"candidate_blocks={receipt.candidate_block_count} "
+        f"maximum={MAX_TSDF_PIXEL_FOOTPRINT_CANDIDATE_BLOCKS}",
+        file=sys.stdout,
+    )
+    print("coverage_scope: one-prepared-pixel-only", file=sys.stdout)
+    print(
+        "visibility_rule: positive-finite-depth-stops-at-measured-surface",
+        file=sys.stdout,
+    )
+    print(
+        "conservative_nearest_pixel_footprint_coverage_computed: "
+        f"{'yes' if receipt.covered else 'no'}",
+        file=sys.stdout,
+    )
+    print("per_voxel_sampling_proof_computed: no", file=sys.stdout)
+    print("occlusion_rule_defined: no", file=sys.stdout)
+    print("visibility_culling_rule_defined: no", file=sys.stdout)
+    print("multi_pixel_coverage_computed: no", file=sys.stdout)
+    print("multi_observation_coverage_computed: no", file=sys.stdout)
     print("plan_expanded: no", file=sys.stdout)
     print("missing_blocks_created: no", file=sys.stdout)
     print("storage_allocated: no", file=sys.stdout)

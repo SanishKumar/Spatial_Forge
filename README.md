@@ -1021,10 +1021,63 @@ byte-identical, missing-depth/pose observations that contribute no coverage,
 and `frame_stride=2`. The exact contract is in
 [`docs/tsdf-plan-block-ray-survey.md`](docs/tsdf-plan-block-ray-survey.md).
 
-Coverage is now computed over the complete selection but nothing consumes it.
-Conservative nearest-pixel coverage, plan expansion, observation idempotency,
-complete fusion, persistence, and optimization remain separate later
-checkpoints.
+Cover one pixel's whole conservative sampling wedge instead of its centreline:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-pixel-footprint `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0 `
+  --pixel 1 1
+```
+
+Key fixture output is:
+
+```text
+pixel: uv=(1, 1) image=2x2
+footprint_status: covered
+measured_depth_m: 1.000000000
+sampling_rule: nearest-pixel-half-open-unit-square
+wedge_rule: apex-to-measured-depth-convex-pyramid
+coverage_rule: conservative-plane-superset-of-half-open-cells
+candidate_blocks: total=8 min=(0, -1, -1) max=(1, 0, 0)
+coverage_blocks: covered=8 rejected=0
+centerline_blocks: total=3 footprint_only=5
+centerline_contained_in_coverage: yes
+widens_centerline_coverage: yes
+coverage_partition: existing_plan=8 unplanned=0
+per_voxel_sampling_proof_computed: no
+occlusion_rule_defined: no
+visibility_culling_rule_defined: no
+multi_pixel_coverage_computed: no
+plan_expanded: no
+storage_allocated: no
+full_fusion_performed: no
+artifact_written: no
+```
+
+The evaluator samples depth with `floor(projected + 0.5)`, so pixel `(u, v)`
+owns exactly the half-open square `[u-0.5, u+0.5) x [v-0.5, v+0.5)`. This
+command covers the convex wedge that square sweeps from the camera origin out
+to the measured depth, using six outward planes and half-open block cells. The
+result is a deliberate **superset**: it can never miss a block containing a
+sampled point, but it may retain a block that only grazes the wedge. That is
+the safe direction for allocation. Tests verify the no-false-negative
+direction directly by back-projecting a deterministic lattice of wedge points
+and requiring every owning block to appear.
+
+Coverage contains its own re-derived centreline, and here it is strictly wider
+— 8 blocks against 3. Every fixture coordinate sits exactly on a block
+boundary, so this run rejects no candidate; a focused test measures the same
+pixel at 3.0 m to exercise the plane rule (36 candidates, 31 covered, 5
+rejected, 13 unplanned, plan unchanged). Covering a block still does not prove
+every voxel in it is free space. The exact contract is in
+[`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md).
+
+The companion per-voxel sampling proof, occlusion and culling semantics,
+multi-pixel and multi-observation footprint aggregation, plan expansion,
+observation idempotency, complete fusion, persistence, and optimization remain
+separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1082,6 +1135,8 @@ one-observation camera-to-surface block-ray tracing is in
 [`docs/tsdf-observation-block-rays.md`](docs/tsdf-observation-block-rays.md),
 the complete selected-observation block-ray survey is in
 [`docs/tsdf-plan-block-ray-survey.md`](docs/tsdf-plan-block-ray-survey.md),
+conservative one-pixel footprint coverage is in
+[`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

@@ -213,10 +213,13 @@ cases it cannot:
 
 ## Precisely deferred next phases
 
-Coverage is now computed over the complete selection, but nothing consumes it.
-The next checkpoint should define a conservative nearest-pixel or voxel-center
-coverage proof, together with the frustum, visibility, occlusion, and culling
-semantics that a real free-space rule needs. Only after that should approved
+Coverage is now computed over the complete selection, but nothing consumes it,
+and every coordinate here still comes from a thin centreline.
+[`tsdf-pixel-footprint-coverage.md`](tsdf-pixel-footprint-coverage.md) now
+defines the conservative nearest-pixel rule for one pixel; aggregating that
+rule across a whole observation and then this complete selection is a separate
+later checkpoint, as are the frustum, visibility, occlusion, and culling
+semantics a real free-space rule needs. Only after that should approved
 coordinates become a canonical expanded fusion domain.
 
 Later checkpoints remain for:
