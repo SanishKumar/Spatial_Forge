@@ -174,11 +174,13 @@ unplanned block classified without the plan being touched.
 
 ## Precisely deferred next phases
 
-1. define the cross-view rule: how observed free space, surface band, and
-   occlusion from several observations combine for one voxel, and the
-   visibility and culling policy that follows;
-2. aggregate conservative footprint coverage across one observation and then
-   the complete selected-observation tuple;
+The cross-view rule combining several observations' verdicts for one voxel now
+exists in [`tsdf-voxel-cross-view.md`](tsdf-voxel-cross-view.md), which also
+proves that its combined totals reproduce the fusing traversal exactly.
+
+1. aggregate conservative footprint coverage across one observation and then
+   the complete selected-observation tuple, then apply the cross-view verdict
+   across voxels to produce a carvable free-space set;
 3. combine approved coverage with the surface/truncation plan, allocate
    missing blocks, and preserve per-observation provenance;
 4. explicit idempotency and resumable/nonempty fusion over that domain;

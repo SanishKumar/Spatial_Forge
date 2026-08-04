@@ -51,6 +51,10 @@ from .tsdf_pixel_footprint_coverage import (
     MAX_TSDF_PIXEL_FOOTPRINT_CANDIDATE_BLOCKS,
     evaluate_tsdf_pixel_footprint_coverage_from_context,
 )
+from .tsdf_voxel_cross_view import (
+    MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
+    classify_tsdf_voxel_across_observations_from_context,
+)
 from .tsdf_voxel_sampling import (
     classify_tsdf_voxel_sampling_from_context,
 )
@@ -248,6 +252,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.observation_sequence,
+                arguments.voxel,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-voxel-cross-view"
+        ):
+            return _run_tsdf_block_context_voxel_cross_view(
+                arguments.plan,
+                arguments.session,
                 arguments.voxel,
             )
         if arguments.reconstruct_command == "tsdf-auto":
@@ -987,6 +1000,41 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exactly one nonnegative plan-selected observation sequence.",
     )
     block_context_voxel_sampling.add_argument(
+        "--voxel",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("X", "Y", "Z"),
+        help="Exactly one signed global voxel XYZ, planned or not.",
+    )
+
+    block_context_voxel_cross_view = reconstruct_commands.add_parser(
+        "tsdf-block-context-voxel-cross-view",
+        help=(
+            "Combine every selected observation's verdict for one voxel."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, and combine the per-observation "
+            "sampling verdicts of every plan-selected observation for "
+            "exactly one signed global voxel centre. Surface-band evidence "
+            "outranks free space, which outranks occlusion; occlusion and "
+            "missing input never become free space. This does not carve free "
+            "space, expand the plan, allocate TSDF storage, fuse voxels, or "
+            "write an artifact."
+        ),
+    )
+    block_context_voxel_cross_view.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_voxel_cross_view.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_voxel_cross_view.add_argument(
         "--voxel",
         type=int,
         nargs=3,
@@ -3361,6 +3409,173 @@ def _run_tsdf_block_context_voxel_sampling(
     print("multi_observation_sampling_computed: no", file=sys.stdout)
     print("cross_view_occlusion_rule_defined: no", file=sys.stdout)
     print("visibility_culling_rule_defined: no", file=sys.stdout)
+    print("free_space_carving_applied: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_voxel_cross_view(
+    plan_path: Path,
+    session_path: Path,
+    voxel: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = classify_tsdf_voxel_across_observations_from_context(
+            plan,
+            context,
+            tuple(voxel),
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT VOXEL CROSS-VIEW FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT VOXEL CROSS-VIEW FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT VOXEL CROSS-VIEW CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "voxel: "
+        f"global={receipt.global_index_xyz} "
+        f"block={receipt.block_index_xyz} "
+        f"local={receipt.local_index_xyz}",
+        file=sys.stdout,
+    )
+    print(
+        "voxel_block_planned: "
+        f"{'yes' if receipt.planned_block else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "grid: "
+        f"voxel_size_m={receipt.voxel_size_m:.9f} "
+        f"truncation_m={receipt.truncation_m:.9f} "
+        f"block_resolution={receipt.block_resolution}",
+        file=sys.stdout,
+    )
+    print(
+        f"world_xyz_m: {_format_triplet(receipt.world_xyz_m)}",
+        file=sys.stdout,
+    )
+    print(
+        "observations: "
+        f"selected={receipt.observation_count} "
+        f"surface_band={receipt.surface_band_count} "
+        f"free_space={receipt.free_space_count} "
+        f"occluded={receipt.occluded_count} "
+        f"unseen={receipt.unseen_count}",
+        file=sys.stdout,
+    )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in receipt.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(f"cross_view_verdict: {receipt.verdict.value}", file=sys.stdout)
+    print(
+        "verdict_precedence: surface-then-free-space-then-occluded-then-"
+        "unseen",
+        file=sys.stdout,
+    )
+    print(
+        "occlusion_rule: carries-no-evidence-never-becomes-free-space",
+        file=sys.stdout,
+    )
+    print(
+        "contributing_observations: "
+        f"{receipt.contributing_observation_sequences}",
+        file=sys.stdout,
+    )
+    print(
+        f"wedge_observations: {receipt.wedge_observation_sequences}",
+        file=sys.stdout,
+    )
+    print(
+        f"reference_weight: {receipt.reference_weight}",
+        file=sys.stdout,
+    )
+    print(
+        f"reference_tsdf_sum: {receipt.reference_tsdf_sum:.9f}",
+        file=sys.stdout,
+    )
+    if receipt.reference_tsdf_value is None:
+        print("reference_tsdf_value: none", file=sys.stdout)
+    else:
+        print(
+            f"reference_tsdf_value: {receipt.reference_tsdf_value:.9f}",
+            file=sys.stdout,
+        )
+    print(
+        f"voxel_observed: {'yes' if receipt.observed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "carvable_free_space: "
+        f"{'yes' if receipt.carvable_free_space else 'no'}",
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "cross_view_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("cross_view_session_replay: no", file=sys.stdout)
+    print("cross_view_replay_hashing: no", file=sys.stdout)
+    print("cross_view_source_io: no", file=sys.stdout)
+    print("cross_view_depth_decoding: no", file=sys.stdout)
+    print(
+        "cross_view_workload: "
+        f"retained_observations={receipt.observation_count} "
+        f"maximum={MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS}",
+        file=sys.stdout,
+    )
+    print("cross_view_scope: one-voxel-all-observations", file=sys.stdout)
+    print("unplanned_voxels_accepted: yes", file=sys.stdout)
+    print("multi_voxel_cross_view_computed: no", file=sys.stdout)
+    print("visibility_culling_rule_defined: no", file=sys.stdout)
+    print("confidence_or_sensor_weighting_applied: no", file=sys.stdout)
     print("free_space_carving_applied: no", file=sys.stdout)
     print("plan_expanded: no", file=sys.stdout)
     print("missing_blocks_created: no", file=sys.stdout)

@@ -332,6 +332,13 @@ X-fastest order and adds whole-selected-block preflight and caught-failure
 rollback. It does not change this child's per-voxel evaluation and accumulation
 contract.
 
+This traversal records the fused sum and weight but not the evidence behind
+them. The read-only
+[`classify_tsdf_voxel_across_observations_from_context`](tsdf-voxel-cross-view.md)
+reports the same weight, float64 sum, and applied observation sequence for the
+same voxel while also separating surface-band, free-space, occluded, and
+unseen observations.
+
 ## Explicitly deferred
 
 - directly accepting multiple addresses or a block coordinate in these

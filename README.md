@@ -1123,9 +1123,53 @@ must have its block inside that pixel's conservative footprint coverage, which
 is what makes the previous checkpoint's claim checkable. The exact contract is
 in [`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md).
 
-The cross-view rule for combining several observations, occlusion and culling
-semantics, multi-pixel and multi-observation footprint aggregation, plan
-expansion, observation idempotency, complete fusion, persistence, and
+Resolve one voxel across every selected observation at once:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-voxel-cross-view `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --voxel 8 -1 -1
+```
+
+Key fixture output is:
+
+```text
+voxel: global=(8, -1, -1) block=(1, -1, -1) local=(0, 7, 7)
+observations: selected=2 surface_band=2 free_space=0 occluded=0 unseen=0
+cross_view_verdict: surface
+verdict_precedence: surface-then-free-space-then-occluded-then-unseen
+occlusion_rule: carries-no-evidence-never-becomes-free-space
+contributing_observations: (0, 1)
+reference_weight: 2
+reference_tsdf_sum: -0.250000000
+reference_tsdf_value: -0.125000000
+carvable_free_space: no
+free_space_carving_applied: no
+plan_expanded: no
+storage_mutated: no
+```
+
+Observations routinely disagree about a voxel, and that disagreement is the
+information carving depends on. Surface-band evidence outranks free space
+(a voxel any view puts on a surface must not be carved because a grazing view
+saw through it); free space outranks occlusion (emptiness is positive
+evidence, occlusion is the absence of it); and occlusion, invalid depth and
+missing inputs never become free space. `carvable_free_space` is true only for
+voxels seen empty and never banded — try `--voxel 2 0 0`.
+
+The verdict is checked against reality rather than asserted: for every planned
+voxel, the derived `reference_weight` and `reference_tsdf_sum` must equal the
+`weight_after` and `tsdf_sum_after` that the fusing traversal actually writes
+into storage, bit for bit, with the sum accumulated in canonical observation
+order. What this adds over storage is the *explanation* — a fused slot holding
+weight 2 cannot tell you whether that meant two band observations, two
+free-space observations, or one of each. The exact contract is in
+[`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md).
+
+Applying this verdict across voxels to produce a carvable set, multi-pixel and
+multi-observation footprint aggregation, plan expansion, observation
+idempotency, complete fusion, confidence weighting, persistence, and
 optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
@@ -1188,6 +1232,8 @@ conservative one-pixel footprint coverage is in
 [`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md),
 per-voxel sampling classification is in
 [`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md),
+cross-view voxel resolution is in
+[`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
