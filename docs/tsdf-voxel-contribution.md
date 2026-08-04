@@ -372,6 +372,13 @@ receipt transcript, skip accounting, empty-target duplicate guard, sequential
 float64 accumulation, and whole-target caught-failure rollback. See
 [`tsdf-voxel-traversal.md`](tsdf-voxel-traversal.md).
 
+This evaluator's `contributes` status covers both observed free space and the
+surface band, and it can only be asked about voxels already located in
+allocated storage. The separate
+[`classify_tsdf_voxel_sampling_from_context`](tsdf-voxel-sampling.md) splits
+those two cases and accepts unplanned voxels; it is tested to agree with this
+evaluator's projection and accept rule exactly.
+
 ## Explicitly deferred
 
 - directly iterating additional observations inside this evaluator; the

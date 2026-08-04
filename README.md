@@ -1074,10 +1074,59 @@ rejected, 13 unplanned, plan unchanged). Covering a block still does not prove
 every voxel in it is free space. The exact contract is in
 [`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md).
 
-The companion per-voxel sampling proof, occlusion and culling semantics,
-multi-pixel and multi-observation footprint aggregation, plan expansion,
-observation idempotency, complete fusion, persistence, and optimization remain
-separate later checkpoints.
+Classify how one observation samples one voxel centre, planned or not:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-voxel-sampling `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0 `
+  --voxel 2 0 0
+```
+
+Key fixture output is:
+
+```text
+voxel: global=(2, 0, 0) block=(0, 0, 0) local=(2, 0, 0)
+voxel_block_planned: yes
+camera_xyz_m: (-0.062500000, -0.062500000, 0.312500000)
+sampled_pixel: (0, 0)
+measured_depth_m: 1.000000000
+signed_distance_m: 0.687500000
+truncated_tsdf_value: 1.000000000
+sampling_status: observed-free-space
+free_space_rule: signed-distance-above-positive-truncation
+occluded_rule: signed-distance-below-negative-truncation
+inside_sampling_wedge: yes
+reference_evaluator_accepts: yes
+unplanned_voxels_accepted: yes
+multi_observation_sampling_computed: no
+cross_view_occlusion_rule_defined: no
+free_space_carving_applied: no
+plan_expanded: no
+storage_mutated: no
+```
+
+The reference evaluator lumps everything from `-truncation` upward into one
+`contributes` status, so observed empty space and the surface band are
+indistinguishable, and it can only be asked about voxels that already exist in
+allocated storage. This command separates `observed-free-space` from
+`observed-surface-band` and `unobserved-occluded`, and takes a raw signed
+global voxel index so it can classify blocks the plan has never seen —
+`--voxel 60 0 0` reports `voxel_block_planned: no`.
+
+Two properties are tested rather than assumed. Every planned voxel at both
+observations must produce the same camera point, projection, sampled pixel,
+depth, signed distance, and accepted/rejected verdict as the existing
+evaluator. And every voxel whose centre lies inside its pixel's closed wedge
+must have its block inside that pixel's conservative footprint coverage, which
+is what makes the previous checkpoint's claim checkable. The exact contract is
+in [`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md).
+
+The cross-view rule for combining several observations, occlusion and culling
+semantics, multi-pixel and multi-observation footprint aggregation, plan
+expansion, observation idempotency, complete fusion, persistence, and
+optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1137,6 +1186,8 @@ the complete selected-observation block-ray survey is in
 [`docs/tsdf-plan-block-ray-survey.md`](docs/tsdf-plan-block-ray-survey.md),
 conservative one-pixel footprint coverage is in
 [`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md),
+per-voxel sampling classification is in
+[`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

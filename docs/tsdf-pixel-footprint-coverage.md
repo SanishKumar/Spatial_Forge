@@ -232,8 +232,14 @@ checkpoint deliberately stops short of the rest of the free-space rule:
 
 ## Precisely deferred next phases
 
-1. define the companion per-voxel sampling proof, then the occlusion,
-   visibility, and culling semantics across pixels and views;
+The companion per-voxel rule now exists in
+[`tsdf-voxel-sampling.md`](tsdf-voxel-sampling.md), and it tests this file's
+conservativeness claim directly: every planned voxel whose centre lies inside
+its pixel's closed wedge must have its block in that pixel's coverage here.
+
+1. define the cross-view rule combining free space, surface band, and
+   occlusion from several observations, then the occlusion, visibility, and
+   culling semantics that follow;
 2. aggregate footprint coverage across a whole observation and then the
    complete selected-observation tuple, alongside the existing centreline
    survey in [`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md);

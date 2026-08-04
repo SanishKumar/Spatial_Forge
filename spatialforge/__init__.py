@@ -63,6 +63,11 @@ from .tsdf_voxel_contribution import (
     evaluate_tsdf_voxel_contribution,
     evaluate_tsdf_voxel_contribution_from_context,
 )
+from .tsdf_voxel_sampling import (
+    TsdfVoxelSamplingReceipt,
+    TsdfVoxelSamplingStatus,
+    classify_tsdf_voxel_sampling_from_context,
+)
 from .tsdf_voxel_traversal import (
     TsdfVoxelTraversalReceipt,
     traverse_tsdf_voxel_observations,
@@ -101,6 +106,8 @@ __all__ = [
     "TsdfReplayDepthContext",
     "TsdfReplayDepthObservation",
     "TsdfReplayDepthStatus",
+    "TsdfVoxelSamplingReceipt",
+    "TsdfVoxelSamplingStatus",
     "TsdfVoxelTraversalReceipt",
     "TsdfVoxelUpdateReceipt",
     "TsdfVoxelAddress",
@@ -110,6 +117,7 @@ __all__ = [
     "apply_tsdf_voxel_contribution",
     "apply_tsdf_voxel_contribution_from_context",
     "build_tsdf_replay_depth_context",
+    "classify_tsdf_voxel_sampling_from_context",
     "compose_tsdf_global_voxel_index",
     "evaluate_tsdf_pixel_footprint_coverage_from_context",
     "evaluate_tsdf_voxel_contribution",

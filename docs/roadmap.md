@@ -82,6 +82,11 @@ The project is intentionally advancing through small, testable checkpoints.
   owning block and its own re-derived centreline path, partitioned into
   existing and unplanned coordinates without a per-voxel, occlusion, or
   culling rule and without expanding the plan or fusing voxels.
+- Per-voxel sampling classification for one signed global voxel centre and one
+  prepared observation, separating observed free space from the surface band
+  and from occluded space, accepting unplanned voxels without storage, proved
+  to agree with the reference contribution evaluator's projection and accept
+  rule and to lie inside its own pixel's conservative footprint coverage.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -95,8 +100,9 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. define the companion per-voxel sampling proof, then the frustum,
-   visibility, occlusion, and culling semantics across pixels and views;
+1. define the cross-view rule combining observed free space, surface band, and
+   occlusion from several observations for one voxel, then the frustum,
+   visibility, and culling semantics that follow;
 2. aggregate conservative footprint coverage across one whole observation and
    then the complete selected-observation tuple;
 3. define how approved coverage coordinates become a canonical expanded
@@ -157,7 +163,8 @@ context-backed single-observation contribution, context-bound single-slot
 application, context-backed single-voxel traversal, context-backed
 single-selected-block traversal, context-backed existing-plan traversal,
 one-observation context-backed block-ray tracing, complete selected-observation
-block-ray survey, conservative one-pixel footprint coverage,
+block-ray survey, conservative one-pixel footprint coverage, per-voxel
+sampling classification,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

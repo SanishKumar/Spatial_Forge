@@ -51,6 +51,9 @@ from .tsdf_pixel_footprint_coverage import (
     MAX_TSDF_PIXEL_FOOTPRINT_CANDIDATE_BLOCKS,
     evaluate_tsdf_pixel_footprint_coverage_from_context,
 )
+from .tsdf_voxel_sampling import (
+    classify_tsdf_voxel_sampling_from_context,
+)
 from .tsdf_bounds import infer_tsdf_bounds
 from .tsdf_replay_depth_context import (
     TsdfReplayDepthStatus,
@@ -236,6 +239,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.session,
                 arguments.observation_sequence,
                 arguments.pixel,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-voxel-sampling"
+        ):
+            return _run_tsdf_block_context_voxel_sampling(
+                arguments.plan,
+                arguments.session,
+                arguments.observation_sequence,
+                arguments.voxel,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -940,6 +953,46 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar=("U", "V"),
         help="Exactly one nonnegative image pixel column and row.",
+    )
+
+    block_context_voxel_sampling = reconstruct_commands.add_parser(
+        "tsdf-block-context-voxel-sampling",
+        help=(
+            "Classify how one observation samples one voxel centre."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, and classify exactly one "
+            "signed global voxel centre against exactly one selected "
+            "observation. This separates observed free space from the "
+            "surface band and from occluded space, and accepts unplanned "
+            "voxels; it does not expand the plan, allocate TSDF storage, "
+            "fuse voxels, or write an artifact."
+        ),
+    )
+    block_context_voxel_sampling.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_voxel_sampling.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_voxel_sampling.add_argument(
+        "--observation-sequence",
+        type=int,
+        required=True,
+        help="Exactly one nonnegative plan-selected observation sequence.",
+    )
+    block_context_voxel_sampling.add_argument(
+        "--voxel",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("X", "Y", "Z"),
+        help="Exactly one signed global voxel XYZ, planned or not.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -3121,6 +3174,194 @@ def _run_tsdf_block_context_pixel_footprint(
     print("visibility_culling_rule_defined: no", file=sys.stdout)
     print("multi_pixel_coverage_computed: no", file=sys.stdout)
     print("multi_observation_coverage_computed: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_voxel_sampling(
+    plan_path: Path,
+    session_path: Path,
+    observation_sequence: int,
+    voxel: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = classify_tsdf_voxel_sampling_from_context(
+            plan,
+            context,
+            observation_sequence,
+            tuple(voxel),
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT VOXEL SAMPLING FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT VOXEL SAMPLING FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT VOXEL SAMPLING CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "observation: "
+        f"sequence={receipt.observation_sequence} "
+        f"status={receipt.observation_status.value}",
+        file=sys.stdout,
+    )
+    print(
+        "voxel: "
+        f"global={receipt.global_index_xyz} "
+        f"block={receipt.block_index_xyz} "
+        f"local={receipt.local_index_xyz}",
+        file=sys.stdout,
+    )
+    print(
+        "voxel_block_planned: "
+        f"{'yes' if receipt.planned_block else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "grid: "
+        f"voxel_size_m={receipt.voxel_size_m:.9f} "
+        f"truncation_m={receipt.truncation_m:.9f} "
+        f"block_resolution={receipt.block_resolution}",
+        file=sys.stdout,
+    )
+    print(
+        f"world_xyz_m: {_format_triplet(receipt.world_xyz_m)}",
+        file=sys.stdout,
+    )
+    if receipt.camera_xyz_m is None:
+        print("camera_xyz_m: none", file=sys.stdout)
+    else:
+        print(
+            f"camera_xyz_m: {_format_triplet(receipt.camera_xyz_m)}",
+            file=sys.stdout,
+        )
+    if receipt.projected_uv is None:
+        print("projected_uv: none", file=sys.stdout)
+    else:
+        print(
+            "projected_uv: "
+            f"({receipt.projected_uv[0]:.9f}, "
+            f"{receipt.projected_uv[1]:.9f})",
+            file=sys.stdout,
+        )
+    print(
+        f"sampled_pixel: {receipt.pixel_uv}"
+        if receipt.pixel_uv is not None
+        else "sampled_pixel: none",
+        file=sys.stdout,
+    )
+    if receipt.measured_depth_m is None:
+        print("measured_depth_m: none", file=sys.stdout)
+    else:
+        print(
+            f"measured_depth_m: {receipt.measured_depth_m:.9f}",
+            file=sys.stdout,
+        )
+    if receipt.signed_distance_m is None:
+        print("signed_distance_m: none", file=sys.stdout)
+    else:
+        print(
+            f"signed_distance_m: {receipt.signed_distance_m:.9f}",
+            file=sys.stdout,
+        )
+    if receipt.truncated_tsdf_value is None:
+        print("truncated_tsdf_value: none", file=sys.stdout)
+    else:
+        print(
+            f"truncated_tsdf_value: {receipt.truncated_tsdf_value:.9f}",
+            file=sys.stdout,
+        )
+    print(f"sampling_status: {receipt.status.value}", file=sys.stdout)
+    print(
+        "sampling_rule: nearest-pixel-floor-projected-plus-half",
+        file=sys.stdout,
+    )
+    print(
+        "free_space_rule: signed-distance-above-positive-truncation",
+        file=sys.stdout,
+    )
+    print(
+        "occluded_rule: signed-distance-below-negative-truncation",
+        file=sys.stdout,
+    )
+    print(
+        f"voxel_sampled: {'yes' if receipt.sampled else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        f"voxel_observed: {'yes' if receipt.observed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "inside_sampling_wedge: "
+        f"{'yes' if receipt.inside_sampling_wedge else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "reference_evaluator_accepts: "
+        f"{'yes' if receipt.contributes_to_reference_tsdf else 'no'}",
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "sampling_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("sampling_session_replay: no", file=sys.stdout)
+    print("sampling_replay_hashing: no", file=sys.stdout)
+    print("sampling_source_io: no", file=sys.stdout)
+    print("sampling_depth_decoding: no", file=sys.stdout)
+    print(
+        "sampling_prepared_depth_access: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print("sampling_scope: one-voxel-one-observation-only", file=sys.stdout)
+    print("unplanned_voxels_accepted: yes", file=sys.stdout)
+    print("multi_observation_sampling_computed: no", file=sys.stdout)
+    print("cross_view_occlusion_rule_defined: no", file=sys.stdout)
+    print("visibility_culling_rule_defined: no", file=sys.stdout)
+    print("free_space_carving_applied: no", file=sys.stdout)
     print("plan_expanded: no", file=sys.stdout)
     print("missing_blocks_created: no", file=sys.stdout)
     print("storage_allocated: no", file=sys.stdout)
