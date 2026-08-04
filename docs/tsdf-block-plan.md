@@ -204,10 +204,16 @@ geometric supercover or proof of conservative nearest-pixel free-space
 coverage. See
 [`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
 
+The same read-only comparison is available across every plan-selected
+observation at once, with per-block observation-support counts, via
+`reconstruct tsdf-block-context-plan-rays`. That aggregate is likewise
+informational: see
+[`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md).
+
 ## Explicitly deferred
 
-- expanding the surface-band plan into a complete fusion domain;
-- aggregating one-observation ray receipts across the complete selected tuple;
+- expanding the surface-band plan into a complete fusion domain, whether from
+  the surveyed multi-observation coverage union or any other source;
 - conservative nearest-pixel or voxel-center coverage, frustum activation,
   visibility, occlusion, and culling;
 - configurable block resolution and per-block observation provenance;

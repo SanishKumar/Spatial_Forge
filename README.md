@@ -976,10 +976,55 @@ allocates no TSDF storage, fuses nothing, and writes no artifact. The exact
 contract is in
 [`docs/tsdf-observation-block-rays.md`](docs/tsdf-observation-block-rays.md).
 
-The next phase is aggregation of these same deterministic receipts across the
-complete selected-observation tuple. Conservative nearest-pixel coverage,
-plan expansion, observation idempotency, complete fusion, persistence, and
-optimization remain separate later checkpoints.
+Aggregate the same deterministic receipts across every selected observation:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-plan-rays `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession
+```
+
+Key fixture output is:
+
+```text
+observations: selected=2 traced=2 ready=2 missing_depth=0 missing_pose=0 missing_depth_and_pose=0
+observation_order: canonical-frame-stride sequences=0..1
+pixel_outcomes: total=8 traversed=8 depth_invalid=0
+ray_block_visits: total=22 unique=8 duplicate=14 maximum_per_ray=3
+coverage_blocks: total=8 nonterminal=4 surface_endpoint=4
+coverage_partition: existing_plan=8 unplanned=0
+coverage_support: multi_observation=8 maximum_observations=2
+survey_workload: retained_outcomes=30 maximum=262144
+coverage_scope: all-plan-selected-observations
+multiple_observation_coverage_computed: yes
+all_selected_observations_surveyed: yes
+conservative_nearest_pixel_free_space_coverage_proven: no
+coverage_approved_for_expansion: no
+plan_expanded: no
+storage_allocated: no
+full_fusion_performed: no
+artifact_written: no
+```
+
+This command traces every plan-selected observation in canonical frame-stride
+order against one prepared context, retains each observation's complete
+transcript, and re-derives the combined coverage union, its existing/unplanned
+partition, and how many distinct observations cover each block. Every
+per-observation limit above still applies to each child, and a high support
+count is structural, not proof of visibility or free space.
+
+The fixture's two observations are geometrically identical, so its union
+equals either one. Focused tests cover what it cannot: a `1.0 m` plus `3.0 m`
+pair whose union is strictly larger than either observation, a pair that
+reports eight unplanned coordinates while leaving the plan's active tuple
+byte-identical, missing-depth/pose observations that contribute no coverage,
+and `frame_stride=2`. The exact contract is in
+[`docs/tsdf-plan-block-ray-survey.md`](docs/tsdf-plan-block-ray-survey.md).
+
+Coverage is now computed over the complete selection but nothing consumes it.
+Conservative nearest-pixel coverage, plan expansion, observation idempotency,
+complete fusion, persistence, and optimization remain separate later
+checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1035,6 +1080,8 @@ existing-plan block-set context traversal is in
 [`docs/tsdf-context-plan-traversal.md`](docs/tsdf-context-plan-traversal.md),
 one-observation camera-to-surface block-ray tracing is in
 [`docs/tsdf-observation-block-rays.md`](docs/tsdf-observation-block-rays.md),
+the complete selected-observation block-ray survey is in
+[`docs/tsdf-plan-block-ray-survey.md`](docs/tsdf-plan-block-ray-survey.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

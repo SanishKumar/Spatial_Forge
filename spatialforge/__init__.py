@@ -34,6 +34,11 @@ from .tsdf_observation_block_rays import (
     TsdfObservationBlockRayTraceReceipt,
     trace_tsdf_observation_block_rays_from_context,
 )
+from .tsdf_plan_block_ray_survey import (
+    MAX_TSDF_PLAN_BLOCK_RAY_SURVEY_OUTCOMES,
+    TsdfPlanBlockRaySurveyReceipt,
+    survey_tsdf_plan_block_rays_from_context,
+)
 from .tsdf_replay_depth_context import (
     MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES,
     TsdfReplayDepthContext,
@@ -83,6 +88,7 @@ __all__ = [
     "TsdfObservationBlockRayReceipt",
     "TsdfObservationBlockRayStatus",
     "TsdfObservationBlockRayTraceReceipt",
+    "TsdfPlanBlockRaySurveyReceipt",
     "TsdfPlanTraversalReceipt",
     "TsdfReplayDepthContext",
     "TsdfReplayDepthObservation",
@@ -111,10 +117,12 @@ __all__ = [
     "MAX_TSDF_VOXEL_WEIGHT",
     "MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES",
     "MAX_TSDF_OBSERVATION_BLOCK_RAY_OUTCOMES",
+    "MAX_TSDF_PLAN_BLOCK_RAY_SURVEY_OUTCOMES",
     "MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES",
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",
+    "survey_tsdf_plan_block_rays_from_context",
     "trace_tsdf_observation_block_rays_from_context",
     "traverse_tsdf_block_voxels_from_context",
     "traverse_tsdf_plan_blocks_from_context",
