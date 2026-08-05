@@ -61,15 +61,26 @@ This repository currently implements these narrow foundations:
 - deterministic zero-crossing surface-point extraction from the TSDF; and
 - deterministic six-tetrahedron reference triangle meshing.
 
+On top of those, the free-space reasoning stack is complete and read-only. Two
+independent ladders meet at the end of it: conservative nearest-pixel coverage
+(one pixel's sampling wedge, then one observation, then the whole selection)
+answers which blocks a measurement *could* sample; per-voxel classification
+(one voxel and one observation, then across observations, then across a block)
+answers what each voxel *is*. Running the second over the first yields the
+whole-scan carvable free-space set and a proposed expanded block set.
+
 The prepared replay/depth context is consumed by separate scalar evaluation,
 guarded-application, one-voxel traversal, one-selected-block traversal, and
-existing-plan traversal APIs, plus the separate one-observation block-ray
-diagnostic. The deliberately redundant session-backed scalar and one-voxel
-traversal APIs remain available as reference paths. Multi-observation and
-conservative nearest-pixel free-space coverage, plan expansion, full block
-fusion, scalable sparse execution, robust outlier filtering, production
-meshing, normals, SLAM, map packages, mobile capture, and the visual inspector
-are deliberately not implemented yet.
+existing-plan traversal APIs, plus the coverage and cross-view diagnostics. The
+deliberately redundant session-backed scalar and one-voxel traversal APIs
+remain available as reference paths.
+
+Nothing above writes a plan or carves anything: every coverage and verdict
+command is strictly non-mutating. Serializing an expanded `.sftplan`, full
+block fusion, scalable sparse execution, evidence thresholds and confidence
+weighting, robust outlier filtering, production meshing, normals, SLAM, map
+packages, mobile capture, and the visual inspector are deliberately not
+implemented yet.
 
 ## Set up
 
@@ -1335,8 +1346,47 @@ surface/truncation planner never had a reason to allocate them, and that gap
 is exactly what plan expansion has to close. The exact contract is in
 [`docs/tsdf-domain-cross-view.md`](docs/tsdf-domain-cross-view.md).
 
-Plan expansion, observation idempotency, complete fusion, confidence
-weighting, persistence, and optimization remain separate later checkpoints.
+Turn that into a proposed block set:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-plan-expansion `
+  outputs\progress-blocks.sftplan `
+  testsixtures\minimal.vgsession
+```
+
+Key fixture output is:
+
+```text
+approval_rule: covered-block-with-at-least-one-observed-voxel
+source_plan: blocks=8 voxel_slots=4096
+coverage_domain: blocks=8 approved=8 rejected=0
+proposed_plan: blocks=8 voxel_slots=4096
+proposed_delta: added=0 retained=8 removed=0 added_voxel_slots=0
+expands_plan: no
+evidence_threshold_applied: no
+plan_written: no
+source_plan_mutated: no
+```
+
+Conservative coverage is a superset by construction, so not every covered
+block deserves allocation. A block is approved only if the cross-view sweep
+found at least one *observed* voxel in it — `surface` or `free-space`. Blocks
+that are entirely occluded or unseen carry no evidence and are pruned.
+
+The fixture proposes no change, which is a useful null result but demonstrates
+nothing. A focused test at 3.0 m does: **52 covered blocks, 40 approved, 12
+pruned, 8 added** to a 32-block plan. Expansion is additive by construction —
+`removed=0` always, and the receipt validates that every source block survives,
+because failing to corroborate a planned block is not evidence of absence.
+
+Still read-only: `plan_written: no`. Serializing the expanded `.sftplan` is
+deliberately the next checkpoint, so the approval policy can be reviewed on
+its own. The exact contract is in
+[`docs/tsdf-plan-expansion.md`](docs/tsdf-plan-expansion.md).
+
+Writing the expanded plan, observation idempotency, complete fusion,
+confidence weighting, persistence, and optimization remain separate later
+checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1408,6 +1458,8 @@ its block-wide sweep is in
 [`docs/tsdf-block-cross-view.md`](docs/tsdf-block-cross-view.md),
 the whole-scan carvable free-space sweep is in
 [`docs/tsdf-domain-cross-view.md`](docs/tsdf-domain-cross-view.md),
+the plan-expansion proposal is in
+[`docs/tsdf-plan-expansion.md`](docs/tsdf-plan-expansion.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

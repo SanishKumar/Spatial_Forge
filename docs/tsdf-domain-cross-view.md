@@ -125,9 +125,13 @@ the domain. It is a reference sweep, not a streaming, parallel, or GPU path.
 
 ## Precisely deferred next phases
 
-1. combine this approved coverage with the surface/truncation plan, allocate
-   the missing blocks, and preserve per-observation provenance — the first
-   checkpoint that changes a plan;
+The approval and merge step now exists as a read-only proposal in
+[`tsdf-plan-expansion.md`](tsdf-plan-expansion.md), which turns this carvable
+set into a concrete expanded block set.
+
+1. serialize that proposed block set as a new `.sftplan`, carrying the
+   approval rule, source plan digest, and per-block provenance — the first
+   checkpoint that writes a plan;
 2. explicit idempotency and resumable/nonempty fusion over that domain;
 3. complete fusion diagnostics, persistent block-backed TSDF artifacts,
    normalization, and sparse surface/mesh consumers;

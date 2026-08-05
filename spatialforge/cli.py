@@ -67,6 +67,9 @@ from .tsdf_domain_cross_view import (
     MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES,
     sweep_tsdf_coverage_domain_cross_view_from_context,
 )
+from .tsdf_plan_expansion import (
+    propose_tsdf_plan_expansion_from_domain,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     classify_tsdf_voxel_across_observations_from_context,
@@ -310,6 +313,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             == "tsdf-block-context-domain-cross-view"
         ):
             return _run_tsdf_block_context_domain_cross_view(
+                arguments.plan,
+                arguments.session,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-plan-expansion"
+        ):
+            return _run_tsdf_block_context_plan_expansion(
                 arguments.plan,
                 arguments.session,
             )
@@ -1208,6 +1219,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Existing .sftplan artifact used only for geometry/provenance.",
     )
     block_context_domain_cross_view.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+
+    block_context_plan_expansion = reconstruct_commands.add_parser(
+        "tsdf-block-context-plan-expansion",
+        help=(
+            "Propose the blocks an expanded plan would hold."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, survey the conservative "
+            "footprint coverage, resolve every covered voxel, and propose "
+            "the canonical expanded block set: the source plan plus every "
+            "covered block that carries at least one observed voxel. This "
+            "is a read-only proposal; it does not write a plan, allocate "
+            "TSDF storage, fuse voxels, or write any artifact."
+        ),
+    )
+    block_context_plan_expansion.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact to propose an expansion for.",
+    )
+    block_context_plan_expansion.add_argument(
         "session",
         type=Path,
         help="Current .vgsession directory used to prepare the context.",
@@ -4137,6 +4174,150 @@ def _run_tsdf_block_context_voxel_cross_view(
     )
     print(
         f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_plan_expansion(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        coverage = survey_tsdf_plan_pixel_footprints_from_context(
+            plan,
+            context,
+        )
+        domain = sweep_tsdf_coverage_domain_cross_view_from_context(
+            plan,
+            context,
+            coverage,
+        )
+        proposal = propose_tsdf_plan_expansion_from_domain(plan, domain)
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN EXPANSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN EXPANSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT PLAN EXPANSION CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "coverage_source: conservative-pixel-footprint-survey",
+        file=sys.stdout,
+    )
+    print(
+        "approval_rule: covered-block-with-at-least-one-observed-voxel",
+        file=sys.stdout,
+    )
+    print(
+        "source_plan: "
+        f"blocks={proposal.source_block_count} "
+        f"voxel_slots={proposal.source_voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_domain: "
+        f"blocks={proposal.domain_block_count} "
+        f"approved={proposal.approved_block_count} "
+        f"rejected={proposal.rejected_block_count}",
+        file=sys.stdout,
+    )
+    print(
+        "domain_voxels: "
+        f"observed={domain.observed_voxel_count} "
+        f"carvable_free_space={domain.carvable_free_space_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "proposed_plan: "
+        f"blocks={proposal.expanded_block_count} "
+        f"voxel_slots={proposal.expanded_voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        "proposed_delta: "
+        f"added={proposal.added_block_count} "
+        f"retained={proposal.retained_block_count} "
+        f"removed={proposal.removed_block_count} "
+        f"added_voxel_slots={proposal.added_voxel_slots}",
+        file=sys.stdout,
+    )
+    print("block_order: canonical-x-fastest", file=sys.stdout)
+    if proposal.added_block_indices:
+        print(
+            f"first_added_block: {proposal.added_block_indices[0]}",
+            file=sys.stdout,
+        )
+        print(
+            f"last_added_block: {proposal.added_block_indices[-1]}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_added_block: none", file=sys.stdout)
+        print("last_added_block: none", file=sys.stdout)
+    print(
+        "source_blocks_retained: "
+        f"{'yes' if proposal.retained_block_count == plan.active_block_count else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "expands_plan: "
+        f"{'yes' if proposal.expands_plan else 'no'}",
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "expansion_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("expansion_session_replay: no", file=sys.stdout)
+    print("expansion_source_io: no", file=sys.stdout)
+    print("expansion_depth_decoding: no", file=sys.stdout)
+    print("expansion_scope: proposal-only", file=sys.stdout)
+    print("evidence_threshold_applied: no", file=sys.stdout)
+    print("confidence_or_sensor_weighting_applied: no", file=sys.stdout)
+    print("free_space_carving_applied: no", file=sys.stdout)
+    print("plan_written: no", file=sys.stdout)
+    print("plan_expanded_on_disk: no", file=sys.stdout)
+    print("source_plan_mutated: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {proposal.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {proposal.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

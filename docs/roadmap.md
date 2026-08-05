@@ -111,6 +111,11 @@ The project is intentionally advancing through small, testable checkpoints.
   rule, producing the whole-scan carvable free-space set split by plan
   membership, and reproducing the fusing plan traversal's exact weight
   total, observed-voxel count and maximum weight.
+- Read-only plan expansion proposal approving every covered block that
+  holds at least one observed voxel, pruning grazed-but-unobserved
+  coverage, merging the approved set with the source plan without ever
+  removing a planned block, and reporting the proposed block and
+  voxel-slot deltas without serializing a plan.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -124,8 +129,8 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. combine the approved coverage with the surface/truncation plan, allocate
-   the missing blocks, and preserve per-observation provenance;
+1. serialize the proposed expanded block set as a new `.sftplan`, carrying
+   the approval rule, source plan digest, and per-block provenance;
 2. replace the empty-storage guard with explicit observation provenance,
    idempotency, and resumable/nonempty fusion, then define complete fusion
    diagnostics over the chosen spatial domain;
@@ -186,7 +191,7 @@ one-observation context-backed block-ray tracing, complete selected-observation
 block-ray survey, conservative one-pixel footprint coverage, per-voxel
 sampling classification, cross-view voxel and block resolution,
 one-observation and whole-scan footprint coverage, whole-scan carvable
-free space,
+free space, plan-expansion proposal,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

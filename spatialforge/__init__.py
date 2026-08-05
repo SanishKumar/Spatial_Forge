@@ -83,6 +83,10 @@ from .tsdf_domain_cross_view import (
     TsdfCoverageDomainCrossViewReceipt,
     sweep_tsdf_coverage_domain_cross_view_from_context,
 )
+from .tsdf_plan_expansion import (
+    TsdfPlanExpansionProposal,
+    propose_tsdf_plan_expansion_from_domain,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     TsdfVoxelCrossViewReceipt,
@@ -131,6 +135,7 @@ __all__ = [
     "TsdfPixelFootprintCoverageReceipt",
     "TsdfPixelFootprintStatus",
     "TsdfPlanBlockRaySurveyReceipt",
+    "TsdfPlanExpansionProposal",
     "TsdfPlanFootprintSurveyReceipt",
     "TsdfPlanTraversalReceipt",
     "TsdfReplayDepthContext",
@@ -177,6 +182,7 @@ __all__ = [
     "MAX_TSDF_PLAN_FOOTPRINT_CANDIDATE_BLOCKS",
     "MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES",
     "plan_tsdf_blocks",
+    "propose_tsdf_plan_expansion_from_domain",
     "reconstruct_point_cloud",
     "replay_session",
     "survey_tsdf_observation_pixel_footprints_from_context",
