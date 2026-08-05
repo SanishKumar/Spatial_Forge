@@ -28,10 +28,7 @@ from spatialforge.tsdf_block_plan_loader import TsdfBlockPlan
 from spatialforge.tsdf_block_traversal import (
     traverse_tsdf_block_voxels_from_context,
 )
-from spatialforge.tsdf_replay_depth_context import (
-    TsdfReplayDepthContext,
-    TsdfReplayDepthStatus,
-)
+from spatialforge.tsdf_replay_depth_context import TsdfReplayDepthContext
 from spatialforge.tsdf_voxel_address import compose_tsdf_global_voxel_index
 from spatialforge.tsdf_voxel_cross_view import (
     TsdfVoxelCrossViewVerdict,

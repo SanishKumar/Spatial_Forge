@@ -28,6 +28,8 @@ from spatialforge.tsdf_plan_footprint_survey import (
 )
 from spatialforge.tsdf_replay_depth_context import TsdfReplayDepthContext
 
+from tests.heavy_fixtures import shared_case
+
 
 TEST_ROOT = Path(__file__).resolve().parent
 FIXTURE = TEST_ROOT / "fixtures" / "minimal.vgsession"
@@ -120,69 +122,6 @@ def resolve_domain(
     )
 
 
-# Resolving a coverage domain costs a full survey plus a whole-domain sweep,
-# and several tests need the same one. Every artifact involved is frozen and
-# nothing here writes, so one shared resolution per (depth, stride) case is
-# both safe and much faster than repeating it per test.
-_CASE_CACHE: dict[
-    tuple[int, int],
-    tuple[
-        Path,
-        TsdfBlockPlan,
-        TsdfReplayDepthContext,
-        TsdfCoverageDomainCrossViewReceipt,
-    ],
-] = {}
-_CASE_ROOTS: list[tempfile.TemporaryDirectory] = []
-
-
-def shared_case(
-    raw_depth: int = 0,
-    frame_stride: int = 1,
-) -> tuple[
-    Path,
-    TsdfBlockPlan,
-    TsdfReplayDepthContext,
-    TsdfCoverageDomainCrossViewReceipt,
-]:
-    """Resolve a case once. ``raw_depth=0`` uses the pristine fixture.
-
-    Rewriting the depth files changes their bytes and therefore the replay
-    and plan digests, so the committed-digest assertions need the fixture
-    untouched.
-    """
-
-    key = (raw_depth, frame_stride)
-    if key not in _CASE_CACHE:
-        holder = tempfile.TemporaryDirectory(dir=TEST_ROOT)
-        _CASE_ROOTS.append(holder)
-        root = Path(holder.name)
-        if raw_depth:
-            session_path = copy_fixture(root)
-            for filename in ("000000.pgm", "000001.pgm"):
-                set_depth_sample(session_path, filename, raw_depth)
-        else:
-            session_path = FIXTURE
-        plan, context = load_case(
-            root,
-            session_path=session_path,
-            frame_stride=frame_stride,
-        )
-        _CASE_CACHE[key] = (
-            root,
-            plan,
-            context,
-            resolve_domain(plan, context),
-        )
-    return _CASE_CACHE[key]
-
-
-def tearDownModule() -> None:
-    _CASE_CACHE.clear()
-    while _CASE_ROOTS:
-        _CASE_ROOTS.pop().cleanup()
-
-
 def tree_snapshot(root: Path) -> dict[str, bytes]:
     return {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -193,14 +132,6 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
 
 def plan_snapshot(plan: TsdfBlockPlan) -> tuple[tuple[str, object], ...]:
     return tuple((field.name, getattr(plan, field.name)) for field in fields(plan))
-
-
-def set_depth_sample(session_path: Path, filename: str, raw_depth: int) -> None:
-    (session_path / "data" / "depth" / filename).write_text(
-        "P2\n2 2\n65535\n"
-        f"{raw_depth} {raw_depth}\n{raw_depth} {raw_depth}\n",
-        encoding="ascii",
-    )
 
 
 @contextmanager
@@ -214,7 +145,8 @@ def forbidden_cli_calls():
 
 class TsdfPlanExpansionTests(unittest.TestCase):
     def test_fixture_plan_already_covers_its_own_domain(self) -> None:
-        temporary_root, plan, _, domain = shared_case()
+        case = shared_case()
+        temporary_root, plan, domain = case.root, case.plan, case.domain
         before_tree = tree_snapshot(temporary_root)
         before_plan = plan_snapshot(plan)
 
@@ -248,7 +180,8 @@ class TsdfPlanExpansionTests(unittest.TestCase):
     def test_far_domain_adds_free_space_blocks_and_prunes_evidence_free_ones(
         self,
     ) -> None:
-        temporary_root, plan, _, domain = shared_case(3000, 2)
+        case = shared_case(3000, 2)
+        temporary_root, plan, domain = case.root, case.plan, case.domain
         before_plan = plan_snapshot(plan)
         before_tree = tree_snapshot(temporary_root)
 
@@ -279,7 +212,8 @@ class TsdfPlanExpansionTests(unittest.TestCase):
         self.assertEqual(after_tree, before_tree)
 
     def test_approval_rule_is_exactly_one_observed_voxel(self) -> None:
-        _, plan, _, domain = shared_case(3000, 2)
+        case = shared_case(3000, 2)
+        plan, domain = case.plan, case.domain
         proposal = propose_tsdf_plan_expansion_from_domain(plan, domain)
 
         approved = set(proposal.approved_block_indices)
@@ -309,7 +243,8 @@ class TsdfPlanExpansionTests(unittest.TestCase):
         cases = ((0, 1, "near"), (3000, 2, "far"))
         for raw_depth, frame_stride, name in cases:
             with self.subTest(name=name):
-                _, plan, _, domain = shared_case(raw_depth, frame_stride)
+                case = shared_case(raw_depth, frame_stride)
+                plan, domain = case.plan, case.domain
                 proposal = propose_tsdf_plan_expansion_from_domain(
                     plan,
                     domain,
@@ -333,8 +268,9 @@ class TsdfPlanExpansionTests(unittest.TestCase):
                 )
 
     def test_proposal_is_bound_to_its_own_coverage_domain(self) -> None:
-        temporary_root, plan, _, domain = shared_case()
-        _, _, _, foreign_domain = shared_case(3000, 2)
+        case = shared_case()
+        temporary_root, plan, domain = case.root, case.plan, case.domain
+        foreign_domain = shared_case(3000, 2).domain
         before_tree = tree_snapshot(temporary_root)
 
         with self.assertRaises(TsdfError) as foreign:
@@ -360,7 +296,8 @@ class TsdfPlanExpansionTests(unittest.TestCase):
         self.assertEqual(after_tree, before_tree)
 
     def test_proposals_are_frozen_slotted_and_strict(self) -> None:
-        _, plan, _, domain = shared_case()
+        case = shared_case()
+        plan, domain = case.plan, case.domain
         proposal = propose_tsdf_plan_expansion_from_domain(plan, domain)
 
         self.assertFalse(hasattr(proposal, "__dict__"))
@@ -389,7 +326,8 @@ class TsdfPlanExpansionTests(unittest.TestCase):
                     replace(proposal, **arguments)
 
     def test_late_proposal_failure_leaves_inputs_unchanged(self) -> None:
-        temporary_root, plan, _, domain = shared_case()
+        case = shared_case()
+        temporary_root, plan, domain = case.root, case.plan, case.domain
         before_tree = tree_snapshot(temporary_root)
         before_plan = plan_snapshot(plan)
         injected = RuntimeError("injected final expansion failure")

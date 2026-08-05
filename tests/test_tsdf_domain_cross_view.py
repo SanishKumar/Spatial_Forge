@@ -34,7 +34,8 @@ from spatialforge.tsdf_plan_traversal import (
     traverse_tsdf_plan_blocks_from_context,
 )
 from spatialforge.tsdf_replay_depth_context import TsdfReplayDepthContext
-from spatialforge.tsdf_voxel_cross_view import TsdfVoxelCrossViewVerdict
+
+from tests.heavy_fixtures import shared_case
 
 
 TEST_ROOT = Path(__file__).resolve().parent
@@ -251,16 +252,10 @@ class TsdfDomainCrossViewTests(unittest.TestCase):
             forbidden_call.assert_not_called()
 
     def test_totals_match_the_fusing_plan_traversal(self) -> None:
-        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            plan, context = load_case(temporary_root)
-            session = load_scan_session(FIXTURE)
-            storage = allocate_empty_tsdf_blocks(plan, session)
-            traversal = traverse_tsdf_plan_blocks_from_context(
-                storage,
-                context,
-            )
-            receipt = sweep_case(plan, context)
+        case = shared_case()
+        plan, context, receipt = case.plan, case.context, case.domain
+        storage = allocate_empty_tsdf_blocks(plan, load_scan_session(FIXTURE))
+        traversal = traverse_tsdf_plan_blocks_from_context(storage, context)
 
         self.assertEqual(receipt.domain_block_indices, plan.active_blocks)
         self.assertEqual(
@@ -281,24 +276,22 @@ class TsdfDomainCrossViewTests(unittest.TestCase):
         )
 
     def test_children_equal_independent_per_block_resolutions(self) -> None:
-        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            plan, context = load_case(temporary_root)
-            receipt = sweep_case(plan, context)
-            expected_first = (
-                classify_tsdf_block_voxels_across_observations_from_context(
-                    plan,
-                    context,
-                    receipt.domain_block_indices[0],
-                )
+        case = shared_case()
+        plan, context, receipt = case.plan, case.context, case.domain
+        expected_first = (
+            classify_tsdf_block_voxels_across_observations_from_context(
+                plan,
+                context,
+                receipt.domain_block_indices[0],
             )
-            expected_last = (
-                classify_tsdf_block_voxels_across_observations_from_context(
-                    plan,
-                    context,
-                    receipt.domain_block_indices[-1],
-                )
+        )
+        expected_last = (
+            classify_tsdf_block_voxels_across_observations_from_context(
+                plan,
+                context,
+                receipt.domain_block_indices[-1],
             )
+        )
 
         self.assertEqual(receipt.block_receipts[0], expected_first)
         self.assertEqual(receipt.block_receipts[-1], expected_last)
@@ -485,9 +478,7 @@ class TsdfDomainCrossViewTests(unittest.TestCase):
         self.assertEqual(after_tree, before_tree)
 
     def test_receipts_are_frozen_slotted_and_strict(self) -> None:
-        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
-            plan, context = load_case(Path(temporary_directory))
-            receipt = sweep_case(plan, context)
+        receipt = shared_case().domain
 
         self.assertFalse(hasattr(receipt, "__dict__"))
         with self.assertRaises(FrozenInstanceError):

@@ -334,7 +334,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "surface-points":
             return _run_surface_points(arguments.path, arguments.output)
-        return _run_triangle_mesh(arguments.path, arguments.output)
+        if arguments.reconstruct_command == "triangle-mesh":
+            return _run_triangle_mesh(arguments.path, arguments.output)
+        raise AssertionError(
+            "unrouted reconstruct command "
+            f"{arguments.reconstruct_command!r}"
+        )
     return _run_scan(arguments)
 
 
