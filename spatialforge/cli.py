@@ -55,6 +55,10 @@ from .tsdf_observation_footprint import (
     MAX_TSDF_OBSERVATION_FOOTPRINT_CANDIDATE_BLOCKS,
     survey_tsdf_observation_pixel_footprints_from_context,
 )
+from .tsdf_plan_footprint_survey import (
+    MAX_TSDF_PLAN_FOOTPRINT_CANDIDATE_BLOCKS,
+    survey_tsdf_plan_pixel_footprints_from_context,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     classify_tsdf_voxel_across_observations_from_context,
@@ -256,6 +260,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.observation_sequence,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-plan-footprint"
+        ):
+            return _run_tsdf_block_context_plan_footprint(
+                arguments.plan,
+                arguments.session,
             )
         if (
             arguments.reconstruct_command
@@ -1011,6 +1023,33 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="Exactly one nonnegative plan-selected observation sequence.",
+    )
+
+    block_context_plan_footprint = reconstruct_commands.add_parser(
+        "tsdf-block-context-plan-footprint",
+        help=(
+            "Cover every selected observation's conservative pixel wedges."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, and conservatively cover the "
+            "nearest-pixel sampling wedges of every pixel of every "
+            "plan-selected observation. The union is partitioned into "
+            "existing and unplanned coordinates and contains the "
+            "corresponding centreline ray coverage; it does not approve "
+            "coverage, expand the plan, allocate TSDF storage, fuse voxels, "
+            "or write an artifact."
+        ),
+    )
+    block_context_plan_footprint.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_plan_footprint.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
     )
 
     block_context_voxel_sampling = reconstruct_commands.add_parser(
@@ -3635,6 +3674,199 @@ def _run_tsdf_block_context_observation_footprint(
     )
     print("multi_observation_coverage_computed: no", file=sys.stdout)
     print("per_voxel_verdict_applied: no", file=sys.stdout)
+    print("occlusion_rule_defined: no", file=sys.stdout)
+    print("visibility_culling_rule_defined: no", file=sys.stdout)
+    print("coverage_approved_for_expansion: no", file=sys.stdout)
+    print("free_space_carving_applied: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_plan_footprint(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = survey_tsdf_plan_pixel_footprints_from_context(
+            plan,
+            context,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN FOOTPRINT FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN FOOTPRINT FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    status_counts = dict(receipt.observation_status_counts)
+    print(
+        f"TSDF BLOCK CONTEXT PLAN FOOTPRINT CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "observations: "
+        f"selected={receipt.observation_count} "
+        f"surveyed={receipt.surveyed_observation_count} "
+        + " ".join(
+            f"{status.value.replace('-', '_')}="
+            f"{status_counts.get(status, 0)}"
+            for status in TsdfReplayDepthStatus
+        ),
+        file=sys.stdout,
+    )
+    print(
+        "observation_order: canonical-frame-stride "
+        f"sequences={receipt.selected_observation_sequences[0]}.."
+        f"{receipt.selected_observation_sequences[-1]}",
+        file=sys.stdout,
+    )
+    print(
+        "image: "
+        f"width={receipt.image_size[0]} "
+        f"height={receipt.image_size[1]}",
+        file=sys.stdout,
+    )
+    print(
+        "pixel_outcomes: "
+        f"total={receipt.pixel_count} "
+        f"covered={receipt.covered_pixel_count} "
+        f"depth_invalid={receipt.depth_invalid_count}",
+        file=sys.stdout,
+    )
+    print(
+        "candidate_blocks: "
+        f"total={receipt.candidate_block_count} "
+        f"rejected={receipt.rejected_candidate_count}",
+        file=sys.stdout,
+    )
+    print(
+        "pixel_block_visits: "
+        f"total={receipt.block_visit_count} "
+        f"unique={len(receipt.covered_block_indices)} "
+        f"duplicate={receipt.duplicate_block_visit_count} "
+        f"maximum_per_pixel={receipt.maximum_blocks_per_pixel}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_blocks: "
+        f"total={len(receipt.covered_block_indices)} "
+        f"centerline={len(receipt.centerline_block_indices)} "
+        f"footprint_only={len(receipt.footprint_only_block_indices)}",
+        file=sys.stdout,
+    )
+    print("centerline_contained_in_coverage: yes", file=sys.stdout)
+    print(
+        "widens_centerline_coverage: "
+        f"{'yes' if receipt.widens_centerline_coverage else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_partition: "
+        f"existing_plan={len(receipt.existing_plan_block_indices)} "
+        f"unplanned={len(receipt.unplanned_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_support: "
+        f"multi_observation={len(receipt.multi_observation_block_indices)} "
+        f"maximum_observations={receipt.maximum_block_observation_count}",
+        file=sys.stdout,
+    )
+    print("coverage_order: canonical-x-fastest", file=sys.stdout)
+    if receipt.covered_block_indices:
+        print(
+            f"first_covered_block: {receipt.covered_block_indices[0]}",
+            file=sys.stdout,
+        )
+        print(
+            f"last_covered_block: {receipt.covered_block_indices[-1]}",
+            file=sys.stdout,
+        )
+    else:
+        print("first_covered_block: none", file=sys.stdout)
+        print("last_covered_block: none", file=sys.stdout)
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "footprint_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("footprint_session_replay: no", file=sys.stdout)
+    print("footprint_replay_hashing: no", file=sys.stdout)
+    print("footprint_source_io: no", file=sys.stdout)
+    print("footprint_depth_decoding: no", file=sys.stdout)
+    print(
+        "footprint_prepared_depth_access: "
+        f"{'yes' if receipt.prepared_depth_accessed else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "footprint_workload: "
+        f"candidate_blocks={receipt.candidate_block_count} "
+        f"maximum={MAX_TSDF_PLAN_FOOTPRINT_CANDIDATE_BLOCKS}",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_scope: all-plan-selected-observations-all-pixels",
+        file=sys.stdout,
+    )
+    print(
+        "sampling_rule: nearest-pixel-half-open-unit-square",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_rule: conservative-plane-superset-of-half-open-cells",
+        file=sys.stdout,
+    )
+    print(
+        "conservative_nearest_pixel_footprint_coverage_computed: "
+        f"{'yes' if receipt.covered_pixel_count else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "multiple_observation_coverage_computed: "
+        f"{'yes' if receipt.surveyed_observation_count > 1 else 'no'}",
+        file=sys.stdout,
+    )
+    print("all_selected_observations_surveyed: yes", file=sys.stdout)
+    print("per_voxel_verdict_applied: no", file=sys.stdout)
+    print("carvable_free_space_set_computed: no", file=sys.stdout)
     print("occlusion_rule_defined: no", file=sys.stdout)
     print("visibility_culling_rule_defined: no", file=sys.stdout)
     print("coverage_approved_for_expansion: no", file=sys.stdout)

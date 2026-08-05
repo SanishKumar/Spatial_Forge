@@ -97,6 +97,11 @@ The project is intentionally advancing through small, testable checkpoints.
   re-deriving the canonical union and its existing/unplanned partition, and
   proved to contain the independent centreline ray union, without approving
   coverage, expanding the plan, allocating storage, or fusing voxels.
+- The same conservative footprint coverage unioned across the plan's complete
+  canonical selected-observation tuple, retaining every observation
+  transcript, re-deriving the canonical union, its existing/unplanned
+  partition and per-block observation support, and proved to contain the
+  independent all-observation centreline survey union.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -110,9 +115,8 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. aggregate conservative footprint coverage across the complete
-   selected-observation tuple, then apply the cross-view verdict across the
-   covered voxels to produce a carvable free-space set;
+1. apply the cross-view verdict across the voxels of the surveyed covered
+   domain to produce a carvable free-space set;
 2. define how approved coverage coordinates become a canonical expanded
    fusion domain while invalid or absent depth remains unknown rather than
    free;
@@ -174,8 +178,8 @@ application, context-backed single-voxel traversal, context-backed
 single-selected-block traversal, context-backed existing-plan traversal,
 one-observation context-backed block-ray tracing, complete selected-observation
 block-ray survey, conservative one-pixel footprint coverage, per-voxel
-sampling classification, cross-view voxel resolution, one-observation
-footprint coverage,
+sampling classification, cross-view voxel resolution, one-observation and
+whole-scan footprint coverage,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

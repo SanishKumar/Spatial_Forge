@@ -213,14 +213,16 @@ cases it cannot:
 
 ## Precisely deferred next phases
 
-Coverage is now computed over the complete selection, but nothing consumes it,
-and every coordinate here still comes from a thin centreline.
-[`tsdf-pixel-footprint-coverage.md`](tsdf-pixel-footprint-coverage.md) now
-defines the conservative nearest-pixel rule for one pixel; aggregating that
-rule across a whole observation and then this complete selection is a separate
-later checkpoint, as are the frustum, visibility, occlusion, and culling
-semantics a real free-space rule needs. Only after that should approved
-coordinates become a canonical expanded fusion domain.
+Every coordinate here comes from a thin centreline.
+[`tsdf-plan-footprint-survey.md`](tsdf-plan-footprint-survey.md) now covers
+the same selection conservatively, and is tested to contain this survey's
+union exactly. Prefer it when the question is which blocks a measurement could
+sample; this centreline survey remains the cheaper, narrower diagnostic and
+the independent check on that containment.
+
+The frustum, visibility, occlusion, and culling semantics a real free-space
+rule needs remain deferred, and no coverage from either survey is yet approved
+as an expanded fusion domain.
 
 Later checkpoints remain for:
 

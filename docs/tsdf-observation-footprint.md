@@ -136,8 +136,10 @@ rollback to perform. Runtime is the sum of the per-pixel candidate counts.
 
 ## Precisely deferred next phases
 
-1. aggregate this coverage across the complete selected-observation tuple;
-2. apply the cross-view verdict across the voxels of the covered domain to
+This coverage is now aggregated across the complete selected-observation tuple
+by [`tsdf-plan-footprint-survey.md`](tsdf-plan-footprint-survey.md).
+
+1. apply the cross-view verdict across the voxels of the covered domain to
    produce a carvable free-space set;
 3. combine approved coverage with the surface/truncation plan, allocate
    missing blocks, and preserve per-observation provenance;

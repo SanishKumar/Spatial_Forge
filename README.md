@@ -1116,6 +1116,45 @@ coverage: invalid depth reduces evidence, never invents free space. The exact
 contract is in
 [`docs/tsdf-observation-footprint.md`](docs/tsdf-observation-footprint.md).
 
+Union that coverage across every selected observation:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-plan-footprint `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession
+```
+
+Key fixture output is:
+
+```text
+observations: selected=2 surveyed=2 ready=2 missing_depth=0 missing_pose=0 missing_depth_and_pose=0
+pixel_outcomes: total=8 covered=8 depth_invalid=0
+candidate_blocks: total=36 rejected=0
+pixel_block_visits: total=36 unique=8 duplicate=28 maximum_per_pixel=8
+coverage_blocks: total=8 centerline=8 footprint_only=0
+centerline_contained_in_coverage: yes
+coverage_partition: existing_plan=8 unplanned=0
+coverage_support: multi_observation=8 maximum_observations=2
+all_selected_observations_surveyed: yes
+per_voxel_verdict_applied: no
+carvable_free_space_set_computed: no
+plan_expanded: no
+```
+
+This completes the coverage ladder: pixel wedge, then one observation, now the
+whole selection. It is the conservative counterpart of the centreline survey
+above, and the containment is checked against it — the centreline survey's own
+union must equal the union of the children's re-derived centrelines and be a
+subset of this coverage, at both 1.0 m and 3.0 m.
+
+The fixture again cannot show widening (eight centrelines already reach all
+eight blocks). A focused test measures both observations at 3.0 m, where it is
+decisive: **52 covered coordinates against the centrelines' 16**, so a
+thin-ray plan expansion would have missed 36 blocks a nearest-pixel
+measurement can genuinely sample; 20 of the 52 are unplanned and the plan is
+byte-identical afterwards. The exact contract is in
+[`docs/tsdf-plan-footprint-survey.md`](docs/tsdf-plan-footprint-survey.md).
+
 Classify how one observation samples one voxel centre, planned or not:
 
 ```powershell
@@ -1209,10 +1248,10 @@ weight 2 cannot tell you whether that meant two band observations, two
 free-space observations, or one of each. The exact contract is in
 [`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md).
 
-Applying this verdict across voxels to produce a carvable set, aggregating
-footprint coverage across the complete selected-observation tuple, plan
-expansion, observation idempotency, complete fusion, confidence weighting,
-persistence, and optimization remain separate later checkpoints.
+Applying this verdict across the voxels of the surveyed domain to produce a
+carvable set, plan expansion, observation idempotency, complete fusion,
+confidence weighting, persistence, and optimization remain separate later
+checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1274,6 +1313,8 @@ conservative one-pixel footprint coverage is in
 [`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md),
 its one-observation union is in
 [`docs/tsdf-observation-footprint.md`](docs/tsdf-observation-footprint.md),
+its whole-scan union is in
+[`docs/tsdf-plan-footprint-survey.md`](docs/tsdf-plan-footprint-survey.md),
 per-voxel sampling classification is in
 [`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md),
 cross-view voxel resolution is in
