@@ -132,10 +132,11 @@ selection is rejected up front rather than part-way through.
 
 ## Precisely deferred next phases
 
-1. sweep this verdict across every block of the surveyed coverage domain from
-   [`tsdf-plan-footprint-survey.md`](tsdf-plan-footprint-survey.md) to produce
-   a whole-scan carvable set;
-2. combine approved coverage with the surface/truncation plan, allocate
+This block rule is now swept across the whole surveyed coverage domain by
+[`tsdf-domain-cross-view.md`](tsdf-domain-cross-view.md), producing the
+whole-scan carvable set.
+
+1. combine approved coverage with the surface/truncation plan, allocate
    missing blocks, and preserve per-observation provenance;
 3. explicit idempotency and resumable/nonempty fusion over that domain;
 4. complete fusion diagnostics, persistent block-backed TSDF artifacts,

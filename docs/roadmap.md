@@ -106,6 +106,11 @@ The project is intentionally advancing through small, testable checkpoints.
   planned or not, separating surface, carvable free space, occlusion and
   absence, and proved voxel-by-voxel to reproduce the fusing block traversal's
   exact weights and float64 sums across every active block.
+- Cross-view resolution swept across the whole surveyed coverage domain,
+  binding the conservative footprint survey's provenance to the verdict
+  rule, producing the whole-scan carvable free-space set split by plan
+  membership, and reproducing the fusing plan traversal's exact weight
+  total, observed-voxel count and maximum weight.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -119,26 +124,23 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. sweep the cross-view verdict across every block of the surveyed coverage
-   domain to produce a whole-scan carvable free-space set;
-2. define how approved coverage coordinates become a canonical expanded
-   fusion domain while invalid or absent depth remains unknown rather than
-   free;
-3. replace the empty-storage guard with explicit observation provenance,
+1. combine the approved coverage with the surface/truncation plan, allocate
+   the missing blocks, and preserve per-observation provenance;
+2. replace the empty-storage guard with explicit observation provenance,
    idempotency, and resumable/nonempty fusion, then define complete fusion
    diagnostics over the chosen spatial domain;
-4. persist a block-backed TSDF artifact and connect normalization plus sparse
+3. persist a block-backed TSDF artifact and connect normalization plus sparse
    surface/mesh consumers;
-5. add culled, scalable sparse traversal and an optimized backend suitable for
+4. add culled, scalable sparse traversal and an optimized backend suitable for
    full sequences;
-6. add confidence and sensor-dependent weighting, robust depth/pose outlier
+5. add confidence and sensor-dependent weighting, robust depth/pose outlier
    filtering, the visibility/culling policy, and configurable production
    bounds;
-7. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
-8. refine production meshing with exact-zero cells, normals,
+6. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
+7. refine production meshing with exact-zero cells, normals,
    connected-component and quality validation, and optimized extraction;
-9. add gravity/floor alignment, floor and wall candidates, and openings; and
-10. add a top-down/3D Inspector view.
+8. add gravity/floor alignment, floor and wall candidates, and openings; and
+9. add a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -183,7 +185,8 @@ single-selected-block traversal, context-backed existing-plan traversal,
 one-observation context-backed block-ray tracing, complete selected-observation
 block-ray survey, conservative one-pixel footprint coverage, per-voxel
 sampling classification, cross-view voxel and block resolution,
-one-observation and whole-scan footprint coverage,
+one-observation and whole-scan footprint coverage, whole-scan carvable
+free space,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

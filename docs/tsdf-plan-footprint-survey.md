@@ -141,9 +141,11 @@ it:
 
 ## Precisely deferred next phases
 
-1. apply the cross-view voxel verdict across the voxels of this covered domain
-   to produce a carvable free-space set;
-2. combine approved coverage with the surface/truncation plan, allocate
+The cross-view verdict is now applied across this domain by
+[`tsdf-domain-cross-view.md`](tsdf-domain-cross-view.md), which turns this
+coverage into the whole-scan carvable free-space set.
+
+1. combine approved coverage with the surface/truncation plan, allocate
    missing blocks, and preserve per-observation provenance;
 3. explicit idempotency and resumable/nonempty fusion over that domain;
 4. complete fusion diagnostics, persistent block-backed TSDF artifacts,

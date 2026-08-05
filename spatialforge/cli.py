@@ -63,6 +63,10 @@ from .tsdf_block_cross_view import (
     MAX_TSDF_BLOCK_CROSS_VIEW_OUTCOMES,
     classify_tsdf_block_voxels_across_observations_from_context,
 )
+from .tsdf_domain_cross_view import (
+    MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES,
+    sweep_tsdf_coverage_domain_cross_view_from_context,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     classify_tsdf_voxel_across_observations_from_context,
@@ -300,6 +304,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.block,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-domain-cross-view"
+        ):
+            return _run_tsdf_block_context_domain_cross_view(
+                arguments.plan,
+                arguments.session,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1172,6 +1184,33 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar=("BX", "BY", "BZ"),
         help="Exactly one signed block XYZ, planned or not.",
+    )
+
+    block_context_domain_cross_view = reconstruct_commands.add_parser(
+        "tsdf-block-context-domain-cross-view",
+        help=(
+            "Resolve every voxel of the surveyed coverage domain."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, prepare one "
+            "immutable replay/depth context, survey the conservative "
+            "footprint coverage of every selected observation, and resolve "
+            "every voxel of that covered domain across all observations. "
+            "This reports the whole-scan carvable free-space set and how "
+            "much of it falls in blocks the plan does not have; it does not "
+            "carve, expand the plan, allocate TSDF storage, fuse voxels, or "
+            "write an artifact."
+        ),
+    )
+    block_context_domain_cross_view.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_domain_cross_view.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -4092,6 +4131,178 @@ def _run_tsdf_block_context_voxel_cross_view(
     print("full_fusion_performed: no", file=sys.stdout)
     print("artifact_written: no", file=sys.stdout)
     print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_domain_cross_view(
+    plan_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        coverage = survey_tsdf_plan_pixel_footprints_from_context(
+            plan,
+            context,
+        )
+        receipt = sweep_tsdf_coverage_domain_cross_view_from_context(
+            plan,
+            context,
+            coverage,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT DOMAIN CROSS-VIEW FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT DOMAIN CROSS-VIEW FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT DOMAIN CROSS-VIEW CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "coverage_source: conservative-pixel-footprint-survey",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_domain: "
+        f"blocks={receipt.block_count} "
+        f"existing_plan={len(receipt.existing_plan_block_indices)} "
+        f"unplanned={len(receipt.unplanned_block_indices)}",
+        file=sys.stdout,
+    )
+    print(
+        "domain_voxels: "
+        f"total={receipt.voxel_count} "
+        f"observations={receipt.observation_count}",
+        file=sys.stdout,
+    )
+    print("block_order: canonical-x-fastest", file=sys.stdout)
+    print(
+        "voxel_order: canonical-local-flat-x-fastest local_flat=0..511",
+        file=sys.stdout,
+    )
+    print(
+        "voxel_verdicts: "
+        f"surface={receipt.surface_voxel_count} "
+        f"free_space={receipt.free_space_voxel_count} "
+        f"occluded={receipt.occluded_voxel_count} "
+        f"unseen={receipt.unseen_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"observed_voxels: {receipt.observed_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "carvable_free_space_voxels: "
+        f"total={receipt.carvable_free_space_voxel_count} "
+        f"in_plan={receipt.planned_carvable_voxel_count} "
+        f"unplanned={receipt.unplanned_carvable_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "carvable_blocks: "
+        f"total={len(receipt.carvable_blocks)} "
+        f"unplanned={len(receipt.unplanned_carvable_blocks)}",
+        file=sys.stdout,
+    )
+    print(
+        f"reference_weight_total: {receipt.reference_weight_total}",
+        file=sys.stdout,
+    )
+    print(
+        f"reference_tsdf_sum_total: {receipt.reference_tsdf_sum_total:.9f}",
+        file=sys.stdout,
+    )
+    print(
+        "planned_reference_weight_total: "
+        f"{receipt.planned_reference_weight_total}",
+        file=sys.stdout,
+    )
+    print(
+        "planned_observed_voxels: "
+        f"{receipt.planned_observed_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"maximum_voxel_weight: {receipt.maximum_voxel_weight}",
+        file=sys.stdout,
+    )
+    print(
+        "verdict_precedence: surface-then-free-space-then-occluded-then-"
+        "unseen",
+        file=sys.stdout,
+    )
+    print(
+        "occlusion_rule: carries-no-evidence-never-becomes-free-space",
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "cross_view_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("cross_view_session_replay: no", file=sys.stdout)
+    print("cross_view_replay_hashing: no", file=sys.stdout)
+    print("cross_view_source_io: no", file=sys.stdout)
+    print("cross_view_depth_decoding: no", file=sys.stdout)
+    print(
+        "cross_view_workload: "
+        f"retained_outcomes={receipt.retained_outcome_count} "
+        f"maximum={MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES}",
+        file=sys.stdout,
+    )
+    print(
+        "cross_view_scope: surveyed-coverage-domain-all-voxels",
+        file=sys.stdout,
+    )
+    print("unplanned_blocks_accepted: yes", file=sys.stdout)
+    print(
+        "whole_scan_carvable_set_computed: "
+        f"{'yes' if receipt.carvable_free_space_voxel_count else 'no'}",
+        file=sys.stdout,
+    )
+    print("confidence_or_sensor_weighting_applied: no", file=sys.stdout)
+    print("visibility_culling_rule_defined: no", file=sys.stdout)
+    print("coverage_approved_for_expansion: no", file=sys.stdout)
+    print("free_space_carving_applied: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
     print(
         f"plan_sha256: {receipt.source_plan_digest_sha256}",
         file=sys.stdout,

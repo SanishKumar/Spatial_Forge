@@ -78,6 +78,11 @@ from .tsdf_block_cross_view import (
     TsdfBlockCrossViewReceipt,
     classify_tsdf_block_voxels_across_observations_from_context,
 )
+from .tsdf_domain_cross_view import (
+    MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES,
+    TsdfCoverageDomainCrossViewReceipt,
+    sweep_tsdf_coverage_domain_cross_view_from_context,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     TsdfVoxelCrossViewReceipt,
@@ -118,6 +123,7 @@ __all__ = [
     "TsdfBlockStorage",
     "TsdfBlockTraversalReceipt",
     "TsdfContributionStatus",
+    "TsdfCoverageDomainCrossViewReceipt",
     "TsdfObservationBlockRayReceipt",
     "TsdfObservationBlockRayStatus",
     "TsdfObservationBlockRayTraceReceipt",
@@ -160,6 +166,7 @@ __all__ = [
     "load_tsdf_block_plan",
     "locate_tsdf_voxel",
     "MAX_TSDF_BLOCK_CROSS_VIEW_OUTCOMES",
+    "MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES",
     "MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS",
     "MAX_TSDF_VOXEL_WEIGHT",
     "MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES",
@@ -175,6 +182,7 @@ __all__ = [
     "survey_tsdf_observation_pixel_footprints_from_context",
     "survey_tsdf_plan_block_rays_from_context",
     "survey_tsdf_plan_pixel_footprints_from_context",
+    "sweep_tsdf_coverage_domain_cross_view_from_context",
     "trace_tsdf_observation_block_rays_from_context",
     "traverse_tsdf_block_voxels_from_context",
     "traverse_tsdf_plan_blocks_from_context",

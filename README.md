@@ -1293,9 +1293,50 @@ blocks, every voxel's derived weight and float64 sum must equal the
 in the same canonical order. The exact contract is in
 [`docs/tsdf-block-cross-view.md`](docs/tsdf-block-cross-view.md).
 
-Sweeping this across every block of the surveyed domain, plan expansion,
-observation idempotency, complete fusion, confidence weighting, persistence,
-and optimization remain separate later checkpoints.
+Now run that verdict over the whole surveyed coverage domain:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-domain-cross-view `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession
+```
+
+Key fixture output is:
+
+```text
+coverage_source: conservative-pixel-footprint-survey
+coverage_domain: blocks=8 existing_plan=8 unplanned=0
+domain_voxels: total=4096 observations=2
+voxel_verdicts: surface=560 free_space=24 occluded=792 unseen=2720
+observed_voxels: 584
+carvable_free_space_voxels: total=24 in_plan=24 unplanned=0
+carvable_blocks: total=4 unplanned=0
+reference_weight_total: 1168
+whole_scan_carvable_set_computed: yes
+coverage_approved_for_expansion: no
+free_space_carving_applied: no
+plan_expanded: no
+```
+
+This joins the two ladders: the coverage survey says which blocks a
+measurement could sample, the cross-view rule says what each voxel in them
+actually is. The domain is taken from the survey receipt, not from a caller —
+a survey built against a different plan is rejected rather than silently
+mixed.
+
+`reference_weight_total: 1168` and `observed_voxels: 584` are exactly what the
+fusing plan traversal writes into storage, which is how the sweep stays
+anchored to reality across thousands of voxels.
+
+The fixture's domain sits entirely inside its plan, so nothing interesting is
+outside it. A focused test measures both observations at 3.0 m: **1,376 of the
+2,680 carvable voxels — in 8 blocks — lie outside the current plan.** The
+surface/truncation planner never had a reason to allocate them, and that gap
+is exactly what plan expansion has to close. The exact contract is in
+[`docs/tsdf-domain-cross-view.md`](docs/tsdf-domain-cross-view.md).
+
+Plan expansion, observation idempotency, complete fusion, confidence
+weighting, persistence, and optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1365,6 +1406,8 @@ cross-view voxel resolution is in
 [`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md),
 its block-wide sweep is in
 [`docs/tsdf-block-cross-view.md`](docs/tsdf-block-cross-view.md),
+the whole-scan carvable free-space sweep is in
+[`docs/tsdf-domain-cross-view.md`](docs/tsdf-domain-cross-view.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
