@@ -240,9 +240,11 @@ its pixel's closed wedge must have its block in that pixel's coverage here.
 1. define the cross-view rule combining free space, surface band, and
    occlusion from several observations, then the occlusion, visibility, and
    culling semantics that follow;
-2. aggregate footprint coverage across a whole observation and then the
-   complete selected-observation tuple, alongside the existing centreline
-   survey in [`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md);
+2. aggregate footprint coverage across the complete selected-observation
+   tuple — the one-observation union already exists in
+   [`tsdf-observation-footprint.md`](tsdf-observation-footprint.md), alongside
+   the centreline survey in
+   [`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md);
 3. combine approved coverage with the surface/truncation plan, allocate
    missing blocks, and preserve per-observation provenance;
 4. explicit idempotency and resumable/nonempty fusion over that chosen domain;

@@ -45,6 +45,11 @@ from .tsdf_pixel_footprint_coverage import (
     TsdfPixelFootprintStatus,
     evaluate_tsdf_pixel_footprint_coverage_from_context,
 )
+from .tsdf_observation_footprint import (
+    MAX_TSDF_OBSERVATION_FOOTPRINT_CANDIDATE_BLOCKS,
+    TsdfObservationFootprintReceipt,
+    survey_tsdf_observation_pixel_footprints_from_context,
+)
 from .tsdf_replay_depth_context import (
     MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES,
     TsdfReplayDepthContext,
@@ -105,6 +110,7 @@ __all__ = [
     "TsdfObservationBlockRayReceipt",
     "TsdfObservationBlockRayStatus",
     "TsdfObservationBlockRayTraceReceipt",
+    "TsdfObservationFootprintReceipt",
     "TsdfPixelFootprintCoverageReceipt",
     "TsdfPixelFootprintStatus",
     "TsdfPlanBlockRaySurveyReceipt",
@@ -144,12 +150,14 @@ __all__ = [
     "MAX_TSDF_VOXEL_WEIGHT",
     "MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES",
     "MAX_TSDF_OBSERVATION_BLOCK_RAY_OUTCOMES",
+    "MAX_TSDF_OBSERVATION_FOOTPRINT_CANDIDATE_BLOCKS",
     "MAX_TSDF_PIXEL_FOOTPRINT_CANDIDATE_BLOCKS",
     "MAX_TSDF_PLAN_BLOCK_RAY_SURVEY_OUTCOMES",
     "MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES",
     "plan_tsdf_blocks",
     "reconstruct_point_cloud",
     "replay_session",
+    "survey_tsdf_observation_pixel_footprints_from_context",
     "survey_tsdf_plan_block_rays_from_context",
     "trace_tsdf_observation_block_rays_from_context",
     "traverse_tsdf_block_voxels_from_context",

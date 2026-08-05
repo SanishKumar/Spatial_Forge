@@ -272,9 +272,11 @@ expanded plan.
 
 The conservative nearest-pixel coverage this file says it does not provide is
 now defined for one pixel in
-[`tsdf-pixel-footprint-coverage.md`](tsdf-pixel-footprint-coverage.md). That
-rule covers the pixel's whole sampling wedge and provably contains the
-centreline path traced here.
+[`tsdf-pixel-footprint-coverage.md`](tsdf-pixel-footprint-coverage.md), and
+unioned across a whole observation in
+[`tsdf-observation-footprint.md`](tsdf-observation-footprint.md). Those rules
+cover each pixel's whole sampling wedge and are tested to contain the
+centreline coverage traced here.
 
 Later checkpoints remain for:
 

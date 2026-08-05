@@ -1074,6 +1074,48 @@ rejected, 13 unplanned, plan unchanged). Covering a block still does not prove
 every voxel in it is free space. The exact contract is in
 [`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md).
 
+Union that wedge rule across every pixel of one observation:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-observation-footprint `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --observation-sequence 0
+```
+
+Key fixture output is:
+
+```text
+pixel_outcomes: total=4 covered=4 depth_invalid=0
+candidate_blocks: total=18 rejected=0
+pixel_block_visits: total=18 unique=8 duplicate=10 maximum_per_pixel=8
+coverage_blocks: total=8 centerline=8 footprint_only=0
+centerline_contained_in_coverage: yes
+widens_centerline_coverage: no
+coverage_partition: existing_plan=8 unplanned=0
+coverage_support: maximum_pixels_per_block=4
+multi_observation_coverage_computed: no
+per_voxel_verdict_applied: no
+plan_expanded: no
+storage_mutated: no
+```
+
+This is the conservative counterpart of the centreline ray trace over the same
+observation. Note `widens_centerline_coverage: no`: per pixel the wedge is
+strictly wider — pixel `(1, 1)` covers 8 blocks against its centreline's 3 —
+but this 2x2 image's four centrelines already reach all eight blocks, so the
+observation-level union does not grow here. A focused test measures the same
+observation at 3.0 m, where it does: 52 covered blocks against the centrelines'
+16, with 20 unplanned and the plan byte-identical afterwards.
+
+The containment claim is checked against an independent implementation rather
+than asserted — the centreline ray trace's own union must equal the union of
+the children's re-derived centrelines, and must be a subset of the footprint
+coverage. Blanking one pixel's depth yields a `depth-invalid` child with no
+coverage: invalid depth reduces evidence, never invents free space. The exact
+contract is in
+[`docs/tsdf-observation-footprint.md`](docs/tsdf-observation-footprint.md).
+
 Classify how one observation samples one voxel centre, planned or not:
 
 ```powershell
@@ -1167,10 +1209,10 @@ weight 2 cannot tell you whether that meant two band observations, two
 free-space observations, or one of each. The exact contract is in
 [`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md).
 
-Applying this verdict across voxels to produce a carvable set, multi-pixel and
-multi-observation footprint aggregation, plan expansion, observation
-idempotency, complete fusion, confidence weighting, persistence, and
-optimization remain separate later checkpoints.
+Applying this verdict across voxels to produce a carvable set, aggregating
+footprint coverage across the complete selected-observation tuple, plan
+expansion, observation idempotency, complete fusion, confidence weighting,
+persistence, and optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1230,6 +1272,8 @@ the complete selected-observation block-ray survey is in
 [`docs/tsdf-plan-block-ray-survey.md`](docs/tsdf-plan-block-ray-survey.md),
 conservative one-pixel footprint coverage is in
 [`docs/tsdf-pixel-footprint-coverage.md`](docs/tsdf-pixel-footprint-coverage.md),
+its one-observation union is in
+[`docs/tsdf-observation-footprint.md`](docs/tsdf-observation-footprint.md),
 per-voxel sampling classification is in
 [`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md),
 cross-view voxel resolution is in
