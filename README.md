@@ -1248,10 +1248,54 @@ weight 2 cannot tell you whether that meant two band observations, two
 free-space observations, or one of each. The exact contract is in
 [`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md).
 
-Applying this verdict across the voxels of the surveyed domain to produce a
-carvable set, plan expansion, observation idempotency, complete fusion,
-confidence weighting, persistence, and optimization remain separate later
-checkpoints.
+Sweep that verdict across a whole block for the first carvable free-space set:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-block-cross-view `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --block 0 0 0
+```
+
+Key fixture output is:
+
+```text
+block: index=(0, 0, 0) resolution=8 voxels=512
+block_planned: yes
+voxel_order: canonical-local-flat-x-fastest local_flat=0..511
+voxel_verdicts: surface=38 free_space=6 occluded=0 unseen=468
+observed_voxels: 44
+carvable_free_space_voxels: 6
+reference_weight_total: 88
+maximum_voxel_weight: 2
+cross_view_workload: retained_outcomes=1024 maximum=262144
+carvable_free_space_set_computed: yes
+multi_block_cross_view_computed: no
+free_space_carving_applied: no
+plan_expanded: no
+storage_mutated: no
+```
+
+A fused block row holds 512 sums and weights and cannot tell you whether a
+weight came from surface-band or free-space observations, nor whether an empty
+slot was occluded or simply never looked at. This separates all four, and
+`carvable_free_space_voxels` is the set a carving step would be entitled to
+mark empty.
+
+Try three blocks to see the distinction: `--block 1 -1 -1` sits on the surface
+(102 surface voxels, nothing carvable), `--block 0 0 0` sits between camera and
+surface (the 6 carvable voxels above), and `--block 7 0 0` is unplanned and
+behind the surface (512 occluded, nothing carvable, plan untouched).
+
+Correctness is anchored to what fusion actually writes: for all eight active
+blocks, every voxel's derived weight and float64 sum must equal the
+`weight_after` and `tsdf_sum_after` that the mutating block traversal produces,
+in the same canonical order. The exact contract is in
+[`docs/tsdf-block-cross-view.md`](docs/tsdf-block-cross-view.md).
+
+Sweeping this across every block of the surveyed domain, plan expansion,
+observation idempotency, complete fusion, confidence weighting, persistence,
+and optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1319,6 +1363,8 @@ per-voxel sampling classification is in
 [`docs/tsdf-voxel-sampling.md`](docs/tsdf-voxel-sampling.md),
 cross-view voxel resolution is in
 [`docs/tsdf-voxel-cross-view.md`](docs/tsdf-voxel-cross-view.md),
+its block-wide sweep is in
+[`docs/tsdf-block-cross-view.md`](docs/tsdf-block-cross-view.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

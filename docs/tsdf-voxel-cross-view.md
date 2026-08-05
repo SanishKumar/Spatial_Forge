@@ -152,9 +152,13 @@ missing input reduces evidence without inverting a verdict.
 
 ## Precisely deferred next phases
 
-1. aggregate conservative footprint coverage across one observation and then
-   the complete selected-observation tuple, then apply this verdict across
-   voxels to produce a carvable set;
+This verdict is now swept across a whole block by
+[`tsdf-block-cross-view.md`](tsdf-block-cross-view.md), which produces the
+first carvable free-space set and re-proves the fused-row agreement voxel by
+voxel.
+
+1. sweep that block rule across every block of the surveyed coverage domain
+   for a whole-scan carvable set;
 2. combine approved coverage with the surface/truncation plan, allocate
    missing blocks, and preserve per-observation provenance;
 3. explicit idempotency and resumable/nonempty fusion over that domain;

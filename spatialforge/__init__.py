@@ -73,6 +73,11 @@ from .tsdf_voxel_contribution import (
     evaluate_tsdf_voxel_contribution,
     evaluate_tsdf_voxel_contribution_from_context,
 )
+from .tsdf_block_cross_view import (
+    MAX_TSDF_BLOCK_CROSS_VIEW_OUTCOMES,
+    TsdfBlockCrossViewReceipt,
+    classify_tsdf_block_voxels_across_observations_from_context,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     TsdfVoxelCrossViewReceipt,
@@ -107,6 +112,7 @@ __all__ = [
     "TriangleMeshReport",
     "TsdfReport",
     "TsdfBoundsReport",
+    "TsdfBlockCrossViewReceipt",
     "TsdfBlockPlan",
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
@@ -137,6 +143,7 @@ __all__ = [
     "apply_tsdf_voxel_contribution",
     "apply_tsdf_voxel_contribution_from_context",
     "build_tsdf_replay_depth_context",
+    "classify_tsdf_block_voxels_across_observations_from_context",
     "classify_tsdf_voxel_across_observations_from_context",
     "classify_tsdf_voxel_sampling_from_context",
     "compose_tsdf_global_voxel_index",
@@ -152,6 +159,7 @@ __all__ = [
     "load_scan_session",
     "load_tsdf_block_plan",
     "locate_tsdf_voxel",
+    "MAX_TSDF_BLOCK_CROSS_VIEW_OUTCOMES",
     "MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS",
     "MAX_TSDF_VOXEL_WEIGHT",
     "MAX_TSDF_REPLAY_DEPTH_CONTEXT_BYTES",
