@@ -15,3 +15,7 @@ dist/
 /results/
 *.bag
 *.tgz
+
+# Local editor state.
+/.vscode/
+/.idea/
