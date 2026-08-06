@@ -87,6 +87,12 @@ from .tsdf_expanded_plan import (
     TsdfExpandedPlanReport,
     write_tsdf_expanded_block_plan,
 )
+from .tsdf_observation_fusion import (
+    TsdfObservationFusionReceipt,
+    TsdfObservationLedger,
+    begin_tsdf_observation_ledger,
+    fuse_tsdf_plan_observations_from_context,
+)
 from .tsdf_plan_fusion import (
     TsdfFusionLedger,
     TsdfPlanFusionReceipt,
@@ -145,6 +151,8 @@ __all__ = [
     "TsdfObservationBlockRayStatus",
     "TsdfObservationBlockRayTraceReceipt",
     "TsdfObservationFootprintReceipt",
+    "TsdfObservationFusionReceipt",
+    "TsdfObservationLedger",
     "TsdfPixelFootprintCoverageReceipt",
     "TsdfPixelFootprintStatus",
     "TsdfPlanBlockRaySurveyReceipt",
@@ -167,6 +175,7 @@ __all__ = [
     "apply_tsdf_voxel_contribution",
     "apply_tsdf_voxel_contribution_from_context",
     "begin_tsdf_fusion_ledger",
+    "begin_tsdf_observation_ledger",
     "build_tsdf_replay_depth_context",
     "classify_tsdf_block_voxels_across_observations_from_context",
     "classify_tsdf_voxel_across_observations_from_context",
@@ -178,6 +187,7 @@ __all__ = [
     "extract_surface_points",
     "extract_triangle_mesh",
     "fuse_tsdf_plan_blocks_from_context",
+    "fuse_tsdf_plan_observations_from_context",
     "import_tum_dataset",
     "integrate_sparse_tsdf",
     "integrate_tsdf",

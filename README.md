@@ -1461,8 +1461,52 @@ The property that matters is that chunking changes nothing: fusing in chunks of
 and the per-pass weights sum to its total — `380 + 496 + 292 = 1168`. The exact
 contract is in [`docs/tsdf-plan-fusion.md`](docs/tsdf-plan-fusion.md).
 
-An observation-level ledger, persisting the ledger, confidence weighting, and
-optimization remain separate later checkpoints.
+Or fuse frame by frame instead of block by block:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-observation-fuse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --pair-limit 5
+```
+
+Key fixture output is:
+
+```text
+ledger_scope: rows=8 observations=2 pairs=16
+absorption_order: frame-major-canonical-per-row
+fusion_passes: count=4 pair_limit=5
+pass_0: pairs=5 pending_after=11 applied=336
+pass_3: pairs=1 pending_after=0 applied=102
+ledger: absorbed=16 pending=0 complete=yes
+idempotent_repeat: yes
+contributions_applied: 1168
+observation_level_ledger: yes
+partial_row_absorption_supported: yes
+ledger_persisted: no
+```
+
+The block ledger above treats a row as all-or-nothing for the whole selection.
+A capture does not arrive that way — it arrives one frame at a time, each frame
+touching many rows. This tracks `(row, observation)` pairs and walks them
+observation-outer, row-inner, so `--pair-limit 8` on this fixture means
+"apply frame 0 everywhere, then frame 1".
+
+Each row records *how many* observations it has taken, not *which* ones. That
+looks like a limitation and is actually the point: per-voxel accumulation is a
+chain of float64 additions, and addition is commutative but not associative,
+so absorbing frames out of order could shift the last bits. Holding a canonical
+prefix is what lets every chunk size stay byte-identical to the one-shot
+traversal — 1, 5, 8 or unlimited pairs per pass all produce the same bytes and
+the same 1,168 contributions.
+
+Rollback changes too. A failing pass here may have written rows that already
+held earlier frames, so it restores each row's exact pre-pass bytes rather than
+zeroing them. The exact contract is in
+[`docs/tsdf-observation-fusion.md`](docs/tsdf-observation-fusion.md).
+
+Persisting the ledger, confidence weighting, and optimization remain separate
+later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1540,6 +1584,8 @@ writing the expanded plan is in
 [`docs/tsdf-expanded-plan.md`](docs/tsdf-expanded-plan.md),
 resumable ledgered fusion is in
 [`docs/tsdf-plan-fusion.md`](docs/tsdf-plan-fusion.md),
+frame-major observation fusion is in
+[`docs/tsdf-observation-fusion.md`](docs/tsdf-observation-fusion.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

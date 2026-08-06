@@ -124,6 +124,11 @@ The project is intentionally advancing through small, testable checkpoints.
   replacing the blanket empty-storage guard with a per-row one, skipping
   already-fused rows, restoring only the rows a failed pass touched, and
   proved byte-identical to the one-shot traversal at every chunk size.
+- Frame-major fusion at (row, observation) granularity, where each row
+  records a canonical-order prefix of the selection so a row can hold a
+  partial set of frames and absorb the rest later, restoring exact
+  pre-pass bytes on failure and staying byte-identical to the one-shot
+  traversal at every pair chunk size.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -137,8 +142,8 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. add an observation-level ledger and persist it, so a row can absorb
-   newly selected observations and resumption survives process exit;
+1. persist the fusion ledger alongside a block-backed TSDF artifact, so
+   resumption survives process exit;
 2. persist a block-backed TSDF artifact and connect normalization plus sparse
    surface/mesh consumers;
 3. add culled, scalable sparse traversal and an optimized backend suitable for
@@ -197,7 +202,7 @@ block-ray survey, conservative one-pixel footprint coverage, per-voxel
 sampling classification, cross-view voxel and block resolution,
 one-observation and whole-scan footprint coverage, whole-scan carvable
 free space, plan-expansion proposal, expanded-plan writing, resumable
-ledgered fusion,
+ledgered fusion, frame-major observation fusion,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

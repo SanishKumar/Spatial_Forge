@@ -89,9 +89,9 @@ reported a failed rollback instead of quietly corrupting storage.
 ## What this still does not do
 
 - **The ledger is per block, not per observation.** A row is either fully
-  fused for the complete selected-observation tuple or not at all. Adding new
-  observations to an already-fused row is not supported; that needs an
-  observation-level ledger and is the natural next refinement.
+  fused for the complete selected-observation tuple or not at all. Finer
+  `(row, observation)` granularity now exists separately in
+  [`tsdf-observation-fusion.md`](tsdf-observation-fusion.md).
 - **The ledger is in memory only.** Nothing is persisted, so resumption works
   within a process, not across runs. Persisting it belongs with the persistent
   block-backed TSDF artifact.
@@ -101,15 +101,13 @@ reported a failed rollback instead of quietly corrupting storage.
 
 ## Precisely deferred next phases
 
-1. an observation-level ledger, so a row can absorb newly selected
-   observations without being re-fused from scratch;
-2. persist the ledger alongside a block-backed TSDF artifact, making
+1. persist the ledger alongside a block-backed TSDF artifact, making
    resumption survive process exit;
-3. complete fusion diagnostics, normalization, and sparse surface/mesh
+2. complete fusion diagnostics, normalization, and sparse surface/mesh
    consumers over the fused volume;
-4. evidence thresholds, confidence and sensor-dependent weighting, outlier
+3. evidence thresholds, confidence and sensor-dependent weighting, outlier
    rejection, and the visibility/culling policy;
-5. scalable streaming, optimized CPU, parallel, or GPU execution; and
-6. real-dataset accuracy, production meshing, structural mapping, Inspector
+4. scalable streaming, optimized CPU, parallel, or GPU execution; and
+5. real-dataset accuracy, production meshing, structural mapping, Inspector
    work, pose estimation, SLAM, semantics, localization, and
    `SpatialMapPackage` export.

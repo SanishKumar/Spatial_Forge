@@ -75,6 +75,10 @@ from .tsdf_plan_fusion import (
     begin_tsdf_fusion_ledger,
     fuse_tsdf_plan_blocks_from_context,
 )
+from .tsdf_observation_fusion import (
+    begin_tsdf_observation_ledger,
+    fuse_tsdf_plan_observations_from_context,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     classify_tsdf_voxel_across_observations_from_context,
@@ -328,6 +332,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_context_plan_expansion(
                 arguments.plan,
                 arguments.session,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-observation-fuse"
+        ):
+            return _run_tsdf_block_context_observation_fuse(
+                arguments.plan,
+                arguments.session,
+                arguments.pair_limit,
             )
         if arguments.reconstruct_command == "tsdf-block-context-plan-fuse":
             return _run_tsdf_block_context_plan_fuse(
@@ -1270,6 +1283,36 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory used to prepare the context.",
+    )
+
+    block_context_observation_fuse = reconstruct_commands.add_parser(
+        "tsdf-block-context-observation-fuse",
+        help="Fuse frame by frame with a per-row observation ledger.",
+        description=(
+            "Strictly load a replay-matched block plan, allocate temporary "
+            "storage, and absorb (row, observation) pairs in frame-major "
+            "order under an in-memory ledger that records how many "
+            "observations each row has taken. Observations are absorbed in "
+            "canonical order per row, which keeps float64 accumulation "
+            "bit-identical to the one-shot traversal however the work is "
+            "chunked. Storage is temporary and no artifact is written."
+        ),
+    )
+    block_context_observation_fuse.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_observation_fuse.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_observation_fuse.add_argument(
+        "--pair-limit",
+        type=_positive_integer,
+        default=None,
+        help="Maximum (row, observation) pairs to absorb per pass.",
     )
 
     block_context_plan_fuse = reconstruct_commands.add_parser(
@@ -4254,6 +4297,143 @@ def _run_tsdf_block_context_voxel_cross_view(
     )
     print(
         f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_observation_fuse(
+    plan_path: Path,
+    session_path: Path,
+    pair_limit: int | None,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        context = build_tsdf_replay_depth_context(plan, session)
+        ledger = begin_tsdf_observation_ledger(plan, context)
+        passes: list[object] = []
+        while not ledger.is_complete:
+            receipt = fuse_tsdf_plan_observations_from_context(
+                storage,
+                context,
+                ledger,
+                pair_limit=pair_limit,
+            )
+            if not receipt.pairs_fused_now:
+                raise TsdfError("TSDF observation fusion made no progress")
+            ledger = receipt.ledger_after
+            passes.append(receipt)
+        repeated = fuse_tsdf_plan_observations_from_context(
+            storage,
+            context,
+            ledger,
+            pair_limit=pair_limit,
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT OBSERVATION FUSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT OBSERVATION FUSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    total_applied = sum(receipt.applied_count for receipt in passes)
+    total_evaluated = sum(receipt.evaluated_count for receipt in passes)
+    print(
+        f"TSDF BLOCK CONTEXT OBSERVATION FUSION CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "ledger_scope: "
+        f"rows={ledger.plan_block_count} "
+        f"observations={ledger.observation_count} "
+        f"pairs={ledger.total_pair_count}",
+        file=sys.stdout,
+    )
+    print("absorption_order: frame-major-canonical-per-row", file=sys.stdout)
+    print(
+        "fusion_passes: "
+        f"count={len(passes)} "
+        f"pair_limit={'none' if pair_limit is None else pair_limit}",
+        file=sys.stdout,
+    )
+    for index, receipt in enumerate(passes):
+        print(
+            f"pass_{index}: "
+            f"pairs={receipt.pairs_fused_now} "
+            f"pending_after={receipt.pairs_pending} "
+            f"applied={receipt.applied_count}",
+            file=sys.stdout,
+        )
+    print(
+        "ledger: "
+        f"absorbed={ledger.absorbed_pair_count} "
+        f"pending={ledger.pending_pair_count} "
+        f"complete={'yes' if ledger.is_complete else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "repeat_pass: "
+        f"pairs={repeated.pairs_fused_now} "
+        f"applied={repeated.applied_count}",
+        file=sys.stdout,
+    )
+    print(
+        "idempotent_repeat: "
+        f"{'yes' if repeated.pairs_fused_now == 0 else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print(f"contributions_evaluated: {total_evaluated}", file=sys.stdout)
+    print(f"contributions_applied: {total_applied}", file=sys.stdout)
+    print(f"plan_weight_sum_after: {total_applied}", file=sys.stdout)
+    print("empty_storage_required: no", file=sys.stdout)
+    print("observation_level_ledger: yes", file=sys.stdout)
+    print("partial_row_absorption_supported: yes", file=sys.stdout)
+    print(
+        "caught_failure_rollback_scope: rows-written-by-this-pass",
+        file=sys.stdout,
+    )
+    print("ledger_persisted: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {plan.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0
