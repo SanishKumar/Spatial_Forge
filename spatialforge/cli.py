@@ -44,6 +44,9 @@ from .tsdf_block_traversal import (
     _local_index_from_flat,
     traverse_tsdf_block_voxels_from_context,
 )
+from .tsdf_block_vector_fusion import (
+    fuse_tsdf_block_from_vector_fields,
+)
 from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     traverse_tsdf_plan_blocks_from_context,
@@ -255,6 +258,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.session,
                 arguments.block,
                 arguments.observation_sequence,
+            )
+        if arguments.reconstruct_command == "tsdf-block-context-block-fuse":
+            return _run_tsdf_block_context_block_fuse(
+                arguments.plan,
+                arguments.session,
+                arguments.block,
             )
         if (
             arguments.reconstruct_command
@@ -1001,6 +1010,42 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="Exactly one plan-selected replay observation sequence.",
+    )
+
+    block_context_block_fuse = reconstruct_commands.add_parser(
+        "tsdf-block-context-block-fuse",
+        help=(
+            "Fuse one planned block from one vector field per observation "
+            "instead of voxel by voxel."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, allocate temporary "
+            "storage, prepare one immutable replay/depth context, and fuse "
+            "exactly one selected planned block by evaluating each selected "
+            "observation as a whole-block field and applying the fields in "
+            "canonical observation order. The same block is then fused again "
+            "into separate storage by the scalar voxel-by-voxel traversal "
+            "and the two rows are compared byte for byte. No artifact is "
+            "written."
+        ),
+    )
+    block_context_block_fuse.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose temporary storage is fused.",
+    )
+    block_context_block_fuse.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_block_fuse.add_argument(
+        "--block",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("BX", "BY", "BZ"),
+        help="Exactly one planned signed block XYZ to fuse.",
     )
 
     block_context_plan_traverse = reconstruct_commands.add_parser(
@@ -2976,6 +3021,193 @@ def _run_tsdf_block_context_block_contributions(
     )
     print(
         f"replay_digest_sha256: {field.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_block_fuse(
+    plan_path: Path,
+    session_path: Path,
+    block: list[int],
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        reference_storage = allocate_empty_tsdf_blocks(plan, session)
+        block_index_xyz = tuple(block)
+        context = build_tsdf_replay_depth_context(plan, session)
+        receipt = fuse_tsdf_block_from_vector_fields(
+            storage,
+            block_index_xyz,
+            context,
+        )
+        reference = traverse_tsdf_block_voxels_from_context(
+            reference_storage,
+            block_index_xyz,
+            context,
+        )
+        row = receipt.block_row
+        sums_match = (
+            storage.tsdf_sums[row].tobytes()
+            == reference_storage.tsdf_sums[row].tobytes()
+        )
+        weights_match = (
+            storage.weights[row].tobytes()
+            == reference_storage.weights[row].tobytes()
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT BLOCK FUSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT BLOCK FUSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK CONTEXT BLOCK FUSION CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "block: "
+        f"index={receipt.block_index_xyz} "
+        f"row={receipt.block_row} "
+        f"resolution={receipt.block_resolution} "
+        f"voxel_slots={receipt.voxel_count}",
+        file=sys.stdout,
+    )
+    print("fusion_path: vectorised-field-per-observation", file=sys.stdout)
+    print(
+        "field_application_order: canonical-observation-then-elementwise",
+        file=sys.stdout,
+    )
+    print(
+        f"fields_applied: {len(receipt.fields)}",
+        file=sys.stdout,
+    )
+    print(
+        "array_writes_per_field: 2",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_evaluated: {receipt.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_applied: {receipt.applied_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_skipped: {receipt.skipped_count}",
+        file=sys.stdout,
+    )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in receipt.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(
+        f"storage_slots_updated: {receipt.storage_slots_updated}",
+        file=sys.stdout,
+    )
+    print(
+        f"block_weight_sum_after: {receipt.weight_delta}",
+        file=sys.stdout,
+    )
+    print(
+        f"block_max_weight_after: {receipt.maximum_weight_after}",
+        file=sys.stdout,
+    )
+    print(
+        f"block_observed_voxels: {receipt.observed_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "scalar_reference_path: voxel-by-voxel-block-traversal",
+        file=sys.stdout,
+    )
+    print(
+        "scalar_reference_evaluations: "
+        f"{reference.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"scalar_reference_applied: {reference.applied_count}",
+        file=sys.stdout,
+    )
+    print(
+        "scalar_reference_sum_bytes: "
+        + ("identical" if sums_match else "divergent"),
+        file=sys.stdout,
+    )
+    print(
+        "scalar_reference_weight_bytes: "
+        + ("identical" if weights_match else "divergent"),
+        file=sys.stdout,
+    )
+    print(
+        "scalar_reference_parity: "
+        + ("byte-identical" if sums_match and weights_match else "divergent"),
+        file=sys.stdout,
+    )
+    print("receipt_rederived_from_fields: yes", file=sys.stdout)
+    print("context_provenance: matched", file=sys.stdout)
+    print("fusion_session_replay: no", file=sys.stdout)
+    print("fusion_replay_hashing: no", file=sys.stdout)
+    print("fusion_source_io: no", file=sys.stdout)
+    print("fusion_depth_decoding: no", file=sys.stdout)
+    print("blocks_fused: 1", file=sys.stdout)
+    print("additional_blocks_visited: 0", file=sys.stdout)
+    print("empty_block_precondition: required", file=sys.stdout)
+    print("caught_failure_rollback_scope: selected-block", file=sys.stdout)
+    print("ledger_used: no", file=sys.stdout)
+    print("resumable: no", file=sys.stdout)
+    print("planned_block_set_fusion_performed: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {receipt.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {receipt.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

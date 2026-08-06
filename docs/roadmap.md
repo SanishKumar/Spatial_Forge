@@ -141,6 +141,14 @@ checkpoint is added and the invariants everything is pinned to.
   fusing plan traversal's accepted total, without applying a contribution,
   touching storage, or performing replay, hashing, source I/O or depth
   decoding.
+- Field-driven fusion of one planned block, applying one vectorised field per
+  selected observation to the block's storage row in canonical observation
+  order with two array additions each, under an empty-row precondition,
+  uint32 overflow preflight, weight-envelope and finiteness checks,
+  byte-verified writes and whole-row rollback, with a receipt that replays its
+  own retained fields, proved byte-identical to the voxel-by-voxel block
+  traversal on every fixture block and on room-scan blocks, and to the
+  one-shot plan traversal across a whole fused plan.
 - First non-degenerate validation: a seeded 20-frame 64x48 room scan with
   off-grid surfaces and 4 mm depth noise, recovering the known walls to
   sub-centimetre mean bias at 40 mm voxels and producing a 60,072-triangle
@@ -158,10 +166,9 @@ checkpoint is added and the invariants everything is pinned to.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. fuse from the vectorised block field instead of voxel by voxel, so a whole
-   plan is applied at the vector path's rate while keeping the ledger,
-   canonical accumulation order and byte-identical rollback the scalar fusion
-   paths already guarantee;
+1. drive the block and observation ledgers from field fusion, so resumable,
+   idempotent and partial-frame fusion runs at the vector path's rate too and
+   a plan-wide entry point exists;
 2. persist a block-backed TSDF artifact together with its fusion ledger, so
    resumption survives process exit, and connect normalization plus sparse
    surface/mesh consumers;
@@ -223,7 +230,7 @@ sampling classification, cross-view voxel and block resolution,
 one-observation and whole-scan footprint coverage, whole-scan carvable
 free space, plan-expansion proposal, expanded-plan writing, resumable
 ledgered fusion, frame-major observation fusion, vectorised block
-contribution evaluation,
+contribution evaluation, field-driven block fusion,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

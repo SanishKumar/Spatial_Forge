@@ -44,25 +44,28 @@ proposal, and a written expanded `.sftplan`.
 `(row, observation)` granularity, both byte-identical to the one-shot
 traversal at any chunk size.
 
-**Vectorised evaluation**: one block against one observation in a single
-float64 NumPy pass, bit-identical to the scalar evaluator, about 2.5 million
-voxel-observations per second against the scalar path's 26,000.
+**Vector path**: one block against one observation evaluated in a single
+float64 NumPy pass, bit-identical to the scalar evaluator; and whole-block
+fusion from those fields, byte-identical to the scalar traversal. The room
+scan fuses in 2 seconds against the scalar path's 210.
 
-418 tests, `OK` under `-W error`, about 65 seconds.
+434 tests, `OK` under `-W error`, about 80 seconds.
 
 ## Open risks, most important first
 
-1. **Performance — half addressed.** Evaluation is no longer the bottleneck:
-   the vectorised block evaluator sweeps the room scan's 3,594,240
-   voxel-observations in 1.5 seconds, where the same work took most of the
-   ledgered fusion run's 210 seconds. But nothing fuses through it yet.
-   Application is still one guarded scalar write per accepted contribution,
-   so a real scan still costs minutes rather than seconds until the vector
-   field is wired into fusion. **This still gates scale.**
+1. **Performance — mostly addressed, not yet everywhere.** The room scan now
+   fuses in about 2 seconds instead of 210, byte-identically. What is not yet
+   converted is the *ledgered* path: resumable, idempotent and partial-frame
+   fusion still run voxel by voxel, and there is no plan-wide field entry
+   point, so callers loop over blocks themselves. Incremental capture is
+   therefore still slow even though a full rebuild is fast.
 2. **No real sensor data yet.** The room fixture removes the old fixture's
    degeneracy but is still synthetic: clean gaussian noise, exact poses, no
    motion blur, rolling shutter, reflective surfaces or missing returns. The
    TUM importer exists and has never been pointed at a full sequence.
+   `rgbd_dataset_freiburg1_xyz` (448 MB, 640x480, 798 frames with
+   ground-truth poses) is downloaded to the gitignored `datasets/` directory
+   and not yet imported.
 3. **Poses are ground truth.** There is no pose estimation, so the engine
    cannot take a phone capture. This is the largest single gap to the product
    idea and an entirely separate discipline.
@@ -83,10 +86,9 @@ Far: needs pose estimation, SLAM, structure, semantics, localization and
 
 ## Immediate next steps
 
-1. **Fuse from the vectorised block field** rather than voxel by voxel, so a
-   whole plan applies at the vector path's rate while keeping the ledger,
-   canonical accumulation order and byte-identical rollback. This is the
-   critical path.
+1. **Drive the ledgers from field fusion**, so resumable, idempotent and
+   partial-frame fusion run at the vector path's rate too, and add a
+   plan-wide entry point.
 2. Persist a block-backed TSDF artifact together with its fusion ledger, and
    connect normalization plus sparse surface/mesh consumers.
 3. Run a full TUM RGB-D sequence against its ground-truth trajectory and

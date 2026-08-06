@@ -27,6 +27,10 @@ from .tsdf_block_traversal import (
     TsdfBlockTraversalReceipt,
     traverse_tsdf_block_voxels_from_context,
 )
+from .tsdf_block_vector_fusion import (
+    TsdfBlockVectorFusionReceipt,
+    fuse_tsdf_block_from_vector_fields,
+)
 from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     TsdfPlanTraversalReceipt,
@@ -148,6 +152,7 @@ __all__ = [
     "TsdfBlockPlanReport",
     "TsdfBlockStorage",
     "TsdfBlockTraversalReceipt",
+    "TsdfBlockVectorFusionReceipt",
     "TsdfContributionStatus",
     "TsdfExpandedPlanReport",
     "TsdfFusionLedger",
@@ -193,6 +198,7 @@ __all__ = [
     "evaluate_tsdf_voxel_contribution_from_context",
     "extract_surface_points",
     "extract_triangle_mesh",
+    "fuse_tsdf_block_from_vector_fields",
     "fuse_tsdf_plan_blocks_from_context",
     "fuse_tsdf_plan_observations_from_context",
     "import_tum_dataset",

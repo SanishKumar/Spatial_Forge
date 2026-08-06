@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from spatialforge import build_tsdf_replay_depth_context, load_tsdf_block_plan
+from spatialforge.model import ScanSession
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import plan_tsdf_blocks
 from spatialforge.tsdf_block_plan_loader import TsdfBlockPlan
@@ -38,11 +39,17 @@ from spatialforge.tsdf_plan_footprint_survey import (
 )
 from spatialforge.tsdf_replay_depth_context import TsdfReplayDepthContext
 
+from tests.room_fixture import room_session
+
 TESTS_ROOT = Path(__file__).resolve().parent
 FIXTURE = TESTS_ROOT / "fixtures" / "minimal.vgsession"
 PLAN_ARGUMENTS = {
     "voxel_size_m": 0.125,
     "truncation_m": 0.5,
+}
+ROOM_PLAN_ARGUMENTS = {
+    "voxel_size_m": 0.04,
+    "truncation_m": 0.12,
 }
 
 
@@ -86,7 +93,24 @@ class SharedCase:
         return self._domain
 
 
+@dataclass(slots=True)
+class SharedRoomCase:
+    """The non-degenerate room scan, planned and prepared once per run.
+
+    Planning 351 blocks and decoding 20 frames costs several seconds, and
+    more than one module needs it. Everything here is frozen; storage is
+    mutable, so allocate it per test with ``allocate_empty_tsdf_blocks``.
+    """
+
+    session_path: Path
+    plan_path: Path
+    plan: TsdfBlockPlan
+    session: ScanSession
+    context: TsdfReplayDepthContext
+
+
 _CASES: dict[tuple[int, int], SharedCase] = {}
+_ROOM_CASE: SharedRoomCase | None = None
 # ``mkdtemp`` rather than ``TemporaryDirectory``: the latter registers its own
 # interpreter-shutdown finalizer, which races the atexit cleanup below and
 # emits a ResourceWarning that ``-W error`` turns into a failure.
@@ -145,8 +169,37 @@ def shared_case(raw_depth: int = 0, frame_stride: int = 1) -> SharedCase:
     return case
 
 
+def shared_room_case() -> SharedRoomCase:
+    """Return the cached room-scan plan and context, building it on demand."""
+
+    global _ROOM_CASE
+    if _ROOM_CASE is None:
+        root = Path(tempfile.mkdtemp(dir=TESTS_ROOT))
+        _ROOTS.append(root)
+        session_path = room_session()
+        plan_path = root / "room.sftplan"
+        plan_tsdf_blocks(
+            load_scan_session(session_path),
+            plan_path,
+            frame_stride=1,
+            **ROOM_PLAN_ARGUMENTS,
+        )
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        _ROOM_CASE = SharedRoomCase(
+            session_path=session_path,
+            plan_path=plan_path,
+            plan=plan,
+            session=session,
+            context=build_tsdf_replay_depth_context(plan, session),
+        )
+    return _ROOM_CASE
+
+
 @atexit.register
 def _release_shared_cases() -> None:
+    global _ROOM_CASE
     _CASES.clear()
+    _ROOM_CASE = None
     while _ROOTS:
         shutil.rmtree(_ROOTS.pop(), ignore_errors=True)

@@ -9,7 +9,6 @@ float64 bit pattern.
 
 from __future__ import annotations
 
-import atexit
 import io
 import math
 import shutil
@@ -62,7 +61,7 @@ from spatialforge.tsdf_voxel_contribution import (
     _evaluate_metric_observation,
 )
 
-from tests.room_fixture import room_session
+from tests.heavy_fixtures import shared_room_case
 
 TEST_ROOT = Path(__file__).resolve().parent
 FIXTURE = TEST_ROOT / "fixtures" / "minimal.vgsession"
@@ -78,8 +77,6 @@ REPLAY_SHA256 = (
     "dc001ae0ca01004a21ad227b12d57a7350bbc23904040453ca73fd955ef050b8"
 )
 
-ROOM_VOXEL_M = 0.04
-ROOM_TRUNCATION_M = 0.12
 # Recorded by the ledgered fusion run in docs/real-scale-validation.md:
 # 351 blocks x 512 voxels x 20 observations, of which this many were accepted
 # and applied to storage.
@@ -177,11 +174,7 @@ def forbidden_calls(targets: tuple[str, ...]):
                 raise AssertionError(f"{target} was called")
 
 
-_ROOM: tuple[
-    TsdfBlockPlan,
-    TsdfBlockStorage,
-    TsdfReplayDepthContext,
-] | None = None
+_ROOM_STORAGE: TsdfBlockStorage | None = None
 
 
 def room_case() -> tuple[
@@ -189,32 +182,18 @@ def room_case() -> tuple[
     TsdfBlockStorage,
     TsdfReplayDepthContext,
 ]:
-    """Plan and prepare the non-degenerate room scan once per run."""
+    """The shared room scan, with storage this module only ever reads.
 
-    global _ROOM
-    if _ROOM is None:
-        # ``mkdtemp`` rather than ``TemporaryDirectory``: the latter's own
-        # shutdown finalizer races the atexit cleanup and emits a
-        # ResourceWarning that ``-W error`` turns into a failure.
-        root = Path(tempfile.mkdtemp(dir=TEST_ROOT))
-        atexit.register(shutil.rmtree, root, True)
-        session_path = room_session()
-        plan_path = root / "room.sftplan"
-        plan_tsdf_blocks(
-            load_scan_session(session_path),
-            plan_path,
-            voxel_size_m=ROOM_VOXEL_M,
-            truncation_m=ROOM_TRUNCATION_M,
-            frame_stride=1,
-        )
-        plan = load_tsdf_block_plan(plan_path)
-        session = load_scan_session(session_path)
-        _ROOM = (
-            plan,
-            allocate_empty_tsdf_blocks(plan, session),
-            build_tsdf_replay_depth_context(plan, session),
-        )
-    return _ROOM
+    Allocation replay-verifies the plan, so one storage is cached rather
+    than rebuilt per test. Evaluation never writes to it, and a test in
+    this module pins that.
+    """
+
+    global _ROOM_STORAGE
+    case = shared_room_case()
+    if _ROOM_STORAGE is None:
+        _ROOM_STORAGE = allocate_empty_tsdf_blocks(case.plan, case.session)
+    return case.plan, _ROOM_STORAGE, case.context
 
 
 def scalar_block_reference(

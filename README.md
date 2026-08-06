@@ -1562,6 +1562,59 @@ contract, the arithmetic-ordering rules that make the two paths agree bit for
 bit, and the non-goals are in
 [`docs/tsdf-block-contributions.md`](docs/tsdf-block-contributions.md).
 
+And fuse a whole block from those fields instead of voxel by voxel:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-block-fuse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --block 1 -1 -1
+```
+
+Key fixture output is:
+
+```text
+fusion_path: vectorised-field-per-observation
+field_application_order: canonical-observation-then-elementwise
+fields_applied: 2
+array_writes_per_field: 2
+contributions_evaluated: 1024
+contributions_applied: 204
+contributions_skipped: 820
+status_counts: contributes=204 projection-outside-image=424 behind-truncation=396
+storage_slots_updated: 102
+block_weight_sum_after: 204
+block_max_weight_after: 2
+scalar_reference_path: voxel-by-voxel-block-traversal
+scalar_reference_sum_bytes: identical
+scalar_reference_weight_bytes: identical
+scalar_reference_parity: byte-identical
+receipt_rederived_from_fields: yes
+empty_block_precondition: required
+caught_failure_rollback_scope: selected-block
+ledger_used: no
+resumable: no
+```
+
+Every number matches the voxel-by-voxel block traversal above, because the
+command runs both into separate storage and compares the resulting rows byte
+for byte. Applying one field per observation in canonical order performs
+exactly the same chain of float64 additions per voxel that the scalar path
+does — skipped voxels carry `+0.0`, which is bit-preserving — so "identical"
+here means identical bytes, not a close match.
+
+Fusing the fixture's eight blocks this way produces a `tsdf_sums` and
+`weights` buffer identical to what the one-shot plan traversal produces, with
+the same 1,168 contributions over 584 slots. On the room fixture the whole
+351-block plan fuses in about 2 seconds, against the 210 seconds its ledgered
+scalar run took, with the same 1,127,112 contributions and 81,292 observed
+voxels.
+
+There is no ledger here: this fuses one canonically empty block completely or
+fails, and re-fusing a fused block is refused rather than silently doubled.
+The exact contract is in
+[`docs/tsdf-block-vector-fusion.md`](docs/tsdf-block-vector-fusion.md).
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 
