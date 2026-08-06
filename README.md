@@ -1588,6 +1588,8 @@ frame-major observation fusion is in
 [`docs/tsdf-observation-fusion.md`](docs/tsdf-observation-fusion.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
+real-scale validation on a non-degenerate room scan is in
+[`docs/real-scale-validation.md`](docs/real-scale-validation.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
 reference triangle meshing is in
 [`docs/triangle-mesh.md`](docs/triangle-mesh.md), and overall status is in

@@ -129,6 +129,10 @@ The project is intentionally advancing through small, testable checkpoints.
   partial set of frames and absorb the rest later, restoring exact
   pre-pass bytes on failure and staying byte-identical to the one-shot
   traversal at every pair chunk size.
+- First non-degenerate validation: a seeded 20-frame 64x48 room scan with
+  off-grid surfaces and 4 mm depth noise, recovering the known walls to
+  sub-centimetre mean bias at 40 mm voxels and producing a 60,072-triangle
+  mesh, with the one-shot traversal's scan-scale refusal pinned as a test.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -142,20 +146,24 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. persist the fusion ledger alongside a block-backed TSDF artifact, so
-   resumption survives process exit;
-2. persist a block-backed TSDF artifact and connect normalization plus sparse
+1. vectorise the block evaluator against the existing scalar path as its
+   reference; at roughly 17,000 evaluations per second it is about two orders
+   of magnitude slower than the dense integrator and now gates any scan
+   beyond one coarse room;
+2. persist a block-backed TSDF artifact together with its fusion ledger, so
+   resumption survives process exit, and connect normalization plus sparse
    surface/mesh consumers;
-3. add culled, scalable sparse traversal and an optimized backend suitable for
-   full sequences;
-4. add confidence and sensor-dependent weighting, robust depth/pose outlier
+3. run a full TUM RGB-D sequence and publish geometry accuracy against its
+   ground-truth trajectory;
+4. add culled, scalable sparse traversal suitable for full sequences;
+5. add confidence and sensor-dependent weighting, robust depth/pose outlier
    filtering, the visibility/culling policy, and configurable production
    bounds;
-5. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
-6. refine production meshing with exact-zero cells, normals,
+6. run further real datasets such as ARKitScenes and publish accuracy reports;
+7. refine production meshing with exact-zero cells, normals,
    connected-component and quality validation, and optimized extraction;
-7. add gravity/floor alignment, floor and wall candidates, and openings; and
-8. add a top-down/3D Inspector view.
+8. add gravity/floor alignment, floor and wall candidates, and openings; and
+9. add a top-down/3D Inspector view.
 
 ## Later major milestones
 
