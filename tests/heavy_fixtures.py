@@ -46,17 +46,44 @@ PLAN_ARGUMENTS = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class SharedCase:
-    """One resolved case: plan, context, coverage survey and domain sweep."""
+    """One prepared case: plan and context always, coverage on demand.
+
+    The coverage survey and domain sweep together cost several seconds, and
+    plenty of tests need only the plan and context. They are therefore built
+    lazily on first access and then reused, so a module that never touches
+    ``coverage`` or ``domain`` never pays for them.
+    """
 
     root: Path
     session_path: Path
     plan_path: Path
     plan: TsdfBlockPlan
     context: TsdfReplayDepthContext
-    coverage: TsdfPlanFootprintSurveyReceipt
-    domain: TsdfCoverageDomainCrossViewReceipt
+    _coverage: TsdfPlanFootprintSurveyReceipt | None = None
+    _domain: TsdfCoverageDomainCrossViewReceipt | None = None
+
+    @property
+    def coverage(self) -> TsdfPlanFootprintSurveyReceipt:
+        if self._coverage is None:
+            self._coverage = survey_tsdf_plan_pixel_footprints_from_context(
+                self.plan,
+                self.context,
+            )
+        return self._coverage
+
+    @property
+    def domain(self) -> TsdfCoverageDomainCrossViewReceipt:
+        if self._domain is None:
+            self._domain = (
+                sweep_tsdf_coverage_domain_cross_view_from_context(
+                    self.plan,
+                    self.context,
+                    self.coverage,
+                )
+            )
+        return self._domain
 
 
 _CASES: dict[tuple[int, int], SharedCase] = {}
@@ -107,20 +134,12 @@ def shared_case(raw_depth: int = 0, frame_stride: int = 1) -> SharedCase:
         plan,
         load_scan_session(session_path),
     )
-    coverage = survey_tsdf_plan_pixel_footprints_from_context(plan, context)
-    domain = sweep_tsdf_coverage_domain_cross_view_from_context(
-        plan,
-        context,
-        coverage,
-    )
     case = SharedCase(
         root=root,
         session_path=session_path,
         plan_path=plan_path,
         plan=plan,
         context=context,
-        coverage=coverage,
-        domain=domain,
     )
     _CASES[key] = case
     return case

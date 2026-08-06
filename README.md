@@ -1418,9 +1418,51 @@ allocates storage — 40 blocks and 20,480 voxel slots on the far-depth fixture,
 up from 32 and 16,384. The exact contract is in
 [`docs/tsdf-expanded-plan.md`](docs/tsdf-expanded-plan.md).
 
-Fusing into the added blocks, observation idempotency, resumable fusion,
-confidence weighting, persistence, and optimization remain separate later
-checkpoints.
+Fuse every planned row in resumable, idempotent passes:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-plan-fuse `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --block-limit 3
+```
+
+Key fixture output is:
+
+```text
+fusion_passes: count=3 block_limit=3
+pass_0: fused=3 already_fused=0 pending_after=5 weight_delta=380
+pass_1: fused=3 already_fused=3 pending_after=2 weight_delta=496
+pass_2: fused=2 already_fused=6 pending_after=0 weight_delta=292
+ledger: fused=8 pending=0 complete=yes
+repeat_pass: fused=0 pending=0
+idempotent_repeat: yes
+plan_weight_sum_after: 1168
+empty_storage_required: no
+ledger_guard: nonempty-unclaimed-row-rejected
+caught_failure_rollback_scope: rows-fused-by-this-pass
+observation_level_ledger: no
+ledger_persisted: no
+```
+
+Fusion used to be one-shot: it demanded all-zero storage and rolled the whole
+volume back on failure. A ledger replaces that blanket guard with a weaker,
+more useful invariant — every planned row the ledger does *not* claim must
+still be untouched. A nonempty unclaimed row means something wrote outside this
+path, and resuming on it could double-count, so it is rejected.
+
+Already-fused rows are skipped rather than re-fused, so repeating a completed
+pass is a no-op; the command proves that on every run by issuing one extra pass
+and reporting `idempotent_repeat: yes`. A failed pass zeroes only the rows *it*
+fused, leaving earlier passes intact so the work can simply be retried.
+
+The property that matters is that chunking changes nothing: fusing in chunks of
+1, 3, or all at once leaves storage byte-identical to the one-shot traversal,
+and the per-pass weights sum to its total — `380 + 496 + 292 = 1168`. The exact
+contract is in [`docs/tsdf-plan-fusion.md`](docs/tsdf-plan-fusion.md).
+
+An observation-level ledger, persisting the ledger, confidence weighting, and
+optimization remain separate later checkpoints.
 
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
@@ -1496,6 +1538,8 @@ the plan-expansion proposal is in
 [`docs/tsdf-plan-expansion.md`](docs/tsdf-plan-expansion.md),
 writing the expanded plan is in
 [`docs/tsdf-expanded-plan.md`](docs/tsdf-expanded-plan.md),
+resumable ledgered fusion is in
+[`docs/tsdf-plan-fusion.md`](docs/tsdf-plan-fusion.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

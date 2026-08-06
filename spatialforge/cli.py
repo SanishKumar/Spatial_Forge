@@ -71,6 +71,10 @@ from .tsdf_plan_expansion import (
     propose_tsdf_plan_expansion_from_domain,
 )
 from .tsdf_expanded_plan import write_tsdf_expanded_block_plan
+from .tsdf_plan_fusion import (
+    begin_tsdf_fusion_ledger,
+    fuse_tsdf_plan_blocks_from_context,
+)
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     classify_tsdf_voxel_across_observations_from_context,
@@ -324,6 +328,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_context_plan_expansion(
                 arguments.plan,
                 arguments.session,
+            )
+        if arguments.reconstruct_command == "tsdf-block-context-plan-fuse":
+            return _run_tsdf_block_context_plan_fuse(
+                arguments.plan,
+                arguments.session,
+                arguments.block_limit,
             )
         if arguments.reconstruct_command == "tsdf-block-plan-expand":
             return _run_tsdf_block_plan_expand(
@@ -1260,6 +1270,35 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory used to prepare the context.",
+    )
+
+    block_context_plan_fuse = reconstruct_commands.add_parser(
+        "tsdf-block-context-plan-fuse",
+        help="Fuse every planned block row in resumable, ledgered passes.",
+        description=(
+            "Strictly load a replay-matched block plan, allocate temporary "
+            "storage, and fuse every planned block row in bounded resumable "
+            "passes tracked by an in-memory ledger. Rows the ledger already "
+            "claims are skipped rather than re-fused, and storage holding a "
+            "nonempty row the ledger does not claim is rejected. Storage is "
+            "temporary and discarded on exit; no artifact is written."
+        ),
+    )
+    block_context_plan_fuse.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact used only for geometry/provenance.",
+    )
+    block_context_plan_fuse.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_plan_fuse.add_argument(
+        "--block-limit",
+        type=_positive_integer,
+        default=None,
+        help="Maximum planned block rows to fuse per pass.",
     )
 
     block_plan_expand = reconstruct_commands.add_parser(
@@ -4215,6 +4254,147 @@ def _run_tsdf_block_context_voxel_cross_view(
     )
     print(
         f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_context_plan_fuse(
+    plan_path: Path,
+    session_path: Path,
+    block_limit: int | None,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        context = build_tsdf_replay_depth_context(plan, session)
+        ledger = begin_tsdf_fusion_ledger(plan)
+        passes: list[object] = []
+        while not ledger.is_complete:
+            receipt = fuse_tsdf_plan_blocks_from_context(
+                storage,
+                context,
+                ledger,
+                block_limit=block_limit,
+            )
+            if not receipt.blocks_fused_now:
+                raise TsdfError("TSDF plan fusion made no progress")
+            ledger = receipt.ledger_after
+            passes.append(receipt)
+        repeated = fuse_tsdf_plan_blocks_from_context(
+            storage,
+            context,
+            ledger,
+            block_limit=block_limit,
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN FUSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT PLAN FUSION FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    total_weight = sum(receipt.weight_delta for receipt in passes)
+    total_applied = sum(receipt.applied_count for receipt in passes)
+    total_evaluated = sum(receipt.evaluated_count for receipt in passes)
+    print(
+        f"TSDF BLOCK CONTEXT PLAN FUSION CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "plan_blocks: "
+        f"active={plan.active_block_count} "
+        f"voxel_slots={storage.voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        "fusion_passes: "
+        f"count={len(passes)} "
+        f"block_limit={'none' if block_limit is None else block_limit}",
+        file=sys.stdout,
+    )
+    for index, receipt in enumerate(passes):
+        print(
+            f"pass_{index}: "
+            f"fused={receipt.blocks_fused_now} "
+            f"already_fused={receipt.blocks_already_fused} "
+            f"pending_after={receipt.blocks_pending} "
+            f"weight_delta={receipt.weight_delta}",
+            file=sys.stdout,
+        )
+    print(
+        "ledger: "
+        f"fused={ledger.fused_block_count} "
+        f"pending={ledger.pending_block_count} "
+        f"complete={'yes' if ledger.is_complete else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "repeat_pass: "
+        f"fused={repeated.blocks_fused_now} "
+        f"pending={repeated.blocks_pending}",
+        file=sys.stdout,
+    )
+    print(
+        "idempotent_repeat: "
+        f"{'yes' if repeated.blocks_fused_now == 0 else 'no'}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print(f"contributions_evaluated: {total_evaluated}", file=sys.stdout)
+    print(f"contributions_applied: {total_applied}", file=sys.stdout)
+    print(f"plan_weight_sum_after: {total_weight}", file=sys.stdout)
+    print("empty_storage_required: no", file=sys.stdout)
+    print("resumable_fusion_performed: yes", file=sys.stdout)
+    print(
+        "ledger_guard: nonempty-unclaimed-row-rejected",
+        file=sys.stdout,
+    )
+    print(
+        "caught_failure_rollback_scope: rows-fused-by-this-pass",
+        file=sys.stdout,
+    )
+    print("observation_level_ledger: no", file=sys.stdout)
+    print("ledger_persisted: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {plan.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

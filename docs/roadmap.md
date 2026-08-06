@@ -120,6 +120,10 @@ The project is intentionally advancing through small, testable checkpoints.
   conservative-nearest-pixel-footprint free-space rule, the source plan
   digest and the approval rule, never overwriting or modifying its
   source, and proved to strict-load, replay-verify and allocate storage.
+- Resumable, idempotent block-row fusion tracked by an in-memory ledger,
+  replacing the blanket empty-storage guard with a per-row one, skipping
+  already-fused rows, restoring only the rows a failed pass touched, and
+  proved byte-identical to the one-shot traversal at every chunk size.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -133,9 +137,8 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. replace the empty-storage guard with explicit observation provenance,
-   idempotency, and resumable/nonempty fusion, then define complete fusion
-   diagnostics over the chosen spatial domain;
+1. add an observation-level ledger and persist it, so a row can absorb
+   newly selected observations and resumption survives process exit;
 2. persist a block-backed TSDF artifact and connect normalization plus sparse
    surface/mesh consumers;
 3. add culled, scalable sparse traversal and an optimized backend suitable for
@@ -193,7 +196,8 @@ one-observation context-backed block-ray tracing, complete selected-observation
 block-ray survey, conservative one-pixel footprint coverage, per-voxel
 sampling classification, cross-view voxel and block resolution,
 one-observation and whole-scan footprint coverage, whole-scan carvable
-free space, plan-expansion proposal, expanded-plan writing,
+free space, plan-expansion proposal, expanded-plan writing, resumable
+ledgered fusion,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

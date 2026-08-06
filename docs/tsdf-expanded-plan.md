@@ -114,10 +114,10 @@ of 52 covered blocks and added the 8 that were missing.
 
 ## What this still does not do
 
-- Nothing fuses into the added blocks. Allocation works, but the fusion
-  traversal still requires canonical empty storage and has no observation
-  ledger, so a resumable or incremental pass over the expanded domain is the
-  next checkpoint.
+- The one-shot traversal still requires canonical empty storage. Resumable,
+  ledgered fusion over a plan's rows now exists in
+  [`tsdf-plan-fusion.md`](tsdf-plan-fusion.md), but its ledger is per block
+  rather than per observation and is not persisted.
 - The approval rule remains unweighted and unthresholded.
 - The expanded plan records *how many* blocks were added and by which rule,
   but not *which observations* justified each one. Per-block observation
@@ -127,8 +127,11 @@ of 52 covered blocks and added the 8 that were missing.
 
 ## Precisely deferred next phases
 
-1. replace the empty-storage guard with explicit observation provenance,
-   idempotency, and resumable/nonempty fusion over the expanded domain;
+Resumable, idempotent fusion over a plan's rows now exists in
+[`tsdf-plan-fusion.md`](tsdf-plan-fusion.md).
+
+1. an observation-level ledger, and persisting it so resumption survives
+   process exit;
 2. complete fusion diagnostics, persistent block-backed TSDF artifacts,
    normalization, and sparse surface/mesh consumers;
 3. evidence thresholds, confidence and sensor-dependent weighting, outlier
