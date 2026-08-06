@@ -3,6 +3,10 @@
 This is the current implementation status against the original architecture.
 The project is intentionally advancing through small, testable checkpoints.
 
+For a shorter read: [`status.md`](status.md) covers where things stand and
+what the open risks are; [`working-method.md`](working-method.md) covers how a
+checkpoint is added and the invariants everything is pinned to.
+
 ## Working now
 
 - `ScanSession v0.1` folder contract with calibrated RGB, depth, IMU, and known

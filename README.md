@@ -1588,6 +1588,9 @@ frame-major observation fusion is in
 [`docs/tsdf-observation-fusion.md`](docs/tsdf-observation-fusion.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
+current state, open risks and next steps are in
+[`docs/status.md`](docs/status.md), how checkpoints are added is in
+[`docs/working-method.md`](docs/working-method.md),
 real-scale validation on a non-degenerate room scan is in
 [`docs/real-scale-validation.md`](docs/real-scale-validation.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),
