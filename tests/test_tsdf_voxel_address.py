@@ -23,7 +23,6 @@ from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import (
     MAX_BLOCK_INDEX,
     MIN_BLOCK_INDEX,
-    TSDF_BLOCK_RESOLUTION,
     plan_tsdf_blocks,
 )
 from spatialforge.tsdf_block_plan_loader import (

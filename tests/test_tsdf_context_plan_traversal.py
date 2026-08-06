@@ -33,7 +33,6 @@ from spatialforge.tsdf_block_storage import (
 from spatialforge.tsdf_block_traversal import TsdfBlockTraversalReceipt
 from spatialforge.tsdf_replay_depth_context import TsdfReplayDepthContext
 from spatialforge.tsdf_voxel_contribution import TsdfContributionStatus
-from spatialforge.tsdf_voxel_traversal import TsdfVoxelTraversalReceipt
 
 
 TEST_ROOT = Path(__file__).resolve().parent

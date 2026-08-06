@@ -10,7 +10,6 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
-import numpy as np
 
 from spatialforge import (
     allocate_empty_tsdf_blocks,
@@ -35,7 +34,6 @@ from spatialforge.tsdf_block_storage import (
 from spatialforge.tsdf_replay_depth_context import (
     TsdfReplayDepthContext,
     TsdfReplayDepthObservation,
-    TsdfReplayDepthStatus,
 )
 from spatialforge.tsdf_voxel_address import TsdfVoxelAddress
 from spatialforge.tsdf_voxel_contribution import (
