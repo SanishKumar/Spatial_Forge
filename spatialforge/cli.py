@@ -33,8 +33,17 @@ from .tsdf_block_plan_loader import (
     load_tsdf_block_plan,
     verify_tsdf_block_plan_replay,
 )
-from .tsdf_block_storage import allocate_empty_tsdf_blocks
-from .tsdf_block_traversal import traverse_tsdf_block_voxels_from_context
+from .tsdf_block_contributions import (
+    evaluate_tsdf_block_contributions_from_context,
+)
+from .tsdf_block_storage import (
+    TSDF_BLOCK_VOXELS,
+    allocate_empty_tsdf_blocks,
+)
+from .tsdf_block_traversal import (
+    _local_index_from_flat,
+    traverse_tsdf_block_voxels_from_context,
+)
 from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     traverse_tsdf_plan_blocks_from_context,
@@ -236,6 +245,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.block,
+            )
+        if (
+            arguments.reconstruct_command
+            == "tsdf-block-context-block-contributions"
+        ):
+            return _run_tsdf_block_context_block_contributions(
+                arguments.plan,
+                arguments.session,
+                arguments.block,
+                arguments.observation_sequence,
             )
         if (
             arguments.reconstruct_command
@@ -940,6 +959,48 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar=("BX", "BY", "BZ"),
         help="Exactly one planned signed block XYZ to traverse.",
+    )
+
+    block_context_block_contributions = reconstruct_commands.add_parser(
+        "tsdf-block-context-block-contributions",
+        help=(
+            "Evaluate all 512 voxels of one planned block against one "
+            "prepared observation in a single vector pass."
+        ),
+        description=(
+            "Strictly load a replay-matched block plan, allocate temporary "
+            "storage, prepare one immutable replay/depth context, and "
+            "evaluate every voxel of exactly one selected planned block "
+            "against exactly one selected observation without applying "
+            "anything. The same block is then re-evaluated one voxel at a "
+            "time with the scalar reference evaluator and the two results "
+            "are compared bit for bit. No slot is written and no artifact "
+            "is produced."
+        ),
+    )
+    block_context_block_contributions.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact whose block is evaluated.",
+    )
+    block_context_block_contributions.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_context_block_contributions.add_argument(
+        "--block",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("BX", "BY", "BZ"),
+        help="Exactly one planned signed block XYZ to evaluate.",
+    )
+    block_context_block_contributions.add_argument(
+        "--observation-sequence",
+        type=int,
+        required=True,
+        help="Exactly one plan-selected replay observation sequence.",
     )
 
     block_context_plan_traverse = reconstruct_commands.add_parser(
@@ -2736,6 +2797,235 @@ def _run_tsdf_block_context_block_traverse(
         file=sys.stdout,
     )
     return 0
+
+
+def _run_tsdf_block_context_block_contributions(
+    plan_path: Path,
+    session_path: Path,
+    block: list[int],
+    observation_sequence: int,
+) -> int:
+    try:
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        block_index_xyz = tuple(block)
+        storage_before = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+        context = build_tsdf_replay_depth_context(plan, session)
+        field = evaluate_tsdf_block_contributions_from_context(
+            storage,
+            block_index_xyz,
+            context,
+            observation_sequence,
+        )
+        parity = _scalar_reference_parity(
+            storage,
+            block_index_xyz,
+            context,
+            observation_sequence,
+            field,
+        )
+        storage_after = (
+            storage.nonzero_sum_count,
+            storage.nonzero_weight_count,
+            storage.unknown_voxel_count,
+        )
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK CONTEXT BLOCK CONTRIBUTIONS FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK CONTEXT BLOCK CONTRIBUTIONS FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    status_mismatches, sum_mismatches, weight_mismatches = parity
+    mismatches = status_mismatches + sum_mismatches + weight_mismatches
+    print(
+        f"TSDF BLOCK CONTEXT BLOCK CONTRIBUTIONS CHECK {plan.session_id}",
+        file=sys.stdout,
+    )
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "context_selection: "
+        f"frame_stride={context.frame_stride} "
+        f"total={context.total_observations} "
+        f"selected={context.selected_observation_count}",
+        file=sys.stdout,
+    )
+    print("context_immutable: yes", file=sys.stdout)
+    print("depth_source: replay-depth-context", file=sys.stdout)
+    print(
+        "block: "
+        f"index={field.block_index_xyz} "
+        f"row={field.block_row} "
+        f"resolution={field.block_resolution} "
+        f"voxel_slots={field.voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        "observation: "
+        f"sequence={field.observation_sequence} "
+        f"status={field.observation_status.value}",
+        file=sys.stdout,
+    )
+    print(
+        "evaluation_order: local-flat-x-fastest "
+        f"local_flat=0..{field.voxel_count - 1}",
+        file=sys.stdout,
+    )
+    print("evaluation_path: vectorised", file=sys.stdout)
+    print("evaluation_precision: float64", file=sys.stdout)
+    print(
+        f"contributions_evaluated: {field.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_contributing: {field.contributing_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_skipped: {field.skipped_count}",
+        file=sys.stdout,
+    )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in field.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(
+        f"weight_delta_total: {field.weight_delta_total}",
+        file=sys.stdout,
+    )
+    print(
+        f"scalar_reference_evaluations: {field.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"scalar_reference_status_mismatches: {status_mismatches}",
+        file=sys.stdout,
+    )
+    print(
+        f"scalar_reference_sum_mismatches: {sum_mismatches}",
+        file=sys.stdout,
+    )
+    print(
+        f"scalar_reference_weight_mismatches: {weight_mismatches}",
+        file=sys.stdout,
+    )
+    print(
+        "scalar_reference_parity: "
+        + ("bit-identical" if mismatches == 0 else "divergent"),
+        file=sys.stdout,
+    )
+    print("context_provenance: matched", file=sys.stdout)
+    print(
+        "evaluation_source_freshness: construction-time-context",
+        file=sys.stdout,
+    )
+    print("evaluation_session_replay: no", file=sys.stdout)
+    print("evaluation_replay_hashing: no", file=sys.stdout)
+    print("evaluation_source_io: no", file=sys.stdout)
+    print("evaluation_depth_decoding: no", file=sys.stdout)
+    print(
+        "storage_before: "
+        f"nonzero_sums={storage_before[0]} "
+        f"nonzero_weights={storage_before[1]} "
+        f"unknown_voxels={storage_before[2]}",
+        file=sys.stdout,
+    )
+    print(
+        "storage_after: "
+        f"nonzero_sums={storage_after[0]} "
+        f"nonzero_weights={storage_after[1]} "
+        f"unknown_voxels={storage_after[2]}",
+        file=sys.stdout,
+    )
+    print("blocks_evaluated: 1", file=sys.stdout)
+    print("additional_blocks_visited: 0", file=sys.stdout)
+    print("observations_evaluated: 1", file=sys.stdout)
+    print("contributions_applied: 0", file=sys.stdout)
+    print("storage_slots_updated: 0", file=sys.stdout)
+    print("storage_mutated: no", file=sys.stdout)
+    print("fusion_performed: no", file=sys.stdout)
+    print("ray_traversal_performed: no", file=sys.stdout)
+    print("free_space_coverage_planned: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print("missing_blocks_created: no", file=sys.stdout)
+    print("artifact_written: no", file=sys.stdout)
+    print("storage_persisted: no", file=sys.stdout)
+    print("context_persisted: no", file=sys.stdout)
+    print(
+        f"plan_sha256: {field.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {field.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _scalar_reference_parity(
+    storage: object,
+    block_index_xyz: tuple[int, ...],
+    context: object,
+    observation_sequence: int,
+    field: object,
+) -> tuple[int, int, int]:
+    """Re-evaluate the block one voxel at a time and compare exactly."""
+
+    statuses = field.voxel_statuses
+    status_mismatches = 0
+    sum_mismatches = 0
+    weight_mismatches = 0
+    for local_flat_index in range(TSDF_BLOCK_VOXELS):
+        global_index_xyz = compose_tsdf_global_voxel_index(
+            block_index_xyz,
+            _local_index_from_flat(local_flat_index),
+        )
+        address = locate_tsdf_voxel(storage, global_index_xyz)
+        if address is None:
+            raise TsdfError(
+                "TSDF block contribution scalar reference address "
+                "resolution is incomplete"
+            )
+        expected = evaluate_tsdf_voxel_contribution_from_context(
+            storage,
+            address,
+            context,
+            observation_sequence,
+        )
+        if expected.status is not statuses[local_flat_index]:
+            status_mismatches += 1
+        expected_sum = (
+            0.0
+            if expected.tsdf_sum_delta is None
+            else expected.tsdf_sum_delta
+        )
+        actual_sum = float(field.tsdf_sum_deltas[local_flat_index])
+        if expected_sum.hex() != actual_sum.hex():
+            sum_mismatches += 1
+        if expected.weight_delta != int(
+            field.weight_deltas[local_flat_index]
+        ):
+            weight_mismatches += 1
+    return status_mismatches, sum_mismatches, weight_mismatches
 
 
 def _run_tsdf_block_context_plan_traverse(

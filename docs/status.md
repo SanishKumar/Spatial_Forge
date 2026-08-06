@@ -44,16 +44,21 @@ proposal, and a written expanded `.sftplan`.
 `(row, observation)` granularity, both byte-identical to the one-shot
 traversal at any chunk size.
 
-394 tests, `OK` under `-W error`, about 65 seconds.
+**Vectorised evaluation**: one block against one observation in a single
+float64 NumPy pass, bit-identical to the scalar evaluator, about 2.5 million
+voxel-observations per second against the scalar path's 26,000.
+
+418 tests, `OK` under `-W error`, about 65 seconds.
 
 ## Open risks, most important first
 
-1. **Performance.** The block path runs about 17,000 voxel-observations per
-   second because it loops in Python; the dense integrator does the equivalent
-   work vectorised in about a second. The sparse architecture intended to be
-   the scalable one is roughly two orders of magnitude slower than the dense
-   reference it replaces. A small room at 5 cm voxels is a minute; at 2 cm it
-   is hours; a building floor is days. **This gates everything else.**
+1. **Performance — half addressed.** Evaluation is no longer the bottleneck:
+   the vectorised block evaluator sweeps the room scan's 3,594,240
+   voxel-observations in 1.5 seconds, where the same work took most of the
+   ledgered fusion run's 210 seconds. But nothing fuses through it yet.
+   Application is still one guarded scalar write per accepted contribution,
+   so a real scan still costs minutes rather than seconds until the vector
+   field is wired into fusion. **This still gates scale.**
 2. **No real sensor data yet.** The room fixture removes the old fixture's
    degeneracy but is still synthetic: clean gaussian noise, exact poses, no
    motion blur, rolling shutter, reflective surfaces or missing returns. The
@@ -78,9 +83,10 @@ Far: needs pose estimation, SLAM, structure, semantics, localization and
 
 ## Immediate next steps
 
-1. **Vectorise the block evaluator**, with the existing scalar path as its
-   reference, exactly as the dense integrator is the reference for the sparse
-   one. This is the critical path.
+1. **Fuse from the vectorised block field** rather than voxel by voxel, so a
+   whole plan applies at the vector path's rate while keeping the ledger,
+   canonical accumulation order and byte-identical rollback. This is the
+   critical path.
 2. Persist a block-backed TSDF artifact together with its fusion ledger, and
    connect normalization plus sparse surface/mesh consumers.
 3. Run a full TUM RGB-D sequence against its ground-truth trajectory and

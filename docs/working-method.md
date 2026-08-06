@@ -36,6 +36,7 @@ Examples currently in the suite:
 | conservative coverage | centreline ray coverage must be a subset |
 | resumable fusion | one-shot traversal, byte-identical at any chunk size |
 | frame-major fusion | same, at any `(row, observation)` chunk size |
+| vectorised block evaluation | the scalar context evaluator, per voxel, to the float64 bit |
 
 When a checkpoint cannot be pinned to an existing path, say so in its doc
 rather than substituting a weaker assertion.
@@ -126,6 +127,11 @@ intrinsics or pose, so only its sign and finiteness are checkable.
 - Float addition is commutative but **not associative**, so anything that
   changes per-voxel accumulation order changes the last bits. The observation
   ledger stores a canonical prefix specifically to avoid this.
+- **Vectorising is only bit-safe if the operation order is preserved.** A
+  matrix product may reassociate or fuse its multiply-add, so
+  `tsdf_block_contributions` writes the world-to-camera product out term by
+  term. Every NumPy binary op is separately rounded, so an expression written
+  in the scalar path's order matches it exactly.
 
 ## Health check
 

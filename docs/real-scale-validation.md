@@ -105,6 +105,14 @@ critical path for anything beyond a single coarse room, and the existing
 scalar path becomes its reference, exactly as the dense integrator is the
 reference for the sparse one.
 
+**Since this run**, the evaluator half of that gap is closed. A vectorised
+block evaluator sweeps the same 3,594,240 voxel-observations in 1.45 seconds
+and accepts exactly the same 1,127,112 contributions, bit for bit
+([`tsdf-block-contributions.md`](tsdf-block-contributions.md)). The 210
+seconds above were dominated by evaluation, so what remains of the wall is
+application: fusion still writes one guarded slot at a time. Wiring the
+vector field into fusion is the next checkpoint.
+
 ## What this run does not prove
 
 - The data is synthetic. It has clean gaussian depth noise, exact poses, no

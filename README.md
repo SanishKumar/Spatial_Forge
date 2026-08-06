@@ -1508,6 +1508,60 @@ zeroing them. The exact contract is in
 Persisting the ledger, confidence weighting, and optimization remain separate
 later checkpoints.
 
+Everything above evaluates one voxel at a time. Evaluate a whole block at once
+instead:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-context-block-contributions `
+  outputs\progress-blocks.sftplan `
+  tests\fixtures\minimal.vgsession `
+  --block 1 -1 -1 `
+  --observation-sequence 0
+```
+
+Key fixture output is:
+
+```text
+block: index=(1, -1, -1) row=1 resolution=8 voxel_slots=512
+observation: sequence=0 status=ready
+evaluation_order: local-flat-x-fastest local_flat=0..511
+evaluation_path: vectorised
+evaluation_precision: float64
+contributions_evaluated: 512
+contributions_contributing: 102
+contributions_skipped: 410
+status_counts: contributes=102 projection-outside-image=212 behind-truncation=198
+weight_delta_total: 102
+scalar_reference_evaluations: 512
+scalar_reference_status_mismatches: 0
+scalar_reference_sum_mismatches: 0
+scalar_reference_weight_mismatches: 0
+scalar_reference_parity: bit-identical
+storage_before: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+storage_after: nonzero_sums=0 nonzero_weights=0 unknown_voxels=4096
+contributions_applied: 0
+storage_mutated: no
+fusion_performed: no
+artifact_written: no
+```
+
+The command evaluates the block twice on purpose: once with the vector path,
+then once voxel by voxel with the scalar reference evaluator, and reports the
+comparison. `bit-identical` means every one of the 512 voxels agreed on its
+status, its integer weight delta, and the exact float64 bit pattern of its
+`tsdf_sum_delta` — not that they agreed to a tolerance.
+
+Nothing is applied. The `102` contributing voxels here are the same 102 slots
+the one-selected-block traversal above updates, but this command leaves storage
+untouched; it only says what *would* be contributed.
+
+On the room fixture this evaluates all 3,594,240 voxel-observations of the
+351-block plan in about 1.5 seconds and accepts exactly the 1,127,112
+contributions that the ledgered fusion run produced in 210 seconds. The exact
+contract, the arithmetic-ordering rules that make the two paths agree bit for
+bit, and the non-goals are in
+[`docs/tsdf-block-contributions.md`](docs/tsdf-block-contributions.md).
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 

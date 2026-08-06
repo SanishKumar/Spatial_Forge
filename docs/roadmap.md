@@ -133,6 +133,14 @@ checkpoint is added and the invariants everything is pinned to.
   partial set of frames and absorb the rest later, restoring exact
   pre-pass bytes on failure and staying byte-identical to the one-shot
   traversal at every pair chunk size.
+- Vectorised read-only evaluation of all 512 voxels of one planned block
+  against one prepared observation in a single float64 NumPy pass, returning
+  immutable per-voxel status, sum-delta and weight-delta arrays in canonical
+  local-flat order, proved bit-identical to the scalar contribution evaluator
+  on every fixture block and on off-grid room-scan blocks, and matching the
+  fusing plan traversal's accepted total, without applying a contribution,
+  touching storage, or performing replay, hashing, source I/O or depth
+  decoding.
 - First non-degenerate validation: a seeded 20-frame 64x48 room scan with
   off-grid surfaces and 4 mm depth noise, recovering the known walls to
   sub-centimetre mean bias at 40 mm voxels and producing a 60,072-triangle
@@ -150,10 +158,10 @@ checkpoint is added and the invariants everything is pinned to.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. vectorise the block evaluator against the existing scalar path as its
-   reference; at roughly 17,000 evaluations per second it is about two orders
-   of magnitude slower than the dense integrator and now gates any scan
-   beyond one coarse room;
+1. fuse from the vectorised block field instead of voxel by voxel, so a whole
+   plan is applied at the vector path's rate while keeping the ledger,
+   canonical accumulation order and byte-identical rollback the scalar fusion
+   paths already guarantee;
 2. persist a block-backed TSDF artifact together with its fusion ledger, so
    resumption survives process exit, and connect normalization plus sparse
    surface/mesh consumers;
@@ -214,7 +222,8 @@ block-ray survey, conservative one-pixel footprint coverage, per-voxel
 sampling classification, cross-view voxel and block resolution,
 one-observation and whole-scan footprint coverage, whole-scan carvable
 free space, plan-expansion proposal, expanded-plan writing, resumable
-ledgered fusion, frame-major observation fusion,
+ledgered fusion, frame-major observation fusion, vectorised block
+contribution evaluation,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

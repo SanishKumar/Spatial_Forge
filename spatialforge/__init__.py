@@ -18,6 +18,11 @@ from .tsdf_block_storage import (
     TsdfBlockStorage,
     allocate_empty_tsdf_blocks,
 )
+from .tsdf_block_contributions import (
+    TSDF_CONTRIBUTION_STATUS_ORDER,
+    TsdfBlockContributionField,
+    evaluate_tsdf_block_contributions_from_context,
+)
 from .tsdf_block_traversal import (
     TsdfBlockTraversalReceipt,
     traverse_tsdf_block_voxels_from_context,
@@ -137,6 +142,7 @@ __all__ = [
     "TriangleMeshReport",
     "TsdfReport",
     "TsdfBoundsReport",
+    "TsdfBlockContributionField",
     "TsdfBlockCrossViewReceipt",
     "TsdfBlockPlan",
     "TsdfBlockPlanReport",
@@ -181,6 +187,7 @@ __all__ = [
     "classify_tsdf_voxel_across_observations_from_context",
     "classify_tsdf_voxel_sampling_from_context",
     "compose_tsdf_global_voxel_index",
+    "evaluate_tsdf_block_contributions_from_context",
     "evaluate_tsdf_pixel_footprint_coverage_from_context",
     "evaluate_tsdf_voxel_contribution",
     "evaluate_tsdf_voxel_contribution_from_context",
@@ -219,6 +226,7 @@ __all__ = [
     "traverse_tsdf_plan_blocks_from_context",
     "traverse_tsdf_voxel_observations",
     "traverse_tsdf_voxel_observations_from_context",
+    "TSDF_CONTRIBUTION_STATUS_ORDER",
     "verify_tsdf_block_plan_replay",
     "write_tsdf_expanded_block_plan",
 ]
