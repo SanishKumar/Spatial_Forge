@@ -17,6 +17,7 @@ from spatialforge.errors import TsdfError
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import plan_tsdf_blocks
 from spatialforge.tsdf_block_plan_loader import (
+    _MAX_JSON_OBJECTS,
     load_tsdf_block_plan,
     verify_tsdf_block_plan_replay,
 )
@@ -174,8 +175,13 @@ class TsdfBlockPlanLoaderTests(unittest.TestCase):
                 "too many arrays",
             ),
             (
+                # One more object than a plan may legitimately contain:
+                # root, grid, activation, planning, and the expanded plan's
+                # optional expansion provenance.
                 "objects",
-                "[" + ",".join("{}" for _ in range(5)) + "]",
+                "["
+                + ",".join("{}" for _ in range(_MAX_JSON_OBJECTS + 1))
+                + "]",
                 "too many objects",
             ),
             (

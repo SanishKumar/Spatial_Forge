@@ -83,6 +83,10 @@ from .tsdf_domain_cross_view import (
     TsdfCoverageDomainCrossViewReceipt,
     sweep_tsdf_coverage_domain_cross_view_from_context,
 )
+from .tsdf_expanded_plan import (
+    TsdfExpandedPlanReport,
+    write_tsdf_expanded_block_plan,
+)
 from .tsdf_plan_expansion import (
     TsdfPlanExpansionProposal,
     propose_tsdf_plan_expansion_from_domain,
@@ -127,6 +131,7 @@ __all__ = [
     "TsdfBlockStorage",
     "TsdfBlockTraversalReceipt",
     "TsdfContributionStatus",
+    "TsdfExpandedPlanReport",
     "TsdfCoverageDomainCrossViewReceipt",
     "TsdfObservationBlockRayReceipt",
     "TsdfObservationBlockRayStatus",
@@ -195,6 +200,7 @@ __all__ = [
     "traverse_tsdf_voxel_observations",
     "traverse_tsdf_voxel_observations_from_context",
     "verify_tsdf_block_plan_replay",
+    "write_tsdf_expanded_block_plan",
 ]
 
 __version__ = "0.1.0"

@@ -26,6 +26,16 @@ from .tsdf import (
 
 TSDF_BLOCK_PLAN_SCHEMA = "spatialforge.tsdf-block-plan"
 TSDF_BLOCK_PLAN_SCHEMA_VERSION = "0.1.0"
+
+# A surface/truncation plan makes no free-space claim. An expanded plan adds
+# blocks approved from conservative nearest-pixel footprint coverage, so it
+# must say so rather than inheriting the original's silence.
+TSDF_FREE_SPACE_RULE_NOT_PLANNED = "not-planned"
+TSDF_FREE_SPACE_RULE_FOOTPRINT = "conservative-nearest-pixel-footprint"
+TSDF_FREE_SPACE_RULES = (
+    TSDF_FREE_SPACE_RULE_NOT_PLANNED,
+    TSDF_FREE_SPACE_RULE_FOOTPRINT,
+)
 TSDF_BLOCK_RESOLUTION = 8
 MAX_PLANNED_BLOCKS = 100_000
 MIN_BLOCK_INDEX = -(2**31)
@@ -431,7 +441,7 @@ def _build_plan_document(
             "endpoint_rounding": (
                 "floor-ceil-with-multiply-back-outward-correction"
             ),
-            "free_space_rule": "not-planned",
+            "free_space_rule": TSDF_FREE_SPACE_RULE_NOT_PLANNED,
         },
         "planning": {
             "frame_stride": frame_stride,

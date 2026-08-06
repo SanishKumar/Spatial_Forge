@@ -70,6 +70,7 @@ from .tsdf_domain_cross_view import (
 from .tsdf_plan_expansion import (
     propose_tsdf_plan_expansion_from_domain,
 )
+from .tsdf_expanded_plan import write_tsdf_expanded_block_plan
 from .tsdf_voxel_cross_view import (
     MAX_TSDF_VOXEL_CROSS_VIEW_OBSERVATIONS,
     classify_tsdf_voxel_across_observations_from_context,
@@ -323,6 +324,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_context_plan_expansion(
                 arguments.plan,
                 arguments.session,
+            )
+        if arguments.reconstruct_command == "tsdf-block-plan-expand":
+            return _run_tsdf_block_plan_expand(
+                arguments.plan,
+                arguments.session,
+                arguments.output,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1253,6 +1260,35 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="Current .vgsession directory used to prepare the context.",
+    )
+
+    block_plan_expand = reconstruct_commands.add_parser(
+        "tsdf-block-plan-expand",
+        help="Write the approved expanded block set as a new .sftplan.",
+        description=(
+            "Strictly load a replay-matched block plan, resolve its "
+            "conservative coverage domain, approve the evidence-bearing "
+            "blocks, and write the merged block set as a new .sftplan. The "
+            "source plan is never modified and the output must not already "
+            "exist. The written plan records that free space came from "
+            "conservative nearest-pixel footprint coverage, together with "
+            "the source plan digest and the approval rule."
+        ),
+    )
+    block_plan_expand.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact to expand. Never modified.",
+    )
+    block_plan_expand.add_argument(
+        "session",
+        type=Path,
+        help="Current .vgsession directory used to prepare the context.",
+    )
+    block_plan_expand.add_argument(
+        "output",
+        type=Path,
+        help="New .sftplan path to write. Must not already exist.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -4179,6 +4215,103 @@ def _run_tsdf_block_context_voxel_cross_view(
     )
     print(
         f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_plan_expand(
+    plan_path: Path,
+    session_path: Path,
+    output: Path,
+) -> int:
+    try:
+        _validate_tsdf_block_plan_output(output)
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        context = build_tsdf_replay_depth_context(plan, session)
+        coverage = survey_tsdf_plan_pixel_footprints_from_context(
+            plan,
+            context,
+        )
+        domain = sweep_tsdf_coverage_domain_cross_view_from_context(
+            plan,
+            context,
+            coverage,
+        )
+        proposal = propose_tsdf_plan_expansion_from_domain(plan, domain)
+        report = write_tsdf_expanded_block_plan(plan, proposal, output)
+    except SessionValidationError as error:
+        print(
+            f"TSDF BLOCK PLAN EXPAND FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF BLOCK PLAN EXPAND FAILED {plan_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(
+        f"TSDF BLOCK PLAN EXPAND {report.session_id}",
+        file=sys.stdout,
+    )
+    print("source_artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "approval_rule: covered-block-with-at-least-one-observed-voxel",
+        file=sys.stdout,
+    )
+    print(
+        "coverage_domain: "
+        f"blocks={proposal.domain_block_count} "
+        f"approved={proposal.approved_block_count} "
+        f"rejected={proposal.rejected_block_count}",
+        file=sys.stdout,
+    )
+    print(
+        "source_plan: "
+        f"blocks={report.source_block_count} "
+        f"surface={report.surface_block_count}",
+        file=sys.stdout,
+    )
+    print(
+        "expanded_plan: "
+        f"blocks={report.expanded_block_count} "
+        f"added={report.added_block_count} "
+        f"voxel_slots={report.expanded_voxel_slots}",
+        file=sys.stdout,
+    )
+    print(
+        "block_bounds: "
+        f"min={report.min_block_index} max={report.max_block_index}",
+        file=sys.stdout,
+    )
+    print(
+        f"free_space_rule: {report.free_space_rule}",
+        file=sys.stdout,
+    )
+    print("surface_blocks_retained: yes", file=sys.stdout)
+    print("source_plan_mutated: no", file=sys.stdout)
+    print("source_plan_overwritten: no", file=sys.stdout)
+    print("storage_allocated: no", file=sys.stdout)
+    print("full_fusion_performed: no", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print(
+        f"source_plan_sha256: {report.source_plan_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {report.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"output_sha256: {report.output_digest_sha256}",
         file=sys.stdout,
     )
     return 0

@@ -20,6 +20,9 @@ from .tsdf_block_plan import (
     MIN_BLOCK_INDEX,
     TSDF_BLOCK_PLAN_SCHEMA,
     TSDF_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_FREE_SPACE_RULE_FOOTPRINT,
+    TSDF_FREE_SPACE_RULE_NOT_PLANNED,
+    TSDF_FREE_SPACE_RULES,
     TSDF_BLOCK_RESOLUTION,
 )
 
@@ -28,7 +31,9 @@ MAX_TSDF_BLOCK_PLAN_BYTES = 32 * 1024 * 1024
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_JSON_NESTING = 128
-_MAX_JSON_OBJECTS = 4
+# root, grid, activation, planning, and the expanded plan's optional
+# expansion provenance object.
+_MAX_JSON_OBJECTS = 5
 _JSON_ARRAY_OVERHEAD = 5
 _JSON_COMMA_OVERHEAD = 64
 _INDEX_ORDER = "x-fastest-then-y-then-z"
@@ -36,7 +41,9 @@ _BLOCK_BOUNDS = "lower-inclusive-upper-exclusive"
 _COORDINATE_ROUNDING = "floor-with-multiply-back-boundary-correction"
 _ACTIVATION_RULE = "outward-conservative-half-open-l-infinity-cover"
 _ENDPOINT_ROUNDING = "floor-ceil-with-multiply-back-outward-correction"
-_FREE_SPACE_RULE = "not-planned"
+_EXPANSION_APPROVAL_RULE = (
+    "covered-block-with-at-least-one-observed-voxel"
+)
 
 _BlockIndex = tuple[int, int, int]
 
@@ -51,6 +58,8 @@ class TsdfBlockPlan:
     block_resolution: int
     block_extent_m: float
     truncation_m: float
+    free_space_rule: str
+    expanded_from_plan_sha256: str | None
     frame_stride: int
     total_observations: int
     selected_observations: int
@@ -134,6 +143,7 @@ def load_tsdf_block_plan(path: str | Path) -> TsdfBlockPlan:
             "planning",
             "surface_blocks",
             "active_blocks",
+            "expansion",
         },
         "block_plan",
     )
@@ -168,7 +178,8 @@ def load_tsdf_block_plan(path: str | Path) -> TsdfBlockPlan:
         block_resolution,
         block_extent,
     ) = _load_grid(root)
-    truncation = _load_activation(root, voxel_size)
+    truncation, free_space_rule = _load_activation(root, voxel_size)
+    expanded_from = _load_expansion(root)
     planning = _load_planning(root)
     surface_blocks = _load_block_list(
         _require_field(root, "surface_blocks", "block_plan"),
@@ -196,6 +207,8 @@ def load_tsdf_block_plan(path: str | Path) -> TsdfBlockPlan:
         block_resolution=block_resolution,
         block_extent_m=block_extent,
         truncation_m=truncation,
+        free_space_rule=free_space_rule,
+        expanded_from_plan_sha256=expanded_from,
         frame_stride=planning["frame_stride"],
         total_observations=planning["total_observations"],
         selected_observations=planning["selected_observations"],
@@ -355,7 +368,7 @@ def _load_grid(
 def _load_activation(
     root: dict[str, Any],
     voxel_size_m: float,
-) -> float:
+) -> tuple[float, str]:
     activation = _require_object(
         _require_field(root, "activation", "block_plan"),
         "block_plan.activation",
@@ -395,13 +408,13 @@ def _load_activation(
         _ENDPOINT_ROUNDING,
         "block_plan.activation",
     )
-    _require_exact_string(
+    free_space_rule = _require_enum_string(
         activation,
         "free_space_rule",
-        _FREE_SPACE_RULE,
+        TSDF_FREE_SPACE_RULES,
         "block_plan.activation",
     )
-    return truncation
+    return truncation, free_space_rule
 
 
 def _load_planning(root: dict[str, Any]) -> dict[str, Any]:
@@ -644,6 +657,61 @@ def _require_exact_string(
         raise TsdfError(
             f"{label}.{field}: expected {expected!r}, received {result!r}"
         )
+
+
+def _require_enum_string(
+    value: dict[str, Any],
+    field: str,
+    permitted: tuple[str, ...],
+    label: str,
+) -> str:
+    result = _require_string(value, field, label)
+    if result not in permitted:
+        expected = ", ".join(repr(item) for item in permitted)
+        raise TsdfError(
+            f"{label}.{field}: expected one of {expected}, "
+            f"received {result!r}"
+        )
+    return result
+
+
+def _load_expansion(root: dict[str, Any]) -> str | None:
+    """Load optional expansion provenance, returning the source digest."""
+
+    if "expansion" not in root:
+        return None
+    expansion = _require_object(
+        _require_field(root, "expansion", "block_plan"),
+        "block_plan.expansion",
+    )
+    _reject_unknown_fields(
+        expansion,
+        {"source_plan_sha256", "approval_rule", "added_blocks"},
+        "block_plan.expansion",
+    )
+    source_digest = _require_string(
+        expansion,
+        "source_plan_sha256",
+        "block_plan.expansion",
+    )
+    if not _SHA256.fullmatch(source_digest):
+        raise TsdfError(
+            "block_plan.expansion.source_plan_sha256: expected 64 lowercase "
+            "hexadecimal characters"
+        )
+    _require_exact_string(
+        expansion,
+        "approval_rule",
+        _EXPANSION_APPROVAL_RULE,
+        "block_plan.expansion",
+    )
+    added = _require_field(expansion, "added_blocks", "block_plan.expansion")
+    if isinstance(added, bool) or not isinstance(added, int) or added < 0:
+        raise TsdfError(
+            "block_plan.expansion.added_blocks: expected a nonnegative "
+            "integer"
+        )
+    return source_digest
 
 
 def _require_number_triplet(

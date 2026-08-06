@@ -116,6 +116,10 @@ The project is intentionally advancing through small, testable checkpoints.
   coverage, merging the approved set with the source plan without ever
   removing a planned block, and reporting the proposed block and
   voxel-slot deltas without serializing a plan.
+- Serialization of that approved set as a new `.sftplan` carrying the
+  conservative-nearest-pixel-footprint free-space rule, the source plan
+  digest and the approval rule, never overwriting or modifying its
+  source, and proved to strict-load, replay-verify and allocate storage.
 - Known-pose depth AABB inference with truncation padding, outward global-grid
   snapping, and the same bounded TSDF integrator.
 - TSDF exact-zero and sign-changing-edge extraction to XYZ surface-point PLY.
@@ -129,23 +133,21 @@ The project is intentionally advancing through small, testable checkpoints.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. serialize the proposed expanded block set as a new `.sftplan`, carrying
-   the approval rule, source plan digest, and per-block provenance;
-2. replace the empty-storage guard with explicit observation provenance,
+1. replace the empty-storage guard with explicit observation provenance,
    idempotency, and resumable/nonempty fusion, then define complete fusion
    diagnostics over the chosen spatial domain;
-3. persist a block-backed TSDF artifact and connect normalization plus sparse
+2. persist a block-backed TSDF artifact and connect normalization plus sparse
    surface/mesh consumers;
-4. add culled, scalable sparse traversal and an optimized backend suitable for
+3. add culled, scalable sparse traversal and an optimized backend suitable for
    full sequences;
-5. add confidence and sensor-dependent weighting, robust depth/pose outlier
+4. add confidence and sensor-dependent weighting, robust depth/pose outlier
    filtering, the visibility/culling policy, and configurable production
    bounds;
-6. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
-7. refine production meshing with exact-zero cells, normals,
+5. run full TUM/ARKitScenes samples and publish geometry accuracy reports;
+6. refine production meshing with exact-zero cells, normals,
    connected-component and quality validation, and optimized extraction;
-8. add gravity/floor alignment, floor and wall candidates, and openings; and
-9. add a top-down/3D Inspector view.
+7. add gravity/floor alignment, floor and wall candidates, and openings; and
+8. add a top-down/3D Inspector view.
 
 ## Later major milestones
 
@@ -191,7 +193,7 @@ one-observation context-backed block-ray tracing, complete selected-observation
 block-ray survey, conservative one-pixel footprint coverage, per-voxel
 sampling classification, cross-view voxel and block resolution,
 one-observation and whole-scan footprint coverage, whole-scan carvable
-free space, plan-expansion proposal,
+free space, plan-expansion proposal, expanded-plan writing,
 surface-point, and triangle-mesh commands in the repository
 README. Their
 deterministic hashes, inferred bounds, dense/sparse parity, planned block

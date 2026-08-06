@@ -75,9 +75,10 @@ existing-plan traversal APIs, plus the coverage and cross-view diagnostics. The
 deliberately redundant session-backed scalar and one-voxel traversal APIs
 remain available as reference paths.
 
-Nothing above writes a plan or carves anything: every coverage and verdict
-command is strictly non-mutating. Serializing an expanded `.sftplan`, full
-block fusion, scalable sparse execution, evidence thresholds and confidence
+Every coverage and verdict command above is strictly non-mutating. The one
+command that does write is `tsdf-block-plan-expand`, which serializes the
+approved expanded block set as a new `.sftplan` without touching its source.
+Fusing into those added blocks, full block fusion, scalable sparse execution, evidence thresholds and confidence
 weighting, robust outlier filtering, production meshing, normals, SLAM, map
 packages, mobile capture, and the visual inspector are deliberately not
 implemented yet.
@@ -1384,7 +1385,40 @@ deliberately the next checkpoint, so the approval policy can be reviewed on
 its own. The exact contract is in
 [`docs/tsdf-plan-expansion.md`](docs/tsdf-plan-expansion.md).
 
-Writing the expanded plan, observation idempotency, complete fusion,
+Finally, write that expanded set as a real plan:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-plan-expand `
+  outputs\progress-blocks.sftplan `
+  testsixtures\minimal.vgsession `
+  outputs\progress-blocks-expanded.sftplan
+```
+
+This is the first command in the project that writes a plan. Only the active
+block set, its derived counts, the free-space rule and a new `expansion`
+provenance object differ from the source; session id, replay digest, grid,
+truncation, every observation count and the whole `surface_blocks` tuple are
+carried through unchanged.
+
+```text
+expansion.source_plan_sha256  digest of the plan this came from
+expansion.approval_rule       covered-block-with-at-least-one-observed-voxel
+activation.free_space_rule    conservative-nearest-pixel-footprint
+```
+
+A plan whose active set contains blocks with no measured surface must not keep
+claiming `free_space_rule: not-planned`, so that field moves and the source
+digest is recorded. Both are validated on load.
+
+The source plan is never modified or overwritten, the output must not already
+exist, writing is atomic, and the same proposal always produces byte-identical
+files. The written plan is proved to be a first-class plan: it strict-loads,
+still passes `verify_tsdf_block_plan_replay` against its session, and
+allocates storage — 40 blocks and 20,480 voxel slots on the far-depth fixture,
+up from 32 and 16,384. The exact contract is in
+[`docs/tsdf-expanded-plan.md`](docs/tsdf-expanded-plan.md).
+
+Fusing into the added blocks, observation idempotency, resumable fusion,
 confidence weighting, persistence, and optimization remain separate later
 checkpoints.
 
@@ -1460,6 +1494,8 @@ the whole-scan carvable free-space sweep is in
 [`docs/tsdf-domain-cross-view.md`](docs/tsdf-domain-cross-view.md),
 the plan-expansion proposal is in
 [`docs/tsdf-plan-expansion.md`](docs/tsdf-plan-expansion.md),
+writing the expanded plan is in
+[`docs/tsdf-expanded-plan.md`](docs/tsdf-expanded-plan.md),
 immutable selected-observation replay/depth preparation is in
 [`docs/tsdf-replay-depth-context.md`](docs/tsdf-replay-depth-context.md),
 surface extraction is in [`docs/surface-points.md`](docs/surface-points.md),

@@ -11,9 +11,10 @@ for: **which blocks should the plan actually hold?**
 ```
 
 It proposes the canonical expanded block set. It deliberately does **not**
-serialize a plan, so the approval policy can be reviewed and tested before any
-code writes an artifact. Writing the expanded `.sftplan` is the next
-checkpoint.
+serialize a plan, so the approval policy stays reviewable and testable
+independently of the code that writes an artifact; writing the proposal out is
+a separate step, in
+[`tsdf-expanded-plan.md`](tsdf-expanded-plan.md).
 
 ## The approval rule
 
@@ -136,16 +137,17 @@ that checkpoint's 262,144-outcome cap.
 
 ## Precisely deferred next phases
 
-1. serialize the expanded block set as a new `.sftplan`, carrying the approval
-   rule, the source plan digest, and per-block provenance for every added
-   coordinate;
-2. explicit idempotency and resumable/nonempty fusion over that expanded
+The proposal is now serialized by
+[`tsdf-expanded-plan.md`](tsdf-expanded-plan.md), which writes it as a new
+`.sftplan` carrying the approval rule and source plan digest.
+
+1. explicit idempotency and resumable/nonempty fusion over that expanded
    domain;
-3. complete fusion diagnostics, persistent block-backed TSDF artifacts,
+2. complete fusion diagnostics, persistent block-backed TSDF artifacts,
    normalization, and sparse surface/mesh consumers;
-4. evidence thresholds, confidence and sensor-dependent weighting, outlier
+3. evidence thresholds, confidence and sensor-dependent weighting, outlier
    rejection, and the visibility/culling policy;
-5. scalable streaming, optimized CPU, parallel, or GPU execution; and
-6. real-dataset accuracy, production meshing, structural mapping, Inspector
+4. scalable streaming, optimized CPU, parallel, or GPU execution; and
+5. real-dataset accuracy, production meshing, structural mapping, Inspector
    work, pose estimation, SLAM, semantics, localization, and
    `SpatialMapPackage` export.
