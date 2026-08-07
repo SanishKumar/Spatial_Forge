@@ -1615,6 +1615,53 @@ fails, and re-fusing a fused block is refused rather than silently doubled.
 The exact contract is in
 [`docs/tsdf-block-vector-fusion.md`](docs/tsdf-block-vector-fusion.md).
 
+## Run it against a real depth camera
+
+Everything above uses committed or generated fixtures. To reconstruct real
+sensor data, download a TUM RGB-D sequence, import it, plan, and score the
+result against frames the fusion never saw:
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge scan import-tum `
+  datasets\rgbd_dataset_freiburg1_xyz `
+  datasets\freiburg1-xyz.vgsession
+```
+
+```powershell
+.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-plan `
+  datasets\freiburg1-xyz.vgsession `
+  datasets\fr1xyz.sftplan `
+  --voxel-size-m 0.03 --truncation-m 0.09 --frame-stride 8
+```
+
+```powershell
+.\.venv\Scripts\python.exe tools\tum_reconstruction_report.py `
+  datasets\freiburg1-xyz.vgsession `
+  datasets\fr1xyz.sftplan
+```
+
+The report fuses the plan, then back-projects depth from the 98 frames the
+plan did not select and asks what the reconstruction says at those points. A
+correct TSDF reads zero on a real surface, so the interpolated value scaled by
+the truncation is a signed surface error:
+
+```text
+fuse: 33.3s applied=3052349 evaluated=62903808 rate=1,891,504 voxel-observations/s
+held-out frames: 98 (never fused)
+held-out depth samples: 1428048; inside observed voxels: 1425233 (99.8%)
+
+trilinear: n=1416479
+  mean signed        +3.8 mm
+  median |error|      9.3 mm
+  rms                20.4 mm
+  p95 |error|        45.6 mm
+  within one voxel (30 mm): 87.3%
+```
+
+The dataset is not committed and `datasets/` is gitignored. The full method,
+the numbers, what broke, and what the result does not prove are in
+[`docs/tum-validation.md`](docs/tum-validation.md).
+
 Both TSDF artifacts use the same `.sftsdf` contract. Mesh the sparse result
 directly:
 

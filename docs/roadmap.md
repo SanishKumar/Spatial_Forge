@@ -149,6 +149,11 @@ checkpoint is added and the invariants everything is pinned to.
   own retained fields, proved byte-identical to the voxel-by-voxel block
   traversal on every fixture block and on room-scan blocks, and to the
   one-shot plan traversal across a whole fused plan.
+- First real-sensor validation: 99 frames of TUM `rgbd_dataset_freiburg1_xyz`
+  fused at 30 mm voxels and scored against 98 held-out frames the fusion never
+  saw, giving a 9.3 mm median and 20.4 mm rms trilinear surface error with
+  99.8% of held-out depth landing in observed voxels, plus a committed
+  reproducible report tool.
 - First non-degenerate validation: a seeded 20-frame 64x48 room scan with
   off-grid surfaces and 4 mm depth noise, recovering the known walls to
   sub-centimetre mean bias at 40 mm voxels and producing a 60,072-triangle
@@ -166,23 +171,29 @@ checkpoint is added and the invariants everything is pinned to.
 These complete the architecture's first geometric proof before pose estimation
 or SLAM:
 
-1. drive the block and observation ledgers from field fusion, so resumable,
+1. vectorise the block planner, which at about 2 seconds per 640x480 frame is
+   now the pipeline's dominant cost, using the existing per-pixel path as its
+   reference;
+2. stream or window the replay/depth context, which at 640x480 hits its
+   512 MB retained-depth ceiling after roughly 208 frames and so cannot hold a
+   full sequence;
+3. drive the block and observation ledgers from field fusion, so resumable,
    idempotent and partial-frame fusion runs at the vector path's rate too and
    a plan-wide entry point exists;
-2. persist a block-backed TSDF artifact together with its fusion ledger, so
+4. persist a block-backed TSDF artifact together with its fusion ledger, so
    resumption survives process exit, and connect normalization plus sparse
    surface/mesh consumers;
-3. run a full TUM RGB-D sequence and publish geometry accuracy against its
-   ground-truth trajectory;
-4. add culled, scalable sparse traversal suitable for full sequences;
-5. add confidence and sensor-dependent weighting, robust depth/pose outlier
+5. add culled, scalable sparse traversal suitable for full sequences;
+6. refine production meshing with exact-zero cells, normals,
+   connected-component and quality validation, and optimized extraction, which
+   real data already requires: the fixed six-tetrahedron split produces
+   non-manifold vertices on the TUM volume and the mesher correctly refuses it;
+7. add confidence and sensor-dependent weighting, robust depth/pose outlier
    filtering, the visibility/culling policy, and configurable production
    bounds;
-6. run further real datasets such as ARKitScenes and publish accuracy reports;
-7. refine production meshing with exact-zero cells, normals,
-   connected-component and quality validation, and optimized extraction;
-8. add gravity/floor alignment, floor and wall candidates, and openings; and
-9. add a top-down/3D Inspector view.
+8. run further real datasets such as ARKitScenes and publish accuracy reports;
+9. add gravity/floor alignment, floor and wall candidates, and openings; and
+10. add a top-down/3D Inspector view.
 
 ## Later major milestones
 
