@@ -248,7 +248,7 @@ spatialforge/     library and CLI
   mesh.py           triangle extraction
   tum_importer.py   TUM RGB-D → session format
 tools/            reproducible analysis and rendering scripts
-tests/            39 test modules, 442 tests
+tests/            39 test modules, 453 tests
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -259,7 +259,7 @@ docs/             format specs, algorithm notes, validation reports
 .venv/Scripts/python.exe -W error -m unittest discover -s tests -p "test_*.py"
 ```
 
-442 tests, about 75 seconds, must finish `OK`. Warnings are errors. Tests
+453 tests, about 80 seconds, must finish `OK`. Warnings are errors. Tests
 assert no filesystem changes and patch functions an operation must not call,
 then assert they were never reached.
 
