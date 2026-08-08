@@ -30,12 +30,22 @@ import argparse
 import hashlib
 import json
 import platform
-import subprocess
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
+
+if __package__ in (None, ""):  # run as a script rather than imported
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools._output import (  # noqa: E402
+    non_negative_int,
+    positive_int,
+    publishing,
+    reserve_output,
+    source_state,
+)
 
 from spatialforge import (
     allocate_empty_tsdf_blocks,
@@ -189,22 +199,6 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def git_commit() -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            cwd=Path(__file__).resolve().parent.parent,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip() or None
-
-
 def summarise(errors: np.ndarray, voxel_size_m: float) -> dict[str, float]:
     absolute = np.abs(errors)
     return {
@@ -237,15 +231,41 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("session", type=Path)
     parser.add_argument("plan", type=Path)
-    parser.add_argument("--held-out-offset", type=int, default=4)
-    parser.add_argument("--pixel-step", type=int, default=4)
+    parser.add_argument("--held-out-offset", type=non_negative_int, default=4)
+    parser.add_argument("--pixel-step", type=positive_int, default=4)
     parser.add_argument(
         "--manifest-out",
         type=Path,
         default=None,
         help="Write a machine-readable result manifest to this JSON path.",
     )
+    parser.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help=(
+            "Write a manifest even though the working tree has uncommitted "
+            "changes. The manifest records that it was not clean."
+        ),
+    )
     arguments = parser.parse_args(argv)
+
+    manifest_path: Path | None = None
+    source_commit: str | None = None
+    worktree_clean: bool | None = None
+    if arguments.manifest_out is not None:
+        manifest_path = reserve_output(
+            arguments.manifest_out,
+            ".json",
+            protected=(arguments.session, arguments.plan),
+        )
+        source_commit, worktree_clean = source_state()
+        if worktree_clean is False and not arguments.allow_dirty:
+            raise SystemExit(
+                "refusing to write a result manifest from a dirty working "
+                "tree: the recorded commit would not describe the code that "
+                "produced these numbers. Commit first, or pass --allow-dirty "
+                "to record the run as unclean."
+            )
 
     session = load_scan_session(arguments.session)
     plan = load_tsdf_block_plan(arguments.plan)
@@ -254,6 +274,12 @@ def main(argv: list[str] | None = None) -> int:
             f"--held-out-offset {arguments.held_out_offset} is a multiple of "
             f"the plan's frame_stride={plan.frame_stride}; the evaluation "
             "frames would be the fused ones"
+        )
+    if arguments.held_out_offset >= plan.frame_stride:
+        raise SystemExit(
+            f"--held-out-offset {arguments.held_out_offset} is outside the "
+            f"plan's frame_stride={plan.frame_stride}; use an offset in "
+            f"[1, {plan.frame_stride - 1}]"
         )
     camera, depth_scale_m = _validate_reconstruction_contract(session)
     print(
@@ -363,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
     describe("nearest voxel", nearest_errors, plan.voxel_size_m)
     describe("trilinear", linear_errors, plan.voxel_size_m)
 
-    if arguments.manifest_out is not None:
+    if manifest_path is not None:
         manifest = {
             "schema": RESULT_MANIFEST_SCHEMA,
             "schema_version": RESULT_MANIFEST_SCHEMA_VERSION,
@@ -374,7 +400,8 @@ def main(argv: list[str] | None = None) -> int:
                 "is a cross-view consistency residual, not distance to a "
                 "surveyed surface."
             ),
-            "commit": git_commit(),
+            "source_commit": source_commit,
+            "source_worktree_clean": worktree_clean,
             "environment": {
                 "python": platform.python_version(),
                 "numpy": np.__version__,
@@ -420,12 +447,10 @@ def main(argv: list[str] | None = None) -> int:
                 "fusion": round(seconds, 3),
             },
         }
-        arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
-        arguments.manifest_out.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        print(f"\nwrote manifest {arguments.manifest_out}")
+        payload = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        with publishing(manifest_path, ".json") as temporary:
+            temporary.write_text(payload, encoding="utf-8")
+        print(f"\nwrote manifest {manifest_path}")
     return 0
 
 

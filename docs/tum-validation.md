@@ -63,10 +63,15 @@ So the correct sentence is:
 
 Not "fused at 30 mm, and that is what the animation shows."
 
-The machine-readable provenance for the 30 mm run — commit, parameters,
-environment, timings, metrics and input digests — is in
+The machine-readable provenance for the 30 mm run — source commit and
+working-tree state, parameters, environment, timings, metrics and input
+digests — is in
 [`../results/tum-freiburg1-xyz.json`](../results/tum-freiburg1-xyz.json),
-written by the report tool itself so it cannot drift from what was run.
+generated alongside the run by the report tool rather than written by hand.
+The tool refuses to write one from a dirty working tree unless explicitly
+told to, and records that it was unclean when told. It is still a plain
+file that a person can edit afterwards, and there is no verification
+command that re-checks a manifest against its inputs.
 
 ## What the 9.3 mm actually measures
 

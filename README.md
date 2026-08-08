@@ -141,8 +141,13 @@ python tools/tum_reconstruction_report.py \
   datasets/fr1xyz.vgsession datasets/fr1xyz.sftplan
 ```
 
+Step 3 fuses in memory and reports; it writes no volume. To get a picture you
+need a PLY, and only the dense path produces one — so rendering is a separate
+example, not step 4 of the sequence above:
+
 ```bash
-# 4. Render the result
+# Extract surface points from a dense volume, then render that PLY
+python -m spatialforge reconstruct surface-points scene.sftsdf scene.ply
 python tools/render_point_cloud.py scene.ply docs/assets/scene
 ```
 

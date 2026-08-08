@@ -12,8 +12,9 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -46,6 +47,21 @@ def build_plan(parent: Path, *, frame_stride: int) -> Path:
         frame_stride=frame_stride,
     )
     return output
+
+
+@contextmanager
+def source_state(commit: str | None, clean: bool | None):
+    """Pin the recorded source state so tests do not read the real repo.
+
+    Whether this checkout happens to be dirty is not a property of the tool,
+    and a test that depends on it fails for unrelated reasons.
+    """
+
+    with patch(
+        "tools.tum_reconstruction_report.source_state",
+        return_value=(commit, clean),
+    ):
+        yield
 
 
 def run_report(arguments: list[str]) -> str:
@@ -107,18 +123,19 @@ class HeldOutReportTests(unittest.TestCase):
             temporary_root = Path(temporary_dir)
             plan_path = build_plan(temporary_root, frame_stride=2)
             manifest_path = temporary_root / "result.json"
-            output = run_report(
-                [
-                    str(FIXTURE),
-                    str(plan_path),
-                    "--held-out-offset",
-                    "1",
-                    "--pixel-step",
-                    "1",
-                    "--manifest-out",
-                    str(manifest_path),
-                ]
-            )
+            with source_state("abc123", True):
+                output = run_report(
+                    [
+                        str(FIXTURE),
+                        str(plan_path),
+                        "--held-out-offset",
+                        "1",
+                        "--pixel-step",
+                        "1",
+                        "--manifest-out",
+                        str(manifest_path),
+                    ]
+                )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertIn("held-out frames: 1 (never fused)", output)
@@ -146,20 +163,23 @@ class HeldOutReportTests(unittest.TestCase):
             temporary_root = Path(temporary_dir)
             plan_path = build_plan(temporary_root, frame_stride=2)
             manifest_path = temporary_root / "result.json"
-            run_report(
-                [
-                    str(FIXTURE),
-                    str(plan_path),
-                    "--held-out-offset",
-                    "1",
-                    "--pixel-step",
-                    "1",
-                    "--manifest-out",
-                    str(manifest_path),
-                ]
-            )
+            with source_state("abc123", True):
+                run_report(
+                    [
+                        str(FIXTURE),
+                        str(plan_path),
+                        "--held-out-offset",
+                        "1",
+                        "--pixel-step",
+                        "1",
+                        "--manifest-out",
+                        str(manifest_path),
+                    ]
+                )
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
+        self.assertEqual(manifest["source_commit"], "abc123")
+        self.assertIs(manifest["source_worktree_clean"], True)
         self.assertEqual(manifest["schema"], "spatialforge.result-manifest")
         self.assertEqual(manifest["measurement"], "held-out-tsdf-residual")
         self.assertIn(
@@ -220,6 +240,247 @@ class HeldOutReportTests(unittest.TestCase):
             after = sorted(path.name for path in temporary_root.iterdir())
 
         self.assertEqual(before, after)
+
+
+class SourceProvenanceTests(unittest.TestCase):
+    """A manifest that cannot name its own source code is not evidence."""
+
+    def report_with(
+        self,
+        temporary_root: Path,
+        commit: str | None,
+        clean: bool | None,
+        *extra: str,
+    ) -> Path:
+        plan_path = build_plan(temporary_root, frame_stride=2)
+        manifest_path = temporary_root / "result.json"
+        with source_state(commit, clean):
+            run_report(
+                [
+                    str(FIXTURE),
+                    str(plan_path),
+                    "--held-out-offset",
+                    "1",
+                    "--pixel-step",
+                    "1",
+                    "--manifest-out",
+                    str(manifest_path),
+                    *extra,
+                ]
+            )
+        return manifest_path
+
+    def test_a_dirty_tree_is_refused_by_default(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            with self.assertRaises(SystemExit) as caught:
+                self.report_with(temporary_root, "abc123", False)
+            self.assertIn("dirty working tree", str(caught.exception))
+            self.assertFalse((temporary_root / "result.json").exists())
+
+    def test_a_dirty_tree_is_recorded_when_explicitly_allowed(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            manifest_path = self.report_with(
+                Path(temporary_dir),
+                "abc123",
+                False,
+                "--allow-dirty",
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["source_commit"], "abc123")
+        self.assertIs(manifest["source_worktree_clean"], False)
+
+    def test_an_unavailable_repository_is_recorded_as_unknown(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            manifest_path = self.report_with(
+                Path(temporary_dir),
+                None,
+                None,
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        self.assertIsNone(manifest["source_commit"])
+        self.assertIsNone(manifest["source_worktree_clean"])
+
+
+class OutputSafetyTests(unittest.TestCase):
+    """Outputs must never overwrite anything, least of all their inputs."""
+
+    def test_report_refuses_to_overwrite_an_existing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            plan_path = build_plan(temporary_root, frame_stride=2)
+            manifest_path = temporary_root / "result.json"
+            manifest_path.write_text("{}", encoding="utf-8")
+            with self.assertRaises(SystemExit) as caught, source_state(
+                "abc123", True
+            ):
+                report_main(
+                    [
+                        str(FIXTURE),
+                        str(plan_path),
+                        "--held-out-offset",
+                        "1",
+                        "--manifest-out",
+                        str(manifest_path),
+                    ]
+                )
+            self.assertIn("already exists", str(caught.exception))
+            self.assertEqual(
+                manifest_path.read_text(encoding="utf-8"),
+                "{}",
+            )
+
+    def test_report_refuses_to_write_over_its_own_inputs(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            plan_path = build_plan(temporary_root, frame_stride=2)
+            original = plan_path.read_bytes()
+            # The plan and the session directory itself, plus a file inside
+            # the session: all three are inputs and none may be written over.
+            for target, expected in (
+                (plan_path, "must end in .json"),
+                (FIXTURE, "must end in .json"),
+                (FIXTURE / "manifest.json", "write over an input"),
+            ):
+                with self.subTest(target=target.name):
+                    with self.assertRaises(SystemExit) as caught, source_state(
+                        "abc123", True
+                    ):
+                        report_main(
+                            [
+                                str(FIXTURE),
+                                str(plan_path),
+                                "--held-out-offset",
+                                "1",
+                                "--manifest-out",
+                                str(target),
+                            ]
+                        )
+                    self.assertIn(expected, str(caught.exception))
+            self.assertEqual(plan_path.read_bytes(), original)
+            self.assertTrue((FIXTURE / "manifest.json").exists())
+
+    def test_renderer_refuses_to_overwrite_existing_images(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            ply_path = temporary_root / "cloud.ply"
+            write_ply(ply_path, sample_cloud())
+            existing = temporary_root / "out.png"
+            existing.write_bytes(b"not an image")
+            with self.assertRaises(SystemExit) as caught:
+                render_main(
+                    [
+                        str(ply_path),
+                        str(temporary_root / "out"),
+                        "--size",
+                        "32",
+                    ]
+                )
+            self.assertIn("already exists", str(caught.exception))
+            self.assertEqual(existing.read_bytes(), b"not an image")
+            self.assertFalse((temporary_root / "out.gif").exists())
+
+    def test_renderer_refuses_to_write_over_its_input(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            ply_path = temporary_root / "cloud.png"
+            write_ply(ply_path, sample_cloud())
+            with self.assertRaises(SystemExit) as caught:
+                render_main(
+                    [
+                        str(ply_path),
+                        str(temporary_root / "cloud"),
+                        "--size",
+                        "32",
+                    ]
+                )
+            self.assertIn("write over an input", str(caught.exception))
+
+    def test_a_failed_render_publishes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            ply_path = temporary_root / "cloud.ply"
+            write_ply(ply_path, sample_cloud())
+            with self.assertRaises(SystemExit):
+                render_main(
+                    [
+                        str(ply_path),
+                        str(temporary_root / "out"),
+                        "--elevation",
+                        "90",
+                    ]
+                )
+            leftovers = sorted(
+                path.name
+                for path in temporary_root.iterdir()
+                if path.name != "cloud.ply"
+            )
+
+        self.assertEqual(leftovers, [])
+
+
+class ArgumentValidationTests(unittest.TestCase):
+    def test_report_rejects_unusable_arguments(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            plan_path = build_plan(Path(temporary_dir), frame_stride=2)
+            cases = {
+                "zero pixel step": ["--pixel-step", "0"],
+                "negative pixel step": ["--pixel-step", "-4"],
+                "negative offset": ["--held-out-offset", "-1"],
+            }
+            for name, extra in cases.items():
+                with self.subTest(case=name):
+                    # argparse prints its usage banner before exiting.
+                    with (
+                        redirect_stderr(io.StringIO()),
+                        self.assertRaises(SystemExit),
+                    ):
+                        report_main(
+                            [str(FIXTURE), str(plan_path), *extra]
+                        )
+
+    def test_offset_outside_the_stride_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            plan_path = build_plan(Path(temporary_dir), frame_stride=2)
+            with self.assertRaises(SystemExit) as caught:
+                report_main(
+                    [
+                        str(FIXTURE),
+                        str(plan_path),
+                        "--held-out-offset",
+                        "3",
+                    ]
+                )
+        self.assertIn("outside the plan's frame_stride", str(caught.exception))
+
+    def test_renderer_rejects_unusable_arguments(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            ply_path = temporary_root / "cloud.ply"
+            write_ply(ply_path, sample_cloud())
+            cases = {
+                "zero frames": ["--frames", "0"],
+                "zero size": ["--size", "0"],
+                "zero point size": ["--point-size", "0"],
+                "fill above one": ["--fill", "1.5"],
+                "fill of zero": ["--fill", "0"],
+                "degenerate elevation": ["--elevation", "-90"],
+            }
+            for name, extra in cases.items():
+                with self.subTest(case=name):
+                    with (
+                        redirect_stderr(io.StringIO()),
+                        self.assertRaises(SystemExit),
+                    ):
+                        render_main(
+                            [
+                                str(ply_path),
+                                str(temporary_root / f"out-{len(name)}"),
+                                *extra,
+                            ]
+                        )
 
 
 class PointCloudRenderTests(unittest.TestCase):

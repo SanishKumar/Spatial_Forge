@@ -23,6 +23,16 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+if __package__ in (None, ""):  # run as a script rather than imported
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools._output import (  # noqa: E402
+    positive_int,
+    publishing,
+    reserve_output,
+    unit_fraction,
+)
+
 # Perceptually ordered stops, dark blue through green to yellow. Sampled so a
 # height ramp stays readable when the GIF is quantised to 255 colours.
 _COLOUR_STOPS = np.array(
@@ -261,13 +271,32 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path)
     parser.add_argument("output_prefix", type=Path)
-    parser.add_argument("--size", type=int, default=720)
-    parser.add_argument("--frames", type=int, default=48)
+    parser.add_argument("--size", type=positive_int, default=720)
+    parser.add_argument("--frames", type=positive_int, default=48)
     parser.add_argument("--elevation", type=float, default=16.0)
-    parser.add_argument("--point-size", type=int, default=4)
+    parser.add_argument("--point-size", type=positive_int, default=4)
     parser.add_argument("--still-azimuth", type=float, default=35.0)
-    parser.add_argument("--fill", type=float, default=0.92)
+    parser.add_argument("--fill", type=unit_fraction, default=0.92)
     arguments = parser.parse_args(argv)
+
+    # At exactly +/-90 degrees the view direction is parallel to world up and
+    # the camera basis collapses, so the whole render becomes NaN.
+    if not -89.0 <= arguments.elevation <= 89.0:
+        raise SystemExit(
+            "--elevation must be within [-89, 89] degrees; at +/-90 the "
+            "camera basis is undefined"
+        )
+
+    still_path = reserve_output(
+        arguments.output_prefix.with_suffix(".png"),
+        ".png",
+        protected=(arguments.input,),
+    )
+    gif_path = reserve_output(
+        arguments.output_prefix.with_suffix(".gif"),
+        ".gif",
+        protected=(arguments.input,),
+    )
 
     points = read_xyz_ply(arguments.input)
     extent = points.max(axis=0) - points.min(axis=0)
@@ -310,8 +339,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         ]
     )[0]
-    still_path = arguments.output_prefix.with_suffix(".png")
-    still.save(still_path)
+    with publishing(still_path, ".png") as temporary:
+        still.save(temporary, format="PNG")
     print(f"wrote {still_path}")
 
     frames = [
@@ -331,15 +360,16 @@ def main(argv: list[str] | None = None) -> int:
             ]
         )
     ]
-    gif_path = arguments.output_prefix.with_suffix(".gif")
-    frames[0].save(
-        gif_path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=70,
-        loop=0,
-        optimize=True,
-    )
+    with publishing(gif_path, ".gif") as temporary:
+        frames[0].save(
+            temporary,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=70,
+            loop=0,
+            optimize=True,
+        )
     print(f"wrote {gif_path} ({len(frames)} frames)")
     return 0
 
