@@ -13,6 +13,11 @@ dist/
 /datasets/
 /outputs/
 /results/
+# ...except the small machine-readable result manifests, which are the
+# provenance record for every published number.
+!/results/
+/results/*
+!/results/*.json
 *.bag
 *.tgz
 

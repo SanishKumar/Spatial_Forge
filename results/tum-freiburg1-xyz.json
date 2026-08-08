@@ -1,0 +1,62 @@
+{
+  "commit": "d358a9d6a252e0dc1f462ce75894b46f60a2694c",
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "evaluation": {
+    "coverage_fraction": 0.9980287777441654,
+    "depth_samples": 1428048,
+    "held_out_frames": 98,
+    "held_out_offset": 4,
+    "nearest_voxel": {
+      "mean_signed_mm": 3.463775764722336,
+      "median_absolute_mm": 12.430288061560399,
+      "p95_absolute_mm": 52.76778038319056,
+      "rms_mm": 23.8491243491998,
+      "samples": 1425233,
+      "within_one_voxel_fraction": 0.8358261421115004
+    },
+    "pixel_step": 4,
+    "samples_in_observed_voxels": 1425233,
+    "trilinear": {
+      "mean_signed_mm": 3.8150644437261905,
+      "median_absolute_mm": 9.288872313054917,
+      "p95_absolute_mm": 45.593339598067224,
+      "rms_mm": 20.39186246546278,
+      "samples": 1416479,
+      "within_one_voxel_fraction": 0.873147431059691
+    }
+  },
+  "inputs": {
+    "plan": "datasets/fr1xyz.sftplan",
+    "plan_sha256": "46a21d10fb942daf9a5d5b08e464ce1948e60fda02d0fad91c58c54fe1ae2383",
+    "replay_digest_sha256": "aed9fc1507925139022dbf534521725d811c33e238d32f7454146633c62f49e7",
+    "session": "datasets/freiburg1-xyz.vgsession",
+    "session_id": "tum-rgbd_dataset_freiburg1_xyz"
+  },
+  "measurement": "held-out-tsdf-residual",
+  "measures": "agreement between the fused volume and depth measured by frames it never saw, using ground-truth camera poses. This is a cross-view consistency residual, not distance to a surveyed surface.",
+  "reconstruction": {
+    "active_blocks": 1241,
+    "contributions_applied": 3052349,
+    "contributions_evaluated": 62903808,
+    "frame_stride": 8,
+    "fused_frames": 99,
+    "observed_voxel_slots": 255995,
+    "path": "sparse-block-vector-fusion",
+    "persisted": false,
+    "planned_voxel_slots": 635392,
+    "surface_blocks": 698,
+    "truncation_m": 0.09,
+    "voxel_size_m": 0.03
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.1.0",
+  "timings_seconds": {
+    "context_build": 7.158,
+    "fusion": 35.114
+  }
+}

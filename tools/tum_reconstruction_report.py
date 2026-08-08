@@ -27,6 +27,10 @@ evaluation frames would be the ones that were fused.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import platform
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -173,6 +177,48 @@ class HeldOutFrame:
         self.sequence = sequence
 
 
+RESULT_MANIFEST_SCHEMA = "spatialforge.result-manifest"
+RESULT_MANIFEST_SCHEMA_VERSION = "0.1.0"
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=Path(__file__).resolve().parent.parent,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def summarise(errors: np.ndarray, voxel_size_m: float) -> dict[str, float]:
+    absolute = np.abs(errors)
+    return {
+        "samples": int(len(errors)),
+        "mean_signed_mm": float(1000 * errors.mean()),
+        "median_absolute_mm": float(1000 * np.median(absolute)),
+        "rms_mm": float(1000 * np.sqrt((errors**2).mean())),
+        "p95_absolute_mm": float(1000 * np.percentile(absolute, 95)),
+        "within_one_voxel_fraction": float(
+            np.count_nonzero(absolute <= voxel_size_m) / len(errors)
+        ),
+    }
+
+
 def describe(label: str, errors: np.ndarray, voxel_size_m: float) -> None:
     absolute = np.abs(errors)
     print(f"\n{label}: n={len(errors)}")
@@ -193,6 +239,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("plan", type=Path)
     parser.add_argument("--held-out-offset", type=int, default=4)
     parser.add_argument("--pixel-step", type=int, default=4)
+    parser.add_argument(
+        "--manifest-out",
+        type=Path,
+        default=None,
+        help="Write a machine-readable result manifest to this JSON path.",
+    )
     arguments = parser.parse_args(argv)
 
     session = load_scan_session(arguments.session)
@@ -214,8 +266,9 @@ def main(argv: list[str] | None = None) -> int:
     storage = allocate_empty_tsdf_blocks(plan, session)
     started = time.perf_counter()
     context = build_tsdf_replay_depth_context(plan, session)
+    context_seconds = time.perf_counter() - started
     print(
-        f"context: {time.perf_counter() - started:.1f}s "
+        f"context: {context_seconds:.1f}s "
         f"retained_depth={context.depth_payload_bytes / 1e6:.0f} MB"
     )
 
@@ -305,16 +358,74 @@ def main(argv: list[str] | None = None) -> int:
         f"inside observed voxels: {covered} "
         f"({100 * covered / max(sampled, 1):.1f}%)"
     )
-    describe(
-        "nearest voxel",
-        np.concatenate(nearest_chunks),
-        plan.voxel_size_m,
-    )
-    describe(
-        "trilinear",
-        np.concatenate(linear_chunks),
-        plan.voxel_size_m,
-    )
+    nearest_errors = np.concatenate(nearest_chunks)
+    linear_errors = np.concatenate(linear_chunks)
+    describe("nearest voxel", nearest_errors, plan.voxel_size_m)
+    describe("trilinear", linear_errors, plan.voxel_size_m)
+
+    if arguments.manifest_out is not None:
+        manifest = {
+            "schema": RESULT_MANIFEST_SCHEMA,
+            "schema_version": RESULT_MANIFEST_SCHEMA_VERSION,
+            "measurement": "held-out-tsdf-residual",
+            "measures": (
+                "agreement between the fused volume and depth measured by "
+                "frames it never saw, using ground-truth camera poses. This "
+                "is a cross-view consistency residual, not distance to a "
+                "surveyed surface."
+            ),
+            "commit": git_commit(),
+            "environment": {
+                "python": platform.python_version(),
+                "numpy": np.__version__,
+                "platform": platform.platform(),
+                "processor": platform.processor(),
+            },
+            "inputs": {
+                "session": arguments.session.as_posix(),
+                "session_id": session.session_id,
+                "plan": arguments.plan.as_posix(),
+                "plan_sha256": file_sha256(arguments.plan),
+                "replay_digest_sha256": plan.replay_digest_sha256,
+            },
+            "reconstruction": {
+                "path": "sparse-block-vector-fusion",
+                "persisted": False,
+                "voxel_size_m": plan.voxel_size_m,
+                "truncation_m": plan.truncation_m,
+                "frame_stride": plan.frame_stride,
+                "fused_frames": plan.selected_observations,
+                "active_blocks": len(plan.active_blocks),
+                "surface_blocks": len(plan.surface_blocks),
+                "planned_voxel_slots": storage.voxel_slots,
+                "observed_voxel_slots": observed,
+                "contributions_applied": applied,
+                "contributions_evaluated": evaluated,
+            },
+            "evaluation": {
+                "held_out_offset": arguments.held_out_offset,
+                "held_out_frames": len(held_out),
+                "pixel_step": arguments.pixel_step,
+                "depth_samples": sampled,
+                "samples_in_observed_voxels": covered,
+                "coverage_fraction": covered / max(sampled, 1),
+                "nearest_voxel": summarise(
+                    nearest_errors,
+                    plan.voxel_size_m,
+                ),
+                "trilinear": summarise(linear_errors, plan.voxel_size_m),
+            },
+            "timings_seconds": {
+                "context_build": round(context_seconds, 3),
+                "fusion": round(seconds, 3),
+            },
+        }
+        arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
+        arguments.manifest_out.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"\nwrote manifest {arguments.manifest_out}")
     return 0
 
 
