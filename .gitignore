@@ -24,6 +24,10 @@ dist/
 # per-increment design notes that sit behind the published docs.
 /docs/working-method.md
 /docs/status.md
+/docs/roadmap.md
+/docs/real-scale-validation.md
+/docs/tsdf-plan-fusion.md
+/docs/tsdf-observation-fusion.md
 /docs/tsdf-voxel-contribution.md
 /docs/tsdf-voxel-update.md
 /docs/tsdf-context-voxel-update.md

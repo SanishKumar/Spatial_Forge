@@ -238,7 +238,7 @@ then assert they were never reached.
 ## Status and licence
 
 Working prototype, actively developed. The known-pose reconstruction path is
-complete and validated on real sensor data; pose estimation, localization and
-semantics are not started. See [`docs/roadmap.md`](docs/roadmap.md).
+complete and validated on real sensor data. Pose estimation, localization and
+semantic mapping are outside the current implementation.
 
 Built as the reconstruction backend for an indoor navigation project.

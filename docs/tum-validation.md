@@ -1,10 +1,10 @@
 # First real-sensor validation: TUM freiburg1_xyz
 
 Every result before this one came from data SpatialForge generated itself.
-[`real-scale-validation.md`](real-scale-validation.md) removed the committed
-fixture's degeneracies but kept its synthetic nature: clean gaussian noise,
-exact poses, no motion blur, no reflective surfaces, no missing returns. This
-page records the first run against a real depth camera.
+The larger synthetic-room test removed the committed fixture's degeneracies
+but kept clean gaussian noise, exact poses, no motion blur, no reflective
+surfaces, and no missing returns. This page records the first run against a
+real depth camera.
 
 ## What was run
 
@@ -126,8 +126,7 @@ synthetic room and a non-manifold one here. The validation is correct to
 refuse, and this is not a regression — it is the first time the mesher has
 seen noisy real geometry. Surface-point extraction succeeds on the same
 volume (10,235 crossing points), so the volume itself is sound; it is the
-triangulation that needs the connected-component and quality work already
-listed on the roadmap.
+triangulation that needs connected-component and quality work.
 
 ## What this does not prove
 
