@@ -69,8 +69,8 @@ global_index_xyz = compose_tsdf_global_voxel_index(
 ```
 
 Both operations leave block coordinates and numeric buffers unchanged. The
-full signed floor-division and range contract is documented in
-[`tsdf-voxel-addressing.md`](tsdf-voxel-addressing.md).
+full signed floor-division and range contract is enforced by
+`locate_tsdf_voxel`.
 
 ## Payload bound
 
@@ -137,8 +137,7 @@ The selected row is the only mutation target. Other rows may already contain
 valid accumulator state and must remain unchanged. A caught failure restores
 the complete selected row from its exact 6,144-byte numeric starting payload.
 The temporary storage is still process-local and is discarded by the CLI; the
-operation neither creates missing blocks nor persists an artifact. See
-[`tsdf-context-block-traversal.md`](tsdf-context-block-traversal.md).
+operation neither creates missing blocks nor persists an artifact.
 
 ## Complete existing-plan consumer
 
@@ -161,8 +160,7 @@ Because preflight proves the starting payload is all zero, caught-failure
 rollback fills the existing arrays with canonical float64 and uint32 zero and
 verifies their bytes and layout. It does not allocate a second whole-storage
 copy. The operation still creates no missing block, changes no block tuple,
-and writes no artifact. See
-[`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+and writes no artifact.
 
 ## Explicitly deferred
 

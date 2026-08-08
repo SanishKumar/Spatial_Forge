@@ -177,8 +177,7 @@ For the fixture this means all eight active rows: four direct surface blocks
 and four truncation-halo blocks. This is complete traversal of the artifact,
 not proof that the artifact is a complete fusion domain. Free-space activation
 and visibility/culling remain undefined by this artifact. The exact execution
-and rollback contract is documented in
-[`tsdf-context-plan-traversal.md`](tsdf-context-plan-traversal.md).
+and rollback contract is enforced by the plan traversal.
 
 ## One-observation block-ray diagnostic
 
@@ -201,14 +200,12 @@ This is a read-only comparison. It does not change the artifact's
 `free_space_rule: not-planned`, append an active coordinate, publish a revised
 plan, allocate storage, or fuse voxels. The thin pixel-center paths are not a
 geometric supercover or proof of conservative nearest-pixel free-space
-coverage. See
-[`tsdf-observation-block-rays.md`](tsdf-observation-block-rays.md).
+coverage.
 
 The same read-only comparison is available across every plan-selected
 observation at once, with per-block observation-support counts, via
 `reconstruct tsdf-block-context-plan-rays`. That aggregate is likewise
-informational: see
-[`tsdf-plan-block-ray-survey.md`](tsdf-plan-block-ray-survey.md).
+informational.
 
 ## Explicitly deferred
 

@@ -19,3 +19,27 @@ dist/
 # Local editor state.
 /.vscode/
 /.idea/
+
+# Working notes kept locally: internal method notes, running status, and the
+# per-increment design notes that sit behind the published docs.
+/docs/working-method.md
+/docs/status.md
+/docs/tsdf-voxel-contribution.md
+/docs/tsdf-voxel-update.md
+/docs/tsdf-context-voxel-update.md
+/docs/tsdf-voxel-traversal.md
+/docs/tsdf-voxel-addressing.md
+/docs/tsdf-voxel-sampling.md
+/docs/tsdf-voxel-cross-view.md
+/docs/tsdf-context-block-traversal.md
+/docs/tsdf-context-plan-traversal.md
+/docs/tsdf-replay-depth-context.md
+/docs/tsdf-observation-block-rays.md
+/docs/tsdf-plan-block-ray-survey.md
+/docs/tsdf-pixel-footprint-coverage.md
+/docs/tsdf-observation-footprint.md
+/docs/tsdf-plan-footprint-survey.md
+/docs/tsdf-block-cross-view.md
+/docs/tsdf-domain-cross-view.md
+/docs/tsdf-plan-expansion.md
+/docs/tsdf-expanded-plan.md
