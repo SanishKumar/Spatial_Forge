@@ -47,6 +47,11 @@ from .tsdf_block_traversal import (
 from .tsdf_block_vector_fusion import (
     fuse_tsdf_block_from_vector_fields,
 )
+from .tsdf_block_volume import (
+    _validate_output as _validate_tsdf_block_volume_output,
+    write_tsdf_block_volume,
+)
+from .tsdf_stream_fusion import fuse_tsdf_plan_streaming
 from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     traverse_tsdf_plan_blocks_from_context,
@@ -378,6 +383,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if arguments.reconstruct_command == "tsdf-block-plan-expand":
             return _run_tsdf_block_plan_expand(
+                arguments.plan,
+                arguments.session,
+                arguments.output,
+            )
+        if arguments.reconstruct_command == "tsdf-block-volume":
+            return _run_tsdf_block_volume(
                 arguments.plan,
                 arguments.session,
                 arguments.output,
@@ -1477,6 +1488,34 @@ def _build_parser() -> argparse.ArgumentParser:
         "output",
         type=Path,
         help="New .sftplan path to write. Must not already exist.",
+    )
+
+    block_volume = reconstruct_commands.add_parser(
+        "tsdf-block-volume",
+        help="Fuse a planned scan and write it as a sparse .sftvol volume.",
+        description=(
+            "Strictly load a replay-matched block plan, allocate its "
+            "storage, and fuse every selected observation one frame at a "
+            "time, so memory does not grow with sequence length. The fused "
+            "sums and weights are written as a .sftvol artifact that "
+            "records the scan, plan and payload digests. The output must "
+            "not already exist."
+        ),
+    )
+    block_volume.add_argument(
+        "plan",
+        type=Path,
+        help="Existing .sftplan artifact to fuse. Never modified.",
+    )
+    block_volume.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession directory the plan was built from.",
+    )
+    block_volume.add_argument(
+        "output",
+        type=Path,
+        help="New .sftvol path to write. Must not already exist.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -6011,6 +6050,115 @@ def _run_tsdf_block_voxel_traverse(
     )
     print(
         f"replay_digest_sha256: {receipt.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_volume(
+    plan_path: Path,
+    session_path: Path,
+    output: Path,
+) -> int:
+    try:
+        _validate_tsdf_block_volume_output(output)
+        plan = load_tsdf_block_plan(plan_path)
+        session = load_scan_session(session_path)
+        storage = allocate_empty_tsdf_blocks(plan, session)
+        receipt = fuse_tsdf_plan_streaming(storage, session)
+        report = write_tsdf_block_volume(storage, receipt, output)
+    except SessionValidationError as error:
+        print(f"TSDF BLOCK VOLUME FAILED {plan_path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF BLOCK VOLUME FAILED {plan_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF BLOCK VOLUME {report.session_id}", file=sys.stdout)
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "frames: "
+        f"total={receipt.total_observations} "
+        f"selected={receipt.selected_observations} "
+        f"fused={receipt.fused_observations}",
+        file=sys.stdout,
+    )
+    print(
+        "skipped: "
+        f"missing_depth={receipt.skipped_missing_depth} "
+        f"missing_pose={receipt.skipped_missing_pose}",
+        file=sys.stdout,
+    )
+    print(
+        "grid: "
+        f"voxel_size_m={plan.voxel_size_m:.9f} "
+        f"truncation_m={plan.truncation_m:.9f} "
+        f"block_resolution={plan.block_resolution}",
+        file=sys.stdout,
+    )
+    print(
+        "blocks: "
+        f"active={receipt.block_count} "
+        f"voxel_slots={receipt.voxel_slots}",
+        file=sys.stdout,
+    )
+    print("fusion_path: streaming-frame-major", file=sys.stdout)
+    print("frames_retained_at_once: 1", file=sys.stdout)
+    print(
+        f"peak_retained_depth_bytes: {receipt.peak_retained_depth_bytes}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_evaluated: {receipt.evaluated_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_applied: {receipt.applied_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"contributions_skipped: {receipt.skipped_count}",
+        file=sys.stdout,
+    )
+    print(
+        "status_counts: "
+        + " ".join(
+            f"{status.value}={count}"
+            for status, count in receipt.status_counts
+        ),
+        file=sys.stdout,
+    )
+    print(
+        f"observed_voxels: {receipt.observed_voxel_count}",
+        file=sys.stdout,
+    )
+    print(
+        f"unknown_voxels: {receipt.unknown_voxel_count}",
+        file=sys.stdout,
+    )
+    print(f"max_weight: {receipt.maximum_weight}", file=sys.stdout)
+    print(
+        f"tsdf_sums_sha256: {receipt.tsdf_sums_sha256}",
+        file=sys.stdout,
+    )
+    print(f"weights_sha256: {receipt.weights_sha256}", file=sys.stdout)
+    print("storage_persisted: yes", file=sys.stdout)
+    print("ledger_persisted: no", file=sys.stdout)
+    print("free_space_coverage_planned: no", file=sys.stdout)
+    print("plan_expanded: no", file=sys.stdout)
+    print(f"volume_bytes: {report.output_bytes}", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    print(
+        f"plan_sha256: {report.source_plan_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {report.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0

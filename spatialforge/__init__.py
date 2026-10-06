@@ -31,6 +31,16 @@ from .tsdf_block_vector_fusion import (
     TsdfBlockVectorFusionReceipt,
     fuse_tsdf_block_from_vector_fields,
 )
+from .tsdf_block_volume import (
+    TsdfBlockVolume,
+    TsdfBlockVolumeReport,
+    load_tsdf_block_volume,
+    write_tsdf_block_volume,
+)
+from .tsdf_stream_fusion import (
+    TsdfStreamFusionReceipt,
+    fuse_tsdf_plan_streaming,
+)
 from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     TsdfPlanTraversalReceipt,
@@ -153,10 +163,13 @@ __all__ = [
     "TsdfBlockStorage",
     "TsdfBlockTraversalReceipt",
     "TsdfBlockVectorFusionReceipt",
+    "TsdfBlockVolume",
+    "TsdfBlockVolumeReport",
     "TsdfContributionStatus",
     "TsdfExpandedPlanReport",
     "TsdfFusionLedger",
     "TsdfPlanFusionReceipt",
+    "TsdfStreamFusionReceipt",
     "TsdfCoverageDomainCrossViewReceipt",
     "TsdfObservationBlockRayReceipt",
     "TsdfObservationBlockRayStatus",
@@ -199,6 +212,7 @@ __all__ = [
     "extract_surface_points",
     "extract_triangle_mesh",
     "fuse_tsdf_block_from_vector_fields",
+    "fuse_tsdf_plan_streaming",
     "fuse_tsdf_plan_blocks_from_context",
     "fuse_tsdf_plan_observations_from_context",
     "import_tum_dataset",
@@ -207,6 +221,7 @@ __all__ = [
     "infer_tsdf_bounds",
     "load_scan_session",
     "load_tsdf_block_plan",
+    "load_tsdf_block_volume",
     "locate_tsdf_voxel",
     "MAX_TSDF_BLOCK_CROSS_VIEW_OUTCOMES",
     "MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES",
@@ -234,6 +249,7 @@ __all__ = [
     "traverse_tsdf_voxel_observations_from_context",
     "TSDF_CONTRIBUTION_STATUS_ORDER",
     "verify_tsdf_block_plan_replay",
+    "write_tsdf_block_volume",
     "write_tsdf_expanded_block_plan",
 ]
 
