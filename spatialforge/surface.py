@@ -21,6 +21,12 @@ from .tsdf import (
 
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# A reference TSDF nests four deep: the root object, its voxel array, one
+# voxel object, and that voxel's index triplet.
+MAX_REFERENCE_TSDF_JSON_NESTING = 16
+_JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
+_JSON_OPENERS = re.compile(r"[\[{]")
+_JSON_BRACKETS = re.compile(r"[\[\]{}]")
 _INDEX_ORDER = "x-fastest-then-y-then-z"
 _TSDF_SIGN = "positive-free-space-negative-behind-surface"
 _UNKNOWN_RULE = "weight-zero"
@@ -133,6 +139,7 @@ def _load_reference_tsdf(path: str | Path) -> _ReferenceTsdf:
     except UnicodeError as error:
         raise SurfaceExtractionError("TSDF input must be UTF-8 JSON") from error
 
+    _reject_excessive_json_nesting(text)
     try:
         document = json.loads(
             text,
@@ -275,6 +282,30 @@ def _load_reference_tsdf(path: str | Path) -> _ReferenceTsdf:
         total_voxels=total_voxels,
         voxels=voxels,
     )
+
+
+def _reject_excessive_json_nesting(text: str) -> None:
+    """Refuse deeply nested JSON before the parser ever sees it.
+
+    Relying on the parser to raise ``RecursionError`` is not portable: how
+    deep it can recurse depends on the interpreter version and the size of
+    the platform's C stack, so the same hostile file was refused on one
+    machine and parsed on another. The bound is enforced here instead, on
+    the bracket structure with string contents removed.
+    """
+
+    if len(_JSON_OPENERS.findall(text)) <= MAX_REFERENCE_TSDF_JSON_NESTING:
+        return
+    depth = 0
+    for match in _JSON_BRACKETS.finditer(_JSON_STRING.sub('""', text)):
+        if match.group() in "[{":
+            depth += 1
+            if depth > MAX_REFERENCE_TSDF_JSON_NESTING:
+                raise SurfaceExtractionError(
+                    "TSDF input JSON is nested too deeply"
+                )
+        else:
+            depth -= 1
 
 
 def _load_voxels(
