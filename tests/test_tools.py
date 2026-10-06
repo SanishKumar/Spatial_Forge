@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
@@ -18,7 +19,14 @@ from unittest.mock import patch
 
 import numpy as np
 
+from spatialforge import (
+    allocate_empty_tsdf_blocks,
+    fuse_tsdf_plan_streaming,
+    load_tsdf_block_plan,
+    write_tsdf_block_volume,
+)
 from spatialforge.session_loader import load_scan_session
+from spatialforge.tsdf_block_mesh import extract_tsdf_block_mesh
 from spatialforge.tsdf_block_plan import plan_tsdf_blocks
 
 from tools.render_point_cloud import main as render_main
@@ -37,15 +45,29 @@ EXACT_TRILINEAR_MM = 0.0
 EXACT_NEAREST_MM = -62.5
 
 
-def build_plan(parent: Path, *, frame_stride: int) -> Path:
-    output = parent / f"stride{frame_stride}.sftplan"
+def build_volume(
+    parent: Path,
+    *,
+    frame_stride: int,
+    voxel_size_m: float = VOXEL_M,
+) -> Path:
+    """Plan, fuse and persist the fixture, returning the ``.sftvol``."""
+
+    stem = f"stride{frame_stride}-{voxel_size_m}"
+    plan_path = parent / f"{stem}.sftplan"
     plan_tsdf_blocks(
         load_scan_session(FIXTURE),
-        output,
-        voxel_size_m=VOXEL_M,
+        plan_path,
+        voxel_size_m=voxel_size_m,
         truncation_m=0.5,
         frame_stride=frame_stride,
     )
+    plan = load_tsdf_block_plan(plan_path)
+    session = load_scan_session(FIXTURE)
+    storage = allocate_empty_tsdf_blocks(plan, session)
+    receipt = fuse_tsdf_plan_streaming(storage, session)
+    output = parent / f"{stem}.sftvol"
+    write_tsdf_block_volume(storage, receipt, output)
     return output
 
 
@@ -121,13 +143,13 @@ class HeldOutReportTests(unittest.TestCase):
     def test_reports_the_fixture_residual_exactly(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
-            plan_path = build_plan(temporary_root, frame_stride=2)
+            volume_path = build_volume(temporary_root, frame_stride=2)
             manifest_path = temporary_root / "result.json"
             with source_state("abc123", True):
                 output = run_report(
                     [
                         str(FIXTURE),
-                        str(plan_path),
+                        str(volume_path),
                         "--held-out-offset",
                         "1",
                         "--pixel-step",
@@ -161,13 +183,13 @@ class HeldOutReportTests(unittest.TestCase):
     def test_manifest_records_what_was_actually_run(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
-            plan_path = build_plan(temporary_root, frame_stride=2)
+            volume_path = build_volume(temporary_root, frame_stride=2)
             manifest_path = temporary_root / "result.json"
             with source_state("abc123", True):
                 run_report(
                     [
                         str(FIXTURE),
-                        str(plan_path),
+                        str(volume_path),
                         "--held-out-offset",
                         "1",
                         "--pixel-step",
@@ -188,8 +210,11 @@ class HeldOutReportTests(unittest.TestCase):
         )
 
         reconstruction = manifest["reconstruction"]
-        self.assertEqual(reconstruction["path"], "sparse-block-vector-fusion")
-        self.assertIs(reconstruction["persisted"], False)
+        self.assertEqual(
+            reconstruction["path"],
+            "sparse-block-streaming-fusion",
+        )
+        self.assertIs(reconstruction["persisted"], True)
         self.assertEqual(reconstruction["voxel_size_m"], VOXEL_M)
         self.assertEqual(reconstruction["frame_stride"], 2)
         self.assertEqual(reconstruction["fused_frames"], 1)
@@ -198,6 +223,9 @@ class HeldOutReportTests(unittest.TestCase):
             "scan-synthetic-0001",
         )
         self.assertEqual(len(manifest["inputs"]["plan_sha256"]), 64)
+        self.assertEqual(len(manifest["inputs"]["volume_sha256"]), 64)
+        self.assertIsNone(manifest["mesh"])
+        self.assertEqual(manifest["schema_version"], "0.2.0")
         self.assertEqual(manifest["environment"]["numpy"], np.__version__)
 
     def test_evaluation_set_cannot_become_the_fused_set(self) -> None:
@@ -205,14 +233,14 @@ class HeldOutReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
-            plan_path = build_plan(temporary_root, frame_stride=2)
+            volume_path = build_volume(temporary_root, frame_stride=2)
             for offset in (0, 2, 4):
                 with self.subTest(offset=offset):
                     with self.assertRaises(SystemExit) as caught:
                         report_main(
                             [
                                 str(FIXTURE),
-                                str(plan_path),
+                                str(volume_path),
                                 "--held-out-offset",
                                 str(offset),
                             ]
@@ -225,12 +253,12 @@ class HeldOutReportTests(unittest.TestCase):
     def test_no_manifest_is_written_unless_asked(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
-            plan_path = build_plan(temporary_root, frame_stride=2)
+            volume_path = build_volume(temporary_root, frame_stride=2)
             before = sorted(path.name for path in temporary_root.iterdir())
             run_report(
                 [
                     str(FIXTURE),
-                    str(plan_path),
+                    str(volume_path),
                     "--held-out-offset",
                     "1",
                     "--pixel-step",
@@ -240,6 +268,107 @@ class HeldOutReportTests(unittest.TestCase):
             after = sorted(path.name for path in temporary_root.iterdir())
 
         self.assertEqual(before, after)
+
+
+class ArtifactChainTests(unittest.TestCase):
+    """The numbers, the volume and the picture must be one reconstruction."""
+
+    def report(self, arguments: list[str]) -> dict:
+        manifest_path = Path(arguments[-1])
+        with source_state("abc123", True):
+            run_report(arguments)
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    def test_a_mesh_of_the_scored_volume_is_recorded_by_digest(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            volume_path = build_volume(temporary_root, frame_stride=2)
+            mesh_path = temporary_root / "mesh.ply"
+            mesh_report = extract_tsdf_block_mesh(volume_path, mesh_path)
+            manifest = self.report(
+                [
+                    str(FIXTURE),
+                    str(volume_path),
+                    "--mesh",
+                    str(mesh_path),
+                    "--pixel-step",
+                    "1",
+                    "--manifest-out",
+                    str(temporary_root / "result.json"),
+                ]
+            )
+
+        mesh = manifest["mesh"]
+        self.assertEqual(mesh["sha256"], mesh_report.output_digest_sha256)
+        self.assertEqual(
+            mesh["source_volume_sha256"],
+            manifest["inputs"]["volume_sha256"],
+        )
+        self.assertEqual(mesh["triangles"], mesh_report.triangles_written)
+        self.assertEqual(mesh["vertices"], mesh_report.vertices_written)
+        self.assertEqual(mesh["minimum_weight"], 1)
+        self.assertEqual(mesh["minimum_component_triangles"], 1)
+        # With no offset given, half the stride is held out.
+        self.assertEqual(manifest["evaluation"]["held_out_offset"], 1)
+
+    def test_a_mesh_of_some_other_volume_is_refused(self) -> None:
+        """The exact mistake this chain exists to make impossible."""
+
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            volume_path = build_volume(temporary_root, frame_stride=2)
+            other_volume = build_volume(
+                temporary_root,
+                frame_stride=2,
+                voxel_size_m=0.25,
+            )
+            other_mesh = temporary_root / "other.ply"
+            extract_tsdf_block_mesh(other_volume, other_mesh)
+            manifest_path = temporary_root / "result.json"
+            with self.assertRaises(SystemExit) as caught, source_state(
+                "abc123", True
+            ):
+                report_main(
+                    [
+                        str(FIXTURE),
+                        str(volume_path),
+                        "--mesh",
+                        str(other_mesh),
+                        "--manifest-out",
+                        str(manifest_path),
+                    ]
+                )
+            written = manifest_path.exists()
+
+        self.assertIn(
+            "was not extracted from this volume",
+            str(caught.exception),
+        )
+        self.assertFalse(written)
+
+    def test_a_volume_fused_from_every_frame_cannot_be_scored(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            volume_path = build_volume(Path(temporary_dir), frame_stride=1)
+            with self.assertRaises(SystemExit) as caught:
+                report_main([str(FIXTURE), str(volume_path)])
+
+        self.assertIn("no held-out frames", str(caught.exception))
+
+    def test_a_volume_is_only_scored_against_its_own_scan(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            volume_path = build_volume(temporary_root, frame_stride=2)
+            altered = temporary_root / "altered.vgsession"
+            shutil.copytree(FIXTURE, altered)
+            depth = altered / "data" / "depth" / "000001.pgm"
+            original = depth.read_bytes()
+            changed = original.replace(b"950", b"900")
+            self.assertNotEqual(changed, original)
+            depth.write_bytes(changed)
+            with self.assertRaises(SystemExit) as caught:
+                report_main([str(altered), str(volume_path)])
+
+        self.assertIn("replay digest does not match", str(caught.exception))
 
 
 class SourceProvenanceTests(unittest.TestCase):
@@ -252,13 +381,13 @@ class SourceProvenanceTests(unittest.TestCase):
         clean: bool | None,
         *extra: str,
     ) -> Path:
-        plan_path = build_plan(temporary_root, frame_stride=2)
+        volume_path = build_volume(temporary_root, frame_stride=2)
         manifest_path = temporary_root / "result.json"
         with source_state(commit, clean):
             run_report(
                 [
                     str(FIXTURE),
-                    str(plan_path),
+                    str(volume_path),
                     "--held-out-offset",
                     "1",
                     "--pixel-step",
@@ -310,7 +439,7 @@ class OutputSafetyTests(unittest.TestCase):
     def test_report_refuses_to_overwrite_an_existing_manifest(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
-            plan_path = build_plan(temporary_root, frame_stride=2)
+            volume_path = build_volume(temporary_root, frame_stride=2)
             manifest_path = temporary_root / "result.json"
             manifest_path.write_text("{}", encoding="utf-8")
             with self.assertRaises(SystemExit) as caught, source_state(
@@ -319,7 +448,7 @@ class OutputSafetyTests(unittest.TestCase):
                 report_main(
                     [
                         str(FIXTURE),
-                        str(plan_path),
+                        str(volume_path),
                         "--held-out-offset",
                         "1",
                         "--manifest-out",
@@ -335,12 +464,12 @@ class OutputSafetyTests(unittest.TestCase):
     def test_report_refuses_to_write_over_its_own_inputs(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
-            plan_path = build_plan(temporary_root, frame_stride=2)
-            original = plan_path.read_bytes()
+            volume_path = build_volume(temporary_root, frame_stride=2)
+            original = volume_path.read_bytes()
             # The plan and the session directory itself, plus a file inside
             # the session: all three are inputs and none may be written over.
             for target, expected in (
-                (plan_path, "must end in .json"),
+                (volume_path, "must end in .json"),
                 (FIXTURE, "must end in .json"),
                 (FIXTURE / "manifest.json", "write over an input"),
             ):
@@ -351,7 +480,7 @@ class OutputSafetyTests(unittest.TestCase):
                         report_main(
                             [
                                 str(FIXTURE),
-                                str(plan_path),
+                                str(volume_path),
                                 "--held-out-offset",
                                 "1",
                                 "--manifest-out",
@@ -359,7 +488,7 @@ class OutputSafetyTests(unittest.TestCase):
                             ]
                         )
                     self.assertIn(expected, str(caught.exception))
-            self.assertEqual(plan_path.read_bytes(), original)
+            self.assertEqual(volume_path.read_bytes(), original)
             self.assertTrue((FIXTURE / "manifest.json").exists())
 
     def test_renderer_refuses_to_overwrite_existing_images(self) -> None:
@@ -424,7 +553,7 @@ class OutputSafetyTests(unittest.TestCase):
 class ArgumentValidationTests(unittest.TestCase):
     def test_report_rejects_unusable_arguments(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
-            plan_path = build_plan(Path(temporary_dir), frame_stride=2)
+            volume_path = build_volume(Path(temporary_dir), frame_stride=2)
             cases = {
                 "zero pixel step": ["--pixel-step", "0"],
                 "negative pixel step": ["--pixel-step", "-4"],
@@ -438,22 +567,25 @@ class ArgumentValidationTests(unittest.TestCase):
                         self.assertRaises(SystemExit),
                     ):
                         report_main(
-                            [str(FIXTURE), str(plan_path), *extra]
+                            [str(FIXTURE), str(volume_path), *extra]
                         )
 
     def test_offset_outside_the_stride_is_refused(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
-            plan_path = build_plan(Path(temporary_dir), frame_stride=2)
+            volume_path = build_volume(Path(temporary_dir), frame_stride=2)
             with self.assertRaises(SystemExit) as caught:
                 report_main(
                     [
                         str(FIXTURE),
-                        str(plan_path),
+                        str(volume_path),
                         "--held-out-offset",
                         "3",
                     ]
                 )
-        self.assertIn("outside the plan's frame_stride", str(caught.exception))
+        self.assertIn(
+            "outside the volume's frame_stride",
+            str(caught.exception),
+        )
 
     def test_renderer_rejects_unusable_arguments(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
