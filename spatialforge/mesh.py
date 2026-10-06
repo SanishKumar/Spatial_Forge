@@ -117,6 +117,30 @@ def extract_triangle_mesh(
 
 
 def _build_mesh(volume: _ReferenceTsdf) -> _Mesh:
+    mesh, non_manifold_edges, non_manifold_vertices = _build_unchecked_mesh(
+        volume
+    )
+    if non_manifold_edges:
+        raise MeshExtractionError(
+            "mesh construction produced "
+            f"{non_manifold_edges} non-manifold triangle edges"
+        )
+    if non_manifold_vertices:
+        raise MeshExtractionError(
+            "mesh construction produced "
+            f"{non_manifold_vertices} non-manifold triangle vertices"
+        )
+    return mesh
+
+
+def _build_unchecked_mesh(volume: _ReferenceTsdf) -> tuple[_Mesh, int, int]:
+    """Triangulate every eligible cell, leaving the topology verdict out.
+
+    Returned separately so the triangulation itself can be compared against
+    another mesher on volumes whose ragged observed region produces pinch
+    vertices, which ``_build_mesh`` refuses.
+    """
+
     nx, ny, nz = volume.dimensions
     if nx < 2 or ny < 2 or nz < 2:
         raise MeshExtractionError(
@@ -193,27 +217,20 @@ def _build_mesh(volume: _ReferenceTsdf) -> _Mesh:
         non_manifold_edges,
         non_manifold_vertices,
     ) = _topology_diagnostics(faces)
-    if non_manifold_edges:
-        raise MeshExtractionError(
-            "mesh construction produced "
-            f"{non_manifold_edges} non-manifold triangle edges"
-        )
-    if non_manifold_vertices:
-        raise MeshExtractionError(
-            "mesh construction produced "
-            f"{non_manifold_vertices} non-manifold triangle vertices"
-        )
-
-    return _Mesh(
-        total_cells=total_cells,
-        skipped_unknown_cells=skipped_unknown_cells,
-        skipped_exact_zero_cells=skipped_exact_zero_cells,
-        eligible_cells=eligible_cells,
-        active_cells=active_cells,
-        vertices=tuple(vertices),
-        index_vertices=tuple(index_vertices),
-        faces=tuple(faces),
-        boundary_edges=boundary_edges,
+    return (
+        _Mesh(
+            total_cells=total_cells,
+            skipped_unknown_cells=skipped_unknown_cells,
+            skipped_exact_zero_cells=skipped_exact_zero_cells,
+            eligible_cells=eligible_cells,
+            active_cells=active_cells,
+            vertices=tuple(vertices),
+            index_vertices=tuple(index_vertices),
+            faces=tuple(faces),
+            boundary_edges=boundary_edges,
+        ),
+        non_manifold_edges,
+        non_manifold_vertices,
     )
 
 

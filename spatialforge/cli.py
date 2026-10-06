@@ -47,6 +47,7 @@ from .tsdf_block_traversal import (
 from .tsdf_block_vector_fusion import (
     fuse_tsdf_block_from_vector_fields,
 )
+from .tsdf_block_mesh import extract_tsdf_block_mesh
 from .tsdf_block_volume import (
     _validate_output as _validate_tsdf_block_volume_output,
     write_tsdf_block_volume,
@@ -392,6 +393,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.output,
+            )
+        if arguments.reconstruct_command == "tsdf-block-volume-mesh":
+            return _run_tsdf_block_volume_mesh(
+                arguments.volume,
+                arguments.output,
+                arguments.min_weight,
+                arguments.min_component_triangles,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1516,6 +1524,47 @@ def _build_parser() -> argparse.ArgumentParser:
         "output",
         type=Path,
         help="New .sftvol path to write. Must not already exist.",
+    )
+
+    block_volume_mesh = reconstruct_commands.add_parser(
+        "tsdf-block-volume-mesh",
+        help="Extract a triangle mesh directly from a sparse .sftvol.",
+        description=(
+            "Strictly load and verify a .sftvol, triangulate every fully "
+            "observed cell with the reference six-tetrahedron split, give "
+            "each triangle fan at a pinch vertex its own vertex so the "
+            "surface is a manifold with boundary, optionally drop small "
+            "disconnected fragments, and write a binary little-endian PLY. "
+            "The output must not already exist."
+        ),
+    )
+    block_volume_mesh.add_argument(
+        "volume",
+        type=Path,
+        help="Existing .sftvol artifact to mesh. Never modified.",
+    )
+    block_volume_mesh.add_argument(
+        "output",
+        type=Path,
+        help="New .ply path to write. Must not already exist.",
+    )
+    block_volume_mesh.add_argument(
+        "--min-weight",
+        type=int,
+        default=1,
+        help=(
+            "Treat voxels fused from fewer observations than this as "
+            "unknown. Default 1 keeps every observed voxel."
+        ),
+    )
+    block_volume_mesh.add_argument(
+        "--min-component-triangles",
+        type=int,
+        default=1,
+        help=(
+            "Drop connected fragments with fewer triangles than this. "
+            "Default 1 keeps every fragment."
+        ),
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -6159,6 +6208,84 @@ def _run_tsdf_block_volume(
     )
     print(
         f"replay_digest_sha256: {report.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_block_volume_mesh(
+    volume_path: Path,
+    output: Path,
+    minimum_weight: int,
+    minimum_component_triangles: int,
+) -> int:
+    try:
+        report = extract_tsdf_block_mesh(
+            volume_path,
+            output,
+            minimum_weight=minimum_weight,
+            minimum_component_triangles=minimum_component_triangles,
+        )
+    except MeshExtractionError as error:
+        print(
+            f"TSDF BLOCK VOLUME MESH FAILED {volume_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF BLOCK VOLUME MESH {report.session_id}", file=sys.stdout)
+    print("volume: verified", file=sys.stdout)
+    print(
+        "filters: "
+        f"minimum_weight={report.minimum_weight} "
+        f"minimum_component_triangles={report.minimum_component_triangles}",
+        file=sys.stdout,
+    )
+    print(
+        "cells: "
+        f"considered={report.considered_cells} "
+        f"eligible={report.eligible_cells} "
+        f"active={report.active_cells}",
+        file=sys.stdout,
+    )
+    print(
+        "skipped_cells: "
+        f"unknown={report.skipped_unknown_cells} "
+        f"exact_zero={report.skipped_exact_zero_cells}",
+        file=sys.stdout,
+    )
+    print("mesh_rule: freudenthal-six-tetra-strict-signs", file=sys.stdout)
+    print("winding: toward-positive-tsdf-free-space", file=sys.stdout)
+    print(
+        "pinch_vertices: "
+        f"split={report.pinch_vertices_split} "
+        f"vertices_added={report.vertices_added_by_splitting}",
+        file=sys.stdout,
+    )
+    print(
+        "components: "
+        f"found={report.components} "
+        f"removed={report.components_removed} "
+        f"triangles_removed={report.triangles_removed}",
+        file=sys.stdout,
+    )
+    print(
+        "mesh: "
+        f"vertices={report.vertices_written} "
+        f"triangles={report.triangles_written} "
+        f"boundary_edges={report.boundary_edges}",
+        file=sys.stdout,
+    )
+    print("non_manifold_edges: 0", file=sys.stdout)
+    print("non_manifold_vertices: 0", file=sys.stdout)
+    print("triangle_winding_consistent: yes", file=sys.stdout)
+    print("ply_format: binary-little-endian-float64", file=sys.stdout)
+    print(f"mesh_bytes: {report.output_bytes}", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    print(
+        f"volume_sha256: {report.source_volume_digest_sha256}",
         file=sys.stdout,
     )
     return 0
