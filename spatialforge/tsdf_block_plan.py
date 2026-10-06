@@ -10,10 +10,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from .errors import PointCloudError, TsdfError
 from .model import CameraCalibration, Observation, ScanSession
 from .point_cloud import (
     _read_depth,
+    _read_depth_array,
     _sample_path,
     _transform_point,
     _validate_reconstruction_contract,
@@ -38,6 +41,10 @@ TSDF_FREE_SPACE_RULES = (
 )
 TSDF_BLOCK_RESOLUTION = 8
 MAX_PLANNED_BLOCKS = 100_000
+# Widest per-sample block span the vectorised planner expands itself. A
+# truncation band many blocks wide is legal but pathological, and is left to
+# the per-pixel reference path rather than given a fast path of its own.
+MAX_VECTOR_SPAN_OFFSETS = 4_096
 MIN_BLOCK_INDEX = -(2**31)
 MAX_BLOCK_INDEX = 2**31 - 1
 
@@ -235,6 +242,304 @@ def _plan_observation_blocks(
     surface_blocks: set[_BlockIndex],
     active_blocks: set[_BlockIndex],
 ) -> tuple[int, int]:
+    """Plan one observation's blocks, vectorised over its depth image.
+
+    The per-pixel loop in ``_plan_observation_blocks_scalar`` is the
+    reference definition. This evaluates the same arithmetic in the same
+    order for every valid pixel at once, so the selected blocks and the
+    sample counts are identical and the written plan is byte-identical.
+
+    Anything irregular -- a non-finite coordinate, an index outside the
+    planning range, an empty or oversized span -- is not handled here at
+    all. The frame is handed to the reference path untouched, which either
+    raises its precise per-pixel error or completes normally. That keeps
+    every failure message exactly what the reference produces without
+    restating its error logic a second time.
+    """
+
+    planned = _plan_observation_blocks_vector(
+        session,
+        observation,
+        camera,
+        depth_scale_m,
+        block_extent_m,
+        truncation_m,
+    )
+    if planned is None:
+        return _plan_observation_blocks_scalar(
+            session,
+            observation,
+            camera,
+            depth_scale_m,
+            block_extent_m,
+            truncation_m,
+            surface_blocks,
+            active_blocks,
+        )
+
+    frame_surface, frame_active, valid_points, invalid_samples = planned
+    surface_blocks.update(frame_surface)
+    active_blocks.update(frame_active)
+    if len(active_blocks) > MAX_PLANNED_BLOCKS:
+        raise TsdfError(
+            "TSDF block plan exceeds "
+            f"{MAX_PLANNED_BLOCKS} candidate blocks. "
+            "Increase --voxel-size-m or clean the "
+            "depth/pose input."
+        )
+    return valid_points, invalid_samples
+
+
+def _plan_observation_blocks_vector(
+    session: ScanSession,
+    observation: Observation,
+    camera: CameraCalibration,
+    depth_scale_m: float,
+    block_extent_m: float,
+    truncation_m: float,
+) -> tuple[set[_BlockIndex], set[_BlockIndex], int, int] | None:
+    """Return one frame's blocks and counts, or None to defer to the scalar.
+
+    Nothing outside this function is mutated, so a deferred frame reaches
+    the reference path with the plan exactly as the previous frame left it.
+    """
+
+    if observation.depth is None or observation.pose is None:
+        raise AssertionError("caller must filter incomplete observations")
+
+    try:
+        depth_path = _sample_path(session, observation.depth.data, "depth")
+        raw_depth = _read_depth_array(
+            depth_path,
+            camera.width,
+            camera.height,
+        )
+    except PointCloudError as error:
+        raise TsdfError(str(error)) from error
+
+    transform = tuple(observation.pose.data["T_world_camera"])
+    try:
+        matrix = [float(component) for component in transform[:12]]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if len(matrix) != 12 or raw_depth.shape != (
+        camera.width * camera.height,
+    ):
+        return None
+
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        z_all = raw_depth * depth_scale_m
+        valid = (raw_depth > 0) & np.isfinite(z_all) & (z_all > 0.0)
+        flat = np.flatnonzero(valid)
+        valid_points = int(flat.size)
+        invalid_samples = int(raw_depth.size) - valid_points
+        if valid_points == 0:
+            return set(), set(), 0, invalid_samples
+
+        z_camera = z_all[flat]
+        u = flat % camera.width
+        v = flat // camera.width
+        x_camera = (u - camera.cx) * z_camera / camera.fx
+        y_camera = (v - camera.cy) * z_camera / camera.fy
+        world = (
+            matrix[0] * x_camera
+            + matrix[1] * y_camera
+            + matrix[2] * z_camera
+            + matrix[3],
+            matrix[4] * x_camera
+            + matrix[5] * y_camera
+            + matrix[6] * z_camera
+            + matrix[7],
+            matrix[8] * x_camera
+            + matrix[9] * y_camera
+            + matrix[10] * z_camera
+            + matrix[11],
+        )
+        if not all(bool(np.all(np.isfinite(axis))) for axis in world):
+            return None
+
+        surface_axes = []
+        lower_axes = []
+        upper_axes = []
+        for coordinate in world:
+            surface = _containing_block_index_vector(
+                coordinate,
+                block_extent_m,
+            )
+            span = _candidate_block_span_vector(
+                coordinate,
+                truncation_m,
+                block_extent_m,
+            )
+            if surface is None or span is None:
+                return None
+            surface_axes.append(surface)
+            lower_axes.append(span[0])
+            upper_axes.append(span[1])
+
+    widths = [
+        upper - lower + 1
+        for lower, upper in zip(lower_axes, upper_axes, strict=True)
+    ]
+    # Exact Python integers: three in-range widths can overflow int64 when
+    # multiplied, and an oversized span must reach the reference path, which
+    # reports it per sample.
+    widest = [int(width.max()) for width in widths]
+    if widest[0] * widest[1] * widest[2] > min(
+        MAX_PLANNED_BLOCKS,
+        MAX_VECTOR_SPAN_OFFSETS,
+    ):
+        return None
+
+    frame_surface = _unique_rows(np.stack(surface_axes, axis=1))
+
+    # Many pixels share one span box, so the boxes are deduplicated before
+    # being expanded into the blocks they cover.
+    boxes = _unique_rows(
+        np.stack(
+            [
+                lower_axes[0],
+                lower_axes[1],
+                lower_axes[2],
+                widths[0],
+                widths[1],
+                widths[2],
+            ],
+            axis=1,
+        )
+    )
+    covered = []
+    for offset_z in range(widest[2]):
+        within_z = boxes[:, 5] > offset_z
+        for offset_y in range(widest[1]):
+            within_zy = within_z & (boxes[:, 4] > offset_y)
+            for offset_x in range(widest[0]):
+                selected = boxes[within_zy & (boxes[:, 3] > offset_x)]
+                if selected.size:
+                    covered.append(
+                        selected[:, :3]
+                        + np.array(
+                            [offset_x, offset_y, offset_z],
+                            dtype=np.int64,
+                        )
+                    )
+    frame_active = _unique_rows(np.concatenate(covered, axis=0))
+    return (
+        _block_set(frame_surface),
+        _block_set(frame_active),
+        valid_points,
+        invalid_samples,
+    )
+
+
+def _containing_block_index_vector(
+    coordinate: np.ndarray,
+    block_extent_m: float,
+) -> np.ndarray | None:
+    """Vector ``_containing_block_index``; None if any sample is irregular."""
+
+    ratio = coordinate / block_extent_m
+    if not np.all(np.isfinite(ratio)):
+        return None
+    index = np.floor(ratio)
+    lower = index * block_extent_m
+    upper = (index + 1.0) * block_extent_m
+    if not (np.all(np.isfinite(lower)) and np.all(np.isfinite(upper))):
+        return None
+    below = lower > coordinate
+    above = ~below & (upper <= coordinate)
+    index = index - below + above
+    if np.any(index < MIN_BLOCK_INDEX) or np.any(index > MAX_BLOCK_INDEX):
+        return None
+    return index.astype(np.int64)
+
+
+def _candidate_block_span_vector(
+    coordinate: np.ndarray,
+    truncation_m: float,
+    block_extent_m: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Vector ``_candidate_block_span``; None if any sample is irregular."""
+
+    lower_bound = coordinate - truncation_m
+    upper_bound = coordinate + truncation_m
+    lower_ratio = lower_bound / block_extent_m
+    upper_ratio = upper_bound / block_extent_m
+    if not all(
+        bool(np.all(np.isfinite(values)))
+        for values in (lower_bound, upper_bound, lower_ratio, upper_ratio)
+    ):
+        return None
+
+    lower_index = np.floor(lower_ratio)
+    upper_exclusive = np.ceil(upper_ratio)
+    snapped_lower = lower_index * block_extent_m
+    snapped_upper = upper_exclusive * block_extent_m
+    if not (
+        np.all(np.isfinite(snapped_lower))
+        and np.all(np.isfinite(snapped_upper))
+    ):
+        return None
+    lower_index = lower_index - (snapped_lower > lower_bound)
+    upper_exclusive = upper_exclusive + (snapped_upper < upper_bound)
+    upper_index = upper_exclusive - 1.0
+    for index in (lower_index, upper_index):
+        if np.any(index < MIN_BLOCK_INDEX) or np.any(
+            index > MAX_BLOCK_INDEX
+        ):
+            return None
+    if np.any(upper_index < lower_index):
+        return None
+    return lower_index.astype(np.int64), upper_index.astype(np.int64)
+
+
+def _unique_rows(rows: np.ndarray) -> np.ndarray:
+    """Distinct integer rows, via one collision-free scalar key per row.
+
+    Sorting rows directly costs a structured comparison per element and
+    dominated the planner. Each column is instead shifted to start at zero
+    and the columns are packed mixed-radix into a single int64, which sorts
+    an order of magnitude faster and decodes exactly. Inputs whose packed
+    range would not fit fall back to the row-wise sort.
+    """
+
+    minimum = rows.min(axis=0)
+    radices = [int(value) for value in rows.max(axis=0) - minimum + 1]
+    capacity = 1
+    for radix in radices:
+        capacity *= radix
+    if capacity >= 2**62:
+        return np.unique(rows, axis=0)
+
+    shifted = rows - minimum
+    keys = np.zeros(len(rows), dtype=np.int64)
+    for column in range(rows.shape[1] - 1, -1, -1):
+        keys = keys * radices[column] + shifted[:, column]
+    keys = np.unique(keys)
+
+    decoded = np.empty((len(keys), rows.shape[1]), dtype=np.int64)
+    for column in range(rows.shape[1]):
+        decoded[:, column] = keys % radices[column]
+        keys = keys // radices[column]
+    return decoded + minimum
+
+
+def _block_set(rows: np.ndarray) -> set[_BlockIndex]:
+    return {(x, y, z) for x, y, z in rows.tolist()}
+
+
+def _plan_observation_blocks_scalar(
+    session: ScanSession,
+    observation: Observation,
+    camera: CameraCalibration,
+    depth_scale_m: float,
+    block_extent_m: float,
+    truncation_m: float,
+    surface_blocks: set[_BlockIndex],
+    active_blocks: set[_BlockIndex],
+) -> tuple[int, int]:
+    """The per-pixel reference definition of block planning."""
+
     if observation.depth is None or observation.pose is None:
         raise AssertionError("caller must filter incomplete observations")
 

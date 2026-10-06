@@ -11,6 +11,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
 from spatialforge import plan_tsdf_blocks
 from spatialforge.cli import main
 from spatialforge.errors import TsdfError
@@ -451,6 +453,16 @@ class TsdfBlockPlanTests(unittest.TestCase):
             self.assertFalse(rejected_output.exists())
 
             single_output = temporary_root / "single-span.sftplan"
+
+            def wide_spans(coordinate, truncation_m, block_extent_m):
+                return (
+                    np.full(len(coordinate), -1, dtype=np.int64),
+                    np.full(len(coordinate), 1, dtype=np.int64),
+                )
+
+            # Both forms of the span rule are widened, so the vectorised
+            # planner sees a 27-block sample, defers, and the per-sample
+            # limit is reported by the reference path that owns it.
             with (
                 patch(
                     "spatialforge.tsdf_block_plan.MAX_PLANNED_BLOCKS",
@@ -459,6 +471,11 @@ class TsdfBlockPlanTests(unittest.TestCase):
                 patch(
                     "spatialforge.tsdf_block_plan._candidate_block_span",
                     return_value=(-1, 1),
+                ),
+                patch(
+                    "spatialforge.tsdf_block_plan."
+                    "_candidate_block_span_vector",
+                    side_effect=wide_spans,
                 ),
             ):
                 with self.assertRaises(TsdfError) as single:

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Sequence, TextIO
 
+import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from .errors import PointCloudError
@@ -301,6 +302,43 @@ def _read_depth(
             return tuple(
                 int(value) for value in image.get_flattened_data()
             )
+    except PointCloudError:
+        raise
+    except (
+        OSError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+    ) as error:
+        raise PointCloudError(
+            f"cannot decode depth image {path.name}: {error}"
+        ) from error
+
+
+def _read_depth_array(
+    path: Path,
+    expected_width: int,
+    expected_height: int,
+) -> np.ndarray:
+    """``_read_depth`` as a flat row-major int64 array.
+
+    Same file, same validation, same integer values; it only skips building
+    one Python integer per pixel, which at 640x480 costs more than decoding
+    the image. ``_read_depth`` remains the reference and a test holds the
+    two equal across every depth encoding the loader accepts.
+    """
+
+    try:
+        with Image.open(path) as image:
+            image.load()
+            _validate_dimensions(
+                path, image.size, expected_width, expected_height
+            )
+            if image.mode != "I" and not image.mode.startswith("I;16"):
+                raise PointCloudError(
+                    f"depth image {path.name} must be 16-bit integer, "
+                    f"received mode {image.mode!r}"
+                )
+            return np.asarray(image).astype(np.int64).reshape(-1)
     except PointCloudError:
         raise
     except (
