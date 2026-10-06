@@ -310,7 +310,7 @@ def evaluate_tsdf_block_contributions_from_context(
             raise TsdfError(
                 "ready TSDF replay/depth observation is incomplete"
             )
-        status_codes, sum_deltas, weight_deltas = _evaluate_ready_block(
+        status_codes, sum_deltas, weight_deltas = _evaluate_ready_voxels(
             context.camera,
             transform,
             depth_m,
@@ -346,20 +346,24 @@ def evaluate_tsdf_block_contributions_from_context(
     )
 
 
-def _evaluate_ready_block(
+def _evaluate_ready_voxels(
     camera: CameraCalibration,
     transform: tuple[float, ...],
     depth_m: np.ndarray,
     truncation_m: float,
     world_xyz_m: tuple[np.ndarray, np.ndarray, np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Project, sample and classify every voxel of one prepared frame.
+    """Project, sample and classify any set of voxels against one frame.
 
     Every step below is the scalar evaluator's step in the scalar
     evaluator's order, so the float64 results are bit-identical rather than
     merely close. In particular the world-to-camera product is written out
     term by term instead of as a matrix product, because a fused or
     reassociated dot product would change the last bits.
+
+    The voxels are independent of one another, so the same function serves
+    one block's 512 centres and a whole plan's. Every vectorised fusion
+    path goes through it, which is what makes them agree by construction.
     """
 
     if len(transform) != 16 or any(
@@ -371,13 +375,14 @@ def _evaluate_ready_block(
         )
     matrix = [float(component) for component in transform]
     world_x, world_y, world_z = world_xyz_m
+    voxel_count = world_x.shape[0]
 
     status_codes = np.full(
-        TSDF_BLOCK_VOXELS,
+        voxel_count,
         _STATUS_CODE[TsdfContributionStatus.CONTRIBUTES],
         dtype=TSDF_CONTRIBUTION_STATUS_CODE_DTYPE,
     )
-    alive = np.ones(TSDF_BLOCK_VOXELS, dtype=bool)
+    alive = np.ones(voxel_count, dtype=bool)
 
     def classify(
         failed: np.ndarray,

@@ -38,7 +38,7 @@ from spatialforge.model import CameraCalibration, ScanSession
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_contributions import (
     _block_voxel_centres_world_m,
-    _evaluate_ready_block,
+    _evaluate_ready_voxels,
     _freeze,
 )
 from spatialforge.tsdf_block_plan import plan_tsdf_blocks
@@ -508,7 +508,7 @@ class VectorStatusLadderTests(unittest.TestCase):
             block_index_xyz,
             self.voxel_size_m,
         )
-        status_codes, sum_deltas, weight_deltas = _evaluate_ready_block(
+        status_codes, sum_deltas, weight_deltas = _evaluate_ready_voxels(
             camera,
             transform,
             depth_m,
