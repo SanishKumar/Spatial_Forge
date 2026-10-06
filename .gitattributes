@@ -1,0 +1,12 @@
+# Normalise text to LF everywhere, on every platform.
+* text=auto eol=lf
+
+# Session fixtures are hashed byte for byte. Replay digests, plan digests and
+# every test that pins one depend on these exact bytes, so Git must never
+# rewrite their line endings: with the usual Windows default
+# (core.autocrlf=true) a fresh checkout would otherwise compute different
+# digests from the same commit.
+tests/fixtures/** -text
+
+*.png binary
+*.gif binary

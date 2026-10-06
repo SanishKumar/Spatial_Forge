@@ -1,5 +1,7 @@
 # SpatialForge
 
+[![tests](https://github.com/SanishKumar/Spatial_Forge/actions/workflows/tests.yml/badge.svg)](https://github.com/SanishKumar/Spatial_Forge/actions/workflows/tests.yml)
+
 Deterministic 3D reconstruction from calibrated RGB-D scans, built for indoor
 mapping. Turns a folder of depth frames and known camera poses into a metric
 TSDF volume, surface points, and a mesh — reproducibly, with every step
