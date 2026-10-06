@@ -198,8 +198,13 @@ class HeldOutReportTests(unittest.TestCase):
                         str(manifest_path),
                     ]
                 )
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            encoded = manifest_path.read_bytes()
+            manifest = json.loads(encoded)
 
+        # Written as bytes, so the same manifest is the same file on every
+        # platform rather than gaining carriage returns on one of them.
+        self.assertNotIn(b"\r", encoded)
+        self.assertTrue(encoded.endswith(b"}\n"))
         self.assertEqual(manifest["source_commit"], "abc123")
         self.assertIs(manifest["source_worktree_clean"], True)
         self.assertEqual(manifest["schema"], "spatialforge.result-manifest")

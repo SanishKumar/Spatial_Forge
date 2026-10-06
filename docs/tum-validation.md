@@ -1,210 +1,169 @@
-# First real-sensor validation: TUM freiburg1_xyz
+# Real-sensor validation: TUM freiburg1_xyz
 
-Every result before this one came from data SpatialForge generated itself.
-The larger synthetic-room test removed the committed fixture's degeneracies
-but kept clean gaussian noise, exact poses, no motion blur, no reflective
-surfaces, and no missing returns. This page records the first run against a
-real depth camera.
+Everything else in the test suite runs on data SpatialForge generated itself:
+clean noise, exact poses, nothing missing. This page records what happens on
+a real depth camera, and it is the only result here that should be quoted.
+
+The sequence is `rgbd_dataset_freiburg1_xyz` from the
+[TUM RGB-D benchmark](https://cvg.cit.tum.de/data/datasets/rgbd-dataset): a
+Kinect-class sensor moved around a desk, with motion-capture poses.
+
+## One reconstruction, one chain
+
+There is one volume. It is planned, fused, written to disk, scored, meshed and
+rendered, and each step records the digest of the thing it was given:
+
+| Artifact | SHA-256 |
+|---|---|
+| Scan (replay digest) | `aed9fc15…2f49e7` |
+| Block plan `.sftplan` | `f4af0566…daaace3f` |
+| Fused volume `.sftvol` | `027ed602…07c16855` |
+| Mesh `.ply` | `57b0184d…8b012f4d` |
+
+The volume names its plan and its scan. The mesh names its volume. The report
+tool refuses a mesh whose header names any other volume, and it refuses a
+scan whose replay digest is not the one the volume recorded. Full values, the
+commit, and the working-tree state are in
+[`../results/tum-freiburg1-xyz-15mm.json`](../results/tum-freiburg1-xyz-15mm.json).
+
+This matters because an earlier version of this page got it wrong. Its
+number came from one volume, its mesher failure from a second, and its
+picture from a third, at three voxel sizes, and it described them as one. The
+chain above is what makes that mistake fail loudly instead of reading well.
 
 ## What was run
-
-`rgbd_dataset_freiburg1_xyz` from the TUM RGB-D benchmark — a Kinect-class
-sensor waved around a desk, with motion-capture ground-truth poses.
 
 ```text
 source                 798 RGB, 798 depth, 3000 pose records
 imported               792 associated RGB-D pairs, 790 with poses
 camera                 640 x 480, fx = fy = 525.0
-fused frames           99  (frame_stride 8)
-voxel / truncation     30 mm / 90 mm
-planned blocks         1241 active, 698 surface
-planned voxel slots    635,392
-observed after fusion  255,995 slots (40.3%)
-contributions applied  3,052,349 of 62,903,808 evaluated
+selected / fused       396 / 395   (frame_stride 2; one has no pose)
+voxel / truncation     15 mm / 45 mm
+planned blocks         5,401   (3,288 surface, 2,113 halo)
+planned voxel slots    2,765,312
+observed after fusion  1,492,894   (54%)
+contributions          66,200,108 applied of 1,095,063,552 evaluated
 ```
 
-Reproduce with:
+The commands are in the [README](../README.md#run-it-on-real-data).
 
-```powershell
-.\.venv\Scripts\python.exe -m spatialforge scan import-tum `
-  datasets\rgbd_dataset_freiburg1_xyz datasets\freiburg1-xyz.vgsession
-.\.venv\Scripts\python.exe -m spatialforge reconstruct tsdf-block-plan `
-  datasets\freiburg1-xyz.vgsession datasets\fr1xyz.sftplan `
-  --voxel-size-m 0.03 --truncation-m 0.09 --frame-stride 8
-.\.venv\Scripts\python.exe tools\tum_reconstruction_report.py `
-  datasets\freiburg1-xyz.vgsession datasets\fr1xyz.sftplan
-```
+## How it is measured
 
-## Three different reconstructions live on this page
+TUM ships a ground-truth *trajectory*, not a ground-truth surface, so there
+is nothing to compare a reconstruction against directly. What is available is
+cross-validation.
 
-This is the part that is easiest to get wrong when quoting these numbers.
-The same TUM sequence was reconstructed three times at three voxel sizes,
-by two different code paths, for three different purposes:
+The volume is fused from frames `0, 2, 4, …`. Frames `1, 3, 5, …` are held
+out: none of them contributes a voxel. Each held-out depth pixel is
+back-projected with that frame's own pose, giving a point where a camera
+measured a surface. A correct TSDF reads zero at such a point, so the
+interpolated value there, scaled by the truncation, is a signed residual in
+metres.
 
-| Artifact | Path | Voxel / truncation | Persisted? |
-|---|---|---|---|
-| The 9.3 mm residual and 99.8% coverage | sparse block fusion | **30 mm / 90 mm** | no — in memory only |
-| The mesher refusal, 10,235 surface points | dense reference TSDF | **50 mm / 150 mm** | `.sftsdf` |
-| The rendered GIF and still, 14,625 points | dense reference TSDF | **42 mm / 126 mm** | `.sftsdf` |
+It is a **held-out TSDF residual**. It is not geometric accuracy and should
+not be quoted as one. It uses ground-truth poses throughout, so it says
+nothing about pose estimation; and it compares the volume with depth, not
+with a surveyed surface, so a reconstruction that was wrong in the same way
+from every viewpoint would still score well.
 
-They are not the same volume and their numbers are not interchangeable.
-
-The headline result is the sparse 30 mm one, and it **cannot be rendered or
-meshed at all**: block-backed volumes have no persistence format and no
-surface or mesh consumer yet. Everything visual on this page therefore comes
-from the dense reference path at a coarser voxel size, because that is the
-only path that currently produces a file the extractors can read.
-
-So the correct sentence is:
-
-> The sparse 30 mm known-pose reconstruction produced a 9.3 mm median
-> held-out TSDF residual. The animation is a separate 42 mm dense
-> point-cloud reconstruction of the same sequence.
-
-Not "fused at 30 mm, and that is what the animation shows."
-
-The machine-readable provenance for the 30 mm run — source commit and
-working-tree state, parameters, environment, timings, metrics and input
-digests — is in
-[`../results/tum-freiburg1-xyz.json`](../results/tum-freiburg1-xyz.json),
-generated alongside the run by the report tool rather than written by hand.
-The tool refuses to write one from a dirty working tree unless explicitly
-told to, and records that it was unclean when told. It is still a plain
-file that a person can edit afterwards, and there is no verification
-command that re-checks a manifest against its inputs.
-
-## What the 9.3 mm actually measures
-
-It is a **held-out TSDF residual** — also fair to call it a cross-view
-consistency residual. It is *not* "geometric accuracy" and not distance to a
-surveyed surface, and it should never be quoted as either.
-
-TUM ships a ground-truth *trajectory*, not a ground-truth surface, so there is
-nothing to compare a reconstruction against directly. The available check is
-cross-validation:
-
-> Fuse from one set of frames. Take depth measured by frames the fusion never
-> saw, back-project it with its own ground-truth pose, and ask what the
-> reconstruction says at those points. A correct TSDF reads zero on a real
-> surface, so the interpolated value scaled by the truncation is a signed
-> surface error in metres.
-
-The plan fuses observations `0, 8, 16, …`; the report evaluates against
-observations `4, 12, 20, …` — 98 frames, none of which contributed a single
-voxel. The tool refuses an offset that is a multiple of the stride, so the
-evaluation set cannot silently become the training set.
+The tool refuses a held-out offset that is a multiple of the stride, so the
+evaluation set cannot silently become the fused set.
 
 ## Results
 
 ```text
-held-out frames                 98  (never fused)
-held-out depth samples   1,428,048  (every 4th pixel)
-landing in observed voxels 1,425,233  (99.8%)
+held-out frames                  395   (never fused)
+held-out depth samples     5,757,844   (every 4th pixel)
+inside observed voxels     5,755,186   (99.95%)
 ```
 
 | | mean signed | median abs | rms | p95 abs | within 1 voxel |
 |---|---|---|---|---|---|
-| nearest voxel | +3.5 mm | 12.4 mm | 23.8 mm | 52.8 mm | 83.6% |
-| trilinear | +3.8 mm | 9.3 mm | 20.4 mm | 45.6 mm | 87.3% |
+| nearest voxel | +3.2 mm | 8.5 mm | 14.4 mm | 30.6 mm | 73.7% |
+| trilinear | +3.3 mm | 7.5 mm | 13.4 mm | 28.8 mm | 77.0% |
 
-At 30 mm voxels, a **9.3 mm median residual against frames the reconstruction
-never saw** is the pipeline working. It is close to what this sensor's own
-noise can support at desk range, and the nearest-voxel column shows how much
-of the remainder is grid quantisation rather than reconstruction error.
+A **7.5 mm median residual** against frames the volume never saw, at 15 mm
+voxels, is about what this sensor's noise supports at desk range.
 
-Two things this number is not. It uses ground-truth poses throughout, so it
-says nothing about pose estimation. And it compares the volume against depth
-rather than against a surveyed surface, so it bounds disagreement between
-viewpoints, not absolute correctness.
+The **+3.3 mm signed bias** is small and systematic: held-out surfaces read
+slightly positive, so the fused surface sits marginally further from the
+camera than a held-out frame measures it. That is consistent with projective
+distance being averaged along the viewing ray, and it has barely moved with
+voxel size, which suggests it is a property of the rule rather than of the
+grid. It is recorded, not corrected.
 
-The **+3.8 mm signed bias** is small but systematic: held-out surfaces read
-slightly positive, meaning the fused surface sits marginally further from the
-camera than the held-out frame measures it. Consistent with projective TSDF
-averaging pulling the level set along the viewing ray. Worth revisiting when
-confidence weighting arrives; not worth acting on now.
+**99.95% coverage** says block planning is not missing surfaces: almost every
+held-out surface point falls inside a voxel that fusion actually observed.
 
-**99.8% coverage** says the plan's block selection is not missing surfaces —
-almost every held-out surface point falls inside a voxel the fusion actually
-observed.
+### The earlier 30 mm run, reproduced
 
-## What broke
+The first version of this result fused 99 frames at 30 mm and reported a
+9.3 mm median. It is kept as
+[`../results/tum-freiburg1-xyz-30mm.json`](../results/tum-freiburg1-xyz-30mm.json),
+regenerated through today's pipeline — a vectorised planner, streaming
+fusion, a volume written to disk and read back. The plan file has the same
+digest as the one published then, fusion applies the same 3,052,349
+contributions, and every statistic matches to the last digit of the float:
 
-This is why real data is worth running.
+| | then | now |
+|---|---|---|
+| plan digest | `46a21d10…fe1ae2383` | `46a21d10…fe1ae2383` |
+| contributions applied | 3,052,349 | 3,052,349 |
+| median residual | 9.288872313054917 mm | 9.288872313054917 mm |
+| planning | 201 s | 13 s |
+| fusion | 33 s | 10 s |
 
-**The block planner is now the bottleneck.** It projects every depth pixel in
-a pure-Python loop and then walks that pixel's candidate block span. At
-640x480 it runs about 2 seconds per frame:
+Three stages were rewritten in between. Nothing moved, which is the whole
+point of pinning each rewrite to the path it replaced.
 
-```text
-import                     4 s
-block plan (99 frames)   201 s      <-- dominates
-allocate                   1 s
-context build              7 s
-vector fusion             33 s
-```
+## Cost
 
-Fusion, which was the wall two checkpoints ago, is now a fifth of the cost of
-planning. Vectorising the planner is the obvious next performance checkpoint,
-and the evaluator gives it a template.
-
-**The retained-depth cap limits sequences to about 208 frames at this
-resolution.** `TsdfReplayDepthContext` holds float64 metric depth for every
-selected frame against a 512 MB ceiling; 640x480 costs 2.36 MB per frame, so
-the full 792-frame sequence would need 1.9 GB. The 99-frame run retains
-243 MB. Streaming or windowing the context is a real requirement for full
-sequences, not a tuning knob.
-
-**The dense reference path cannot reach 30 mm on this scene.** Its
-1,000,000-voxel reference cap allows 50 mm here — the inferred bounds at 30 mm
-would need about 2.75 million voxels against the sparse path's 635,392 planned
-slots. The sparse architecture earning its keep is exactly the point, but it
-means dense/sparse parity can no longer be checked at the working voxel size
-on real data.
-
-**The mesher refuses real data.** This was the 50 mm dense volume, not the
-30 mm sparse one — the sparse volume cannot be meshed at all yet, so it has
-never been offered to the mesher.
+One laptop CPU core, NumPy, no GPU:
 
 ```text
-TRIANGLE MESH FAILED
-- mesh construction produced 10 non-manifold triangle vertices
+import                          4 s
+plan     396 frames            44 s
+fuse     1.1e9 voxel-obs      106 s     (about 10 million per second)
+mesh     535,486 triangles    2.5 s
+score    395 held-out frames   12 s
+render   36 frames, coloured   37 s
 ```
 
-The fixed six-tetrahedron split produces a clean 60,072-triangle mesh on the
-synthetic room and a non-manifold one here. The validation is correct to
-refuse, and this is not a regression — it is the first time the mesher has
-seen noisy real geometry. Surface-point extraction succeeds on that same
-50 mm volume (10,235 crossing points), so the volume itself is sound; it is
-the triangulation that needs connected-component and quality work.
+Peak retained depth during fusion is 2.5 MB — one frame — however long the
+sequence is. Fusing all 790 posed frames at 30 mm takes 65 s.
 
-## What this does not prove
+## What the first run broke, and what became of each
 
-- **Nothing about pose estimation.** Held-out frames carry the same
-  motion-capture ground truth, taken as exact. This measures geometric
-  self-consistency across viewpoints, not the ability to recover poses — the
-  engine still has none.
-- **Not absolute accuracy.** Without a ground-truth surface, a reconstruction
-  that is consistently wrong in the same way across all viewpoints would
-  score well here. Cross-validation bounds random error, not shared bias.
-- **One sequence, one scene type.** freiburg1_xyz is a desk at close range
-  with good texture and lighting. It is not a corridor, a lobby, a glass
-  door, or a dark room, and it is not a building.
-- **A fifth of the frames.** Stride 8 was chosen to fit the retained-depth
-  cap, not because 99 frames is enough.
-- **Nothing about the free-space path.** The coverage, cross-view and
-  plan-expansion ladder was not run on this sequence and cannot be: its
-  262,144 retained-outcome cap is exceeded by a single 640x480 frame's
-  307,200 pixels, and the whole-domain workload here is orders of magnitude
-  beyond it. That path remains a bounded fixture-scale diagnostic; the
-  fusion numbers above do not exercise it.
-- **The 30 mm volume does not survive the process.** It is fused in memory
-  by the report tool and discarded. There is no block-backed artifact
-  format yet, which is also why it cannot be rendered or meshed.
+**The planner was the bottleneck**: a per-pixel Python loop, 2 s per frame,
+201 s of a 242 s run. It is now vectorised and writes byte-identical plans.
 
-## Status of this checkpoint
+**The sequence did not fit.** Depth for every selected frame was held at
+once against a 512 MB ceiling, which is about 208 frames at this resolution,
+so 99 of 792 were used. Fusion now streams one frame at a time.
 
-No engine behaviour changed, so nothing new is pinned about fusion; the
-existing tests are unchanged. What is committed is the reproducible report
-tool in `tools/tum_reconstruction_report.py`, its fixture-scale tests, the
-result manifest, and this page. The dataset is not committed — it is 448 MB,
-and `datasets/` is gitignored.
+**The mesher refused real data**: a 50 mm dense volume of this scene gave 10
+non-manifold vertices and the reference mesher rejects any. The sparse mesher
+uses the same split and meets the same kind of vertex — 31 in this volume —
+and gives each triangle fan its own copy. See
+[`sparse-meshing.md`](sparse-meshing.md).
+
+**The measured volume could not be saved**, so it could not be shown. It is
+now a file, and the mesh and the render come from it.
+
+## What still does not hold
+
+- **Nothing about pose estimation.** The engine has none.
+- **No absolute accuracy.** That needs a dataset with a ground-truth surface.
+- **One sequence, one kind of scene.** A well-lit, textured desk at close
+  range. Not a corridor, a glass door, a dark room or a building.
+- **10 mm is refused.** At 10 mm this scene needs 12,503 blocks; accumulator
+  storage is capped at 64 MB, which is 10,922. The limit is a constant, not a
+  design boundary, but it is the limit today.
+- **Half the frames, by design.** Stride 2 is what leaves frames to hold out.
+  A volume fused from every frame cannot be scored this way at all.
+- **The free-space path was not run.** Coverage, cross-view resolution and
+  plan expansion carry a 262,144-outcome cap that one 640x480 frame exceeds.
+- **Mesh filters are choices.** The published mesh treats voxels seen fewer
+  than three times as unknown and drops fragments under 200 triangles: 751
+  fragments, 12,004 triangles. The volume and its score are unaffected; the
+  unfiltered mesh is one flag away.

@@ -496,7 +496,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         payload = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
         with publishing(manifest_path, ".json") as temporary:
-            temporary.write_text(payload, encoding="utf-8")
+            # Bytes, not text: text mode would translate line endings and
+            # make the same manifest differ between platforms.
+            temporary.write_bytes(payload.encode("utf-8"))
         print(f"\nwrote manifest {manifest_path}")
     return 0
 

@@ -1,7 +1,7 @@
 {
   "environment": {
     "numpy": "2.4.6",
-    "platform": "Windows-11-10.0.26200-SP0",
+    "platform": "Windows-11-10.0.26300-SP0",
     "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
     "python": "3.14.6"
   },
@@ -30,34 +30,43 @@
     }
   },
   "inputs": {
-    "plan": "datasets/fr1xyz.sftplan",
     "plan_sha256": "46a21d10fb942daf9a5d5b08e464ce1948e60fda02d0fad91c58c54fe1ae2383",
     "replay_digest_sha256": "aed9fc1507925139022dbf534521725d811c33e238d32f7454146633c62f49e7",
     "session": "datasets/freiburg1-xyz.vgsession",
-    "session_id": "tum-rgbd_dataset_freiburg1_xyz"
+    "session_id": "tum-rgbd_dataset_freiburg1_xyz",
+    "volume": "datasets/fr1xyz-30mm.sftvol",
+    "volume_sha256": "3a183709f02cd2d27ad371e5f882ddc1ccda8c0eaf86ed54e23293d3be039616"
   },
   "measurement": "held-out-tsdf-residual",
   "measures": "agreement between the fused volume and depth measured by frames it never saw, using ground-truth camera poses. This is a cross-view consistency residual, not distance to a surveyed surface.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/fr1xyz-30mm.ply",
+    "sha256": "c804a6c4ad47d497a32978c04997e977ee84d6cce0d9380f976b96bd6519a0fc",
+    "source_volume_sha256": "3a183709f02cd2d27ad371e5f882ddc1ccda8c0eaf86ed54e23293d3be039616",
+    "triangles": 75728,
+    "vertices": 40925
+  },
   "reconstruction": {
     "active_blocks": 1241,
     "contributions_applied": 3052349,
     "contributions_evaluated": 62903808,
     "frame_stride": 8,
     "fused_frames": 99,
+    "maximum_weight": 98,
     "observed_voxel_slots": 255995,
-    "path": "sparse-block-vector-fusion",
-    "persisted": false,
+    "path": "sparse-block-streaming-fusion",
+    "persisted": true,
     "planned_voxel_slots": 635392,
-    "surface_blocks": 698,
     "truncation_m": 0.09,
     "voxel_size_m": 0.03
   },
   "schema": "spatialforge.result-manifest",
-  "schema_version": "0.1.0",
-  "source_commit": "f9676f5fcbf404aabb51a42db88a8d61952d9bd2",
+  "schema_version": "0.2.0",
+  "source_commit": "af1346f2dde0c15efe4cb9d3cb47aa71e8c53cf1",
   "source_worktree_clean": true,
   "timings_seconds": {
-    "context_build": 5.752,
-    "fusion": 28.29
+    "evaluation": 2.595
   }
 }

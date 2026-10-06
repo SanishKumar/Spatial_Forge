@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spatialforge"
-version = "0.1.0"
-description = "Offline spatial scan formats and replay tooling"
+version = "0.2.0"
+description = "Deterministic sparse TSDF reconstruction from calibrated RGB-D scans"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

@@ -3,19 +3,19 @@
 [![tests](https://github.com/SanishKumar/Spatial_Forge/actions/workflows/tests.yml/badge.svg)](https://github.com/SanishKumar/Spatial_Forge/actions/workflows/tests.yml)
 
 Deterministic 3D reconstruction from calibrated RGB-D scans, built for indoor
-mapping. Turns a folder of depth frames and known camera poses into a metric
-TSDF volume, surface points, and a mesh — reproducibly, with every step
-verifiable.
+mapping. Turns a folder of depth frames and known camera poses into a sparse
+metric TSDF volume and a triangle mesh — reproducibly, bit for bit, with every
+fast path proven identical to a slower one that is easier to trust.
 
 <p align="center">
-  <img src="docs/assets/tum-reconstruction.gif" width="480" alt="Orbiting view of a desk scene reconstructed from the TUM RGB-D freiburg1_xyz sequence">
+  <img src="docs/assets/tum-mesh.gif" width="560" alt="A desk scene reconstructed from the TUM RGB-D freiburg1_xyz sequence, rotating slightly">
 </p>
 
 <p align="center">
-  <em>14,625 surface points from 99 frames of the TUM RGB-D benchmark —
-  a 42 mm dense<br>reconstruction, coloured by height. Wall and boards at the
-  top, desk surface in the<br>middle, floor in purple. The measured result
-  below is a separate 30 mm sparse run.</em>
+  <em>The TUM RGB-D <code>freiburg1_xyz</code> desk, reconstructed at 15 mm
+  from 395 frames of a real<br>depth camera: 535,486 triangles. This is the
+  measured volume — the numbers below<br>and this mesh come from the same
+  file, tied together by digest.</em>
 </p>
 
 ---
@@ -27,62 +27,88 @@ optimises for **being able to prove the output is right**.
 
 That constraint came from the use case: it feeds an indoor navigation system,
 where a wrong wall means a person walks into it. So every stage carries its
-provenance, every operation is reproducible byte-for-byte, and every fast path
-is checked against a slower, simpler one that is easier to trust.
+provenance, every operation is reproducible byte for byte, and every fast path
+is checked against a slower, simpler one.
 
-Concretely:
-
-- **Deterministic.** The same session produces the same SHA-256 digest, every
-  run, on any machine. Artifacts record the digest of the inputs that made
-  them and refuse to load against a session that has changed.
-- **Every optimisation has a reference.** The sparse volume is checked against
-  a dense one. The vectorised evaluator is checked against a scalar one. Not
-  "within tolerance" — identical bits.
+- **Deterministic.** The same scan produces the same bytes. Every artifact
+  records the digest of what it was made from and refuses to load against
+  anything else.
+- **Every optimisation has a reference.** The vectorised planner writes the
+  same plan file as the per-pixel one. Vectorised fusion leaves the same
+  accumulator bytes as the per-voxel one. The sparse mesher emits the same
+  vertices and triangles as the dense one. Not "within tolerance" — identical.
 - **Failures are loud.** Operations preflight before writing, roll back on
-  error, and refuse rather than guess. The mesher rejecting a non-manifold
-  surface is the system working.
+  error, and refuse rather than guess.
+
+None of the underlying algorithms are new; see
+[where this sits](#where-this-sits). What is unusual is the standard of
+evidence.
 
 ## Results on real data
 
-Run against [TUM RGB-D](https://cvg.cit.tum.de/data/datasets/rgbd-dataset)
-`freiburg1_xyz` — a real Kinect-class sensor with motion-capture ground truth.
+[TUM RGB-D](https://cvg.cit.tum.de/data/datasets/rgbd-dataset)
+`freiburg1_xyz`: a real Kinect-class sensor with motion-capture poses. Every
+second frame is fused; the frames in between are held out and never
+contribute a voxel.
 
-The honest test for reconstruction quality is cross-validation: build the
-volume from one set of frames, then check it against frames it never saw. A
-correct TSDF reads zero exactly where an unseen camera measured a surface, so
-the interpolated value is a signed residual.
-
-Sparse block fusion, 30 mm voxels, 90 mm truncation:
-
-| Metric | Value |
+| | |
 |---|---|
-| Fused frames | 99 |
-| Held-out frames | 98, none of which contributed a voxel |
-| Held-out depth samples | 1,428,048 |
-| Landing inside observed voxels | **99.8%** |
-| Median held-out TSDF residual | **9.3 mm** |
-| RMS | 20.4 mm |
-| p95 | 45.6 mm |
+| Voxel size / truncation | 15 mm / 45 mm |
+| Frames fused | 395 |
+| Voxel-observations evaluated | 1,095,063,552 |
+| Observed voxels | 1,492,894 in 5,401 sparse blocks |
+| Mesh | 279,979 vertices, 535,486 triangles |
+| Held-out frames | 395, none of which contributed |
+| Held-out depth samples | 5,757,844 |
+| Landing inside observed voxels | **99.95%** |
+| Median held-out TSDF residual | **7.5 mm** |
+| RMS / p95 | 13.4 mm / 28.8 mm |
 
-**Read that number carefully.** It is a *held-out TSDF residual* — how well
-the volume agrees with depth measured from viewpoints it never saw — not
-distance to a surveyed surface, and not "9.3 mm geometric accuracy". It uses
-ground-truth camera poses throughout, so it says nothing about pose
-estimation. It bounds disagreement between views, not absolute correctness.
+**Read that number carefully.** A correct TSDF reads zero exactly where a
+camera measures a surface, so this is how far the volume disagrees with depth
+from viewpoints it never saw. It is not distance to a surveyed surface, and it
+uses ground-truth poses throughout, so it says nothing about pose estimation.
+It bounds disagreement between views, not absolute correctness.
 
-The GIF above is a *different* reconstruction of the same sequence: 42 mm,
-dense path. The 30 mm sparse volume exists only in memory during the report
-run — block volumes have no persistence format yet, so they cannot be
-rendered or meshed.
+<p align="center">
+  <img src="docs/assets/tum-mesh-geometry.png" width="49%" alt="The reconstructed mesh shaded without colour">
+  <img src="docs/assets/tum-mesh.png" width="49%" alt="The same mesh coloured from the scan's RGB frames">
+</p>
 
-Provenance for every number, generated by the tool that produced them:
-[`results/tum-freiburg1-xyz.json`](results/tum-freiburg1-xyz.json). Full
-method, timings and the things that broke:
+<p align="center">
+  <em>Left: the geometry alone. Right: the same mesh, each vertex coloured
+  only by RGB frames that<br>actually see it. Colour is a way of looking at
+  the geometry; the mesh file carries none.</em>
+</p>
+
+On one laptop CPU core, with NumPy and no GPU:
+
+| Stage | Time |
+|---|---|
+| Plan sparse blocks (396 frames) | 44 s |
+| Fuse 1.1 billion voxel-observations | 106 s |
+| Extract the mesh | 2.5 s |
+| Score against 395 held-out frames | 12 s |
+
+The whole chain is recorded in
+[`results/tum-freiburg1-xyz-15mm.json`](results/tum-freiburg1-xyz-15mm.json):
+the scan, plan, volume and mesh digests, the commit that produced them, and
+whether the working tree was clean. The method, the earlier 30 mm run it
+supersedes, and everything this does not prove are in
 [`docs/tum-validation.md`](docs/tum-validation.md).
+
+## The same bytes everywhere
+
+Reproducibility here is a tested property, not an intention. The committed
+fixture reconstructs to a volume and a mesh whose SHA-256 digests are written
+literally into the test suite, and CI runs that suite on Linux, macOS and
+Windows under Python 3.11 and 3.14. They only pass if all six agree.
+
+You can check it on your own machine in three commands — see below.
 
 ## Install
 
-Python 3.11+ and NumPy. No GPU, no CUDA, no build step.
+Python 3.11+ with NumPy and Pillow. No GPU, no compiler, no build step.
 
 ```bash
 python -m venv .venv
@@ -94,38 +120,40 @@ python -m venv .venv
 Reconstruct the committed test fixture end to end:
 
 ```bash
-python -m spatialforge scan validate tests/fixtures/minimal.vgsession
+python -m spatialforge reconstruct tsdf-block-plan \
+  tests/fixtures/minimal.vgsession outputs/demo.sftplan \
+  --voxel-size-m 0.125 --truncation-m 0.5
 ```
 
 ```bash
-python -m spatialforge reconstruct tsdf-auto \
-  tests/fixtures/minimal.vgsession outputs/scene.sftsdf \
-  --voxel-size-m 0.05 --truncation-m 0.15
+python -m spatialforge reconstruct tsdf-block-volume \
+  outputs/demo.sftplan tests/fixtures/minimal.vgsession outputs/demo.sftvol
 ```
 
 ```bash
-python -m spatialforge reconstruct triangle-mesh \
-  outputs/scene.sftsdf outputs/scene.ply
+python -m spatialforge reconstruct tsdf-block-volume-mesh \
+  outputs/demo.sftvol outputs/demo.ply
+```
+
+Each prints the digest of what it wrote. Whatever machine you are on, the
+volume and the mesh should be:
+
+```text
+output_sha256: 29f9f427b43c2a9e8ec416dad9a3ba1572044c716407ef2b30989daed9c2adc3
+output_sha256: 8c019fe39e181ef1855c8c229422528cf4218ca5b4998af533ae5e00d4e5f190
 ```
 
 Every command prints `key: value` diagnostics, one fact per line, including
-explicit negatives so you can see what it did *not* do:
-
-```text
-TSDF BLOCK CONTEXT BLOCK FUSION CHECK scan-synthetic-0001
-block: index=(1, -1, -1) row=1 resolution=8 voxel_slots=512
-fusion_path: vectorised-field-per-observation
-contributions_evaluated: 1024
-contributions_applied: 204
-scalar_reference_parity: byte-identical
-artifact_written: no
-storage_persisted: no
-```
+explicit negatives so you can see what it did *not* do.
 
 ## Run it on real data
 
+Download and extract a
+[TUM RGB-D sequence](https://cvg.cit.tum.de/data/datasets/rgbd-dataset/download),
+then:
+
 ```bash
-# 1. Import a TUM RGB-D sequence into the session format
+# 1. Import it into the session format
 python -m spatialforge scan import-tum \
   datasets/rgbd_dataset_freiburg1_xyz datasets/fr1xyz.vgsession
 ```
@@ -134,24 +162,36 @@ python -m spatialforge scan import-tum \
 # 2. Plan which voxel blocks the depth actually reaches
 python -m spatialforge reconstruct tsdf-block-plan \
   datasets/fr1xyz.vgsession datasets/fr1xyz.sftplan \
-  --voxel-size-m 0.03 --truncation-m 0.09 --frame-stride 8
+  --voxel-size-m 0.015 --truncation-m 0.045 --frame-stride 2
 ```
 
 ```bash
-# 3. Fuse it and score against held-out frames
+# 3. Fuse, one frame at a time, into a persisted sparse volume
+python -m spatialforge reconstruct tsdf-block-volume \
+  datasets/fr1xyz.sftplan datasets/fr1xyz.vgsession datasets/fr1xyz.sftvol
+```
+
+```bash
+# 4. Mesh the volume
+python -m spatialforge reconstruct tsdf-block-volume-mesh \
+  datasets/fr1xyz.sftvol datasets/fr1xyz.ply \
+  --min-weight 3 --min-component-triangles 200
+```
+
+```bash
+# 5. Score the volume against the frames it never saw
 python tools/tum_reconstruction_report.py \
-  datasets/fr1xyz.vgsession datasets/fr1xyz.sftplan
+  datasets/fr1xyz.vgsession datasets/fr1xyz.sftvol --mesh datasets/fr1xyz.ply
 ```
-
-Step 3 fuses in memory and reports; it writes no volume. To get a picture you
-need a PLY, and only the dense path produces one — so rendering is a separate
-example, not step 4 of the sequence above:
 
 ```bash
-# Extract surface points from a dense volume, then render that PLY
-python -m spatialforge reconstruct surface-points scene.sftsdf scene.ply
-python tools/render_point_cloud.py scene.ply docs/assets/scene
+# 6. Render it
+python tools/render_mesh.py datasets/fr1xyz.ply datasets/fr1xyz-render \
+  --session datasets/fr1xyz.vgsession --azimuth 190 --elevation 12 --sweep 28
 ```
+
+Step 5 refuses a mesh that was not extracted from the volume it is scoring,
+so the picture cannot quietly be of something else.
 
 ## How it works
 
@@ -159,10 +199,11 @@ python tools/render_point_cloud.py scene.ply docs/assets/scene
 flowchart LR
     A[".vgsession<br/>RGB-D + poses"] --> B["replay<br/>SHA-256 digest"]
     B --> C["block plan<br/>.sftplan"]
-    C --> D["depth context<br/>decode once"]
-    D --> E["fuse<br/>TSDF volume"]
-    E --> F["surface points"]
-    E --> G["triangle mesh"]
+    C --> D["streaming fusion<br/>one frame in memory"]
+    D --> E["sparse volume<br/>.sftvol"]
+    E --> F["triangle mesh<br/>.ply"]
+    E --> G["held-out<br/>residual"]
+    F --> H["render"]
 ```
 
 **Session and replay.** A `.vgsession` is a folder of RGB, depth, IMU and pose
@@ -170,50 +211,74 @@ streams with a manifest. Replay associates them by exact timestamp and hashes
 every input file into one digest that identifies the scan.
 
 **Block planning.** Rather than allocating a dense grid over the whole scene,
-the planner walks the depth samples and selects only the 8×8×8 voxel blocks
-the surfaces actually reach, plus a truncation halo. On the TUM scene this is
-635k voxel slots where a dense grid would need 2.75M.
+the planner selects only the 8×8×8 voxel blocks that surfaces reach, plus a
+truncation halo. On the TUM scene that is 2.8 million voxel slots where a
+dense grid over the same bounds would need about 38 million.
 
-**Depth context.** Decoding the same depth frame once per voxel is the obvious
-trap. The context decodes each frame exactly once into immutable storage, and
-everything downstream reads from it — no file I/O, no hashing, no decoding in
-the hot path.
+**Streaming fusion.** Each frame is decoded once, every planned voxel is
+projected, sampled and classified against it in NumPy, the result is added,
+and the frame is dropped. Memory is one depth image however long the scan is.
 
-**Fusion.** For each block, each observation is evaluated as a whole-block
-field — 512 voxels projected, sampled and classified in one NumPy pass — and
-the fields are applied in canonical observation order.
+**Persisted volume.** The fused sums and weights are written as a `.sftvol`:
+a canonical JSON header and fixed little-endian arrays, with a digest per
+array. The loader re-derives every count the header claims from the payload
+and refuses a file where they disagree.
 
-**Extraction.** Sign-changing edges become surface points; fully observed
-cells become triangles via a fixed six-tetrahedron split.
+**Meshing.** Every fully observed cell is split into six tetrahedra and
+triangulated, vectorised over all cells at once.
 
-## The interesting problem: making it fast without changing the answer
+## Three problems worth describing
 
-The sparse path started ~100× slower than the dense one it was meant to
+### Making it fast without changing the answer
+
+The sparse path started about 100× slower than the dense one it was meant to
 replace, because it looped in Python. Vectorising it took a small room scan
-from **210 s to 2 s**.
+from **210 s to under a second**.
 
 The constraint was that the fast path had to be **byte-identical** to the slow
-one — and that is harder than it sounds, because floating-point addition is
-not associative:
+one, and that is harder than it sounds, because floating-point addition is not
+associative:
 
 ```text
 (a + b) + c  ≠  a + (b + c)      in the last bits
 ```
 
-Any reordering silently changes the reconstruction. So:
+Any reordering silently changes the reconstruction. So the world-to-camera
+product is written out term by term instead of as a matrix multiply, which is
+free to reassociate or fuse its multiply-add; `fx * x / z + cx` stays
+left-associated; and voxels that fail an early gate still ride through the
+later arithmetic, their garbage silenced and their pixel indices pinned in
+bounds, because that is what makes it one pass.
 
-- The world-to-camera product is written out term by term instead of as a
-  matrix multiply, because a matrix multiply is free to reassociate or fuse
-  the multiply-add.
-- `fx * x / z + cx` stays left-associated.
-- Voxels that fail an early gate still ride through the later arithmetic (that
-  is what makes it one pass); their garbage is silenced with `errstate` and
-  their pixel indices pinned in bounds so the depth gather stays valid.
-- Skipped voxels carry `+0.0`, which is bit-preserving, so no masking is
-  needed when the fields are summed.
+### Fusing a long scan without holding it
 
-Details: [`docs/tsdf-block-contributions.md`](docs/tsdf-block-contributions.md)
-and [`docs/tsdf-block-vector-fusion.md`](docs/tsdf-block-vector-fusion.md).
+The first real-data run could use 99 of 792 frames: decoded depth for every
+frame was held at once and ran out of room.
+
+Fusion never needed the frames together. A voxel's value is a sum over
+observations in order, so frames can be consumed one after another. Walking
+frames in the outer loop instead of blocks changes *which voxel is visited
+when*, never *the order in which one voxel receives its contributions* — and
+that order is the only thing that fixes the last bits. So the streaming path
+is byte-identical to the block-by-block one by construction, and all 790
+posed frames now fuse in about a minute at 30 mm.
+
+### Meshing data that is not tidy
+
+The reference mesher refused the first real volume outright: non-manifold
+vertices.
+
+Real scans have ragged observed regions. Around a grid edge, the cells on two
+opposite sides can be observed while the cells between them are not, so two
+separate fans of triangles meet at a single vertex — a pinch. That is not an
+error in the data. Each fan now gets its own copy of the vertex, which is the
+standard repair, and the *reference mesher's own* topology check is then run
+on the result to confirm it is a surface the reference would have accepted.
+The TUM volume has 31 of them in 535,486 triangles.
+
+Details: [`docs/vectorised-fusion.md`](docs/vectorised-fusion.md),
+[`docs/sparse-volume-format.md`](docs/sparse-volume-format.md) and
+[`docs/sparse-meshing.md`](docs/sparse-meshing.md).
 
 ## What it does not do
 
@@ -224,33 +289,56 @@ Stated plainly, because the gaps matter more than the features:
 - **No relocalization.** It builds maps; it does not position anyone inside
   one.
 - **No semantics.** It produces geometry, not rooms, doors or accessibility.
-- **Planning is slow.** ~2 s per 640×480 frame; it is a per-pixel Python loop
-  and is currently the pipeline bottleneck.
-- **Sequence length is capped.** The depth context holds float64 depth against
-  a 512 MB ceiling — about 208 frames at 640×480.
-- **Meshing fails on real data.** The fixed six-tetrahedron split produces
-  non-manifold vertices on real geometry and the validator rejects it. Surface
-  points extract fine from the same volume.
-- **Sparse volumes are in-memory only.** There is no block-backed artifact
-  format, so a sparse fusion cannot be saved, rendered, meshed, or resumed
-  across runs. Only the dense path produces a file.
+- **No absolute accuracy figure.** The residual above is agreement between
+  views. A reconstruction that was wrong the same way from every viewpoint
+  would still score well. That needs a dataset with a ground-truth surface.
+- **Not real time.** About ten million voxel-observations per second on one
+  CPU core. A GPU system does this live; this one takes minutes.
+- **A storage ceiling.** Accumulators are capped at 64 MB, or 10,922 blocks.
+  The TUM scene at 10 mm needs 12,503 and is refused with a message saying so.
+- **Fusion does not resume across runs.** A volume is written once, complete.
+  The resumable fusion ledgers exist but live in memory.
 - **The free-space path is fixture-scale.** Coverage, cross-view resolution
-  and plan expansion carry a 262,144 retained-outcome cap, which a single
-  640×480 frame's 307,200 pixels already exceeds. They are bounded
-  diagnostics, not part of the real-data pipeline.
+  and plan expansion carry a 262,144-outcome cap that a single 640×480 frame
+  exceeds. They are bounded diagnostics, not part of the real-data pipeline.
+
+## Where this sits
+
+Truncated signed distance fusion is
+[Curless and Levoy, 1996](https://graphics.stanford.edu/papers/volrange/);
+doing it live on a depth camera is
+[KinectFusion, 2011](https://doi.org/10.1109/ISMAR.2011.6092378);
+storing it in sparse hashed blocks is
+[Nießner et al., 2013](https://niessnerlab.org/projects/niessner2013hashing.html).
+[InfiniTAM](https://arxiv.org/abs/1410.0925),
+[voxblox](https://arxiv.org/abs/1611.03631),
+[VDBFusion](https://pmc.ncbi.nlm.nih.gov/articles/PMC8838740/),
+[nvblox](https://arxiv.org/abs/2311.00626) and Open3D are mature, much faster
+implementations. Nothing here is a new capability, and if you need a
+reconstruction, use one of those.
+
+What those systems do not try to be is bit-reproducible. A real-time GPU
+pipeline is built to tolerate small inconsistencies in exchange for speed —
+InfiniTAM, for instance, allocates blocks with non-atomic writes and accepts
+that a hash collision within a frame is simply corrected in the next. That is
+the right trade for a robot. This project makes the opposite one: slower, and
+able to say exactly which bytes a given scan must produce.
+
+More in [`docs/related-work.md`](docs/related-work.md).
 
 ## Layout
 
 ```text
 spatialforge/     library and CLI
-  replay.py         deterministic session replay and digests
-  tsdf.py           dense reference integrator
-  tsdf_block_*.py   sparse block planning, storage, fusion
-  surface.py        zero-crossing surface points
-  mesh.py           triangle extraction
-  tum_importer.py   TUM RGB-D → session format
-tools/            reproducible analysis and rendering scripts
-tests/            39 test modules, 453 tests
+  replay.py               deterministic session replay and digests
+  tsdf_block_plan.py      sparse block planning
+  tsdf_stream_fusion.py   frame-at-a-time fusion
+  tsdf_block_volume.py    the .sftvol format
+  tsdf_block_mesh.py      sparse meshing
+  tsdf.py, mesh.py        dense reference integrator and mesher
+  tum_importer.py         TUM RGB-D -> session format
+tools/            reproducible scoring and rendering scripts
+tests/            45 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -261,14 +349,13 @@ docs/             format specs, algorithm notes, validation reports
 .venv/Scripts/python.exe -W error -m unittest discover -s tests -p "test_*.py"
 ```
 
-453 tests, about 80 seconds, must finish `OK`. Warnings are errors. Tests
-assert no filesystem changes and patch functions an operation must not call,
-then assert they were never reached.
+Warnings are errors. Tests assert that operations leave the filesystem alone
+and patch functions an operation must not call, then assert they were never
+reached.
 
-## Status and licence
+## Status
 
-Working prototype, actively developed. The known-pose reconstruction path is
-complete and validated on real sensor data. Pose estimation, localization and
-semantic mapping are outside the current implementation.
-
-Built as the reconstruction backend for an indoor navigation project.
+A research-grade known-pose reconstruction pipeline, complete from scan to
+mesh and validated on real sensor data. Pose estimation, localization and
+semantic mapping are outside it. Built as the reconstruction backend for an
+indoor navigation project.

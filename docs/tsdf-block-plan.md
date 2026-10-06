@@ -63,6 +63,30 @@ ray blocks are not represented here. Traversing every existing active row does
 not change this coverage boundary. A complete block-backed fusion phase must
 define that semantic choice explicitly.
 
+## Two implementations, one plan
+
+The rule above is defined one depth pixel at a time, and the original
+planner ran it that way: a Python loop over every pixel of every frame,
+about two seconds per 640x480 frame. On the first real sequence that was 201
+seconds of a 242-second run.
+
+`plan_tsdf_blocks` now evaluates a whole frame at once in NumPy. The
+per-pixel loop is kept as the reference, and the two are required to write
+the same `.sftplan` file, byte for byte. On real 640x480 frames the
+vectorised path is about twenty times faster.
+
+The arithmetic is the reference's, in the reference's order, so the selected
+blocks cannot differ. Block rows are deduplicated by packing each row into a
+single integer rather than sorting rows directly, which is where most of the
+remaining time went.
+
+Irregular frames are not given a fast path. If any sample would produce a
+non-finite coordinate, an index outside the planning range, or a span too
+wide to expand, the vectorised attempt returns nothing and the whole frame is
+handed to the reference loop, untouched. That loop then raises its precise
+per-pixel error or completes normally. Every failure message is therefore
+exactly the reference's, without its error handling being written twice.
+
 ## Exact fixture proof
 
 At `0.125 m` voxels, each block is `1 m` wide. With `0.5 m` truncation, the

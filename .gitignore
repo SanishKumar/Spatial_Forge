@@ -52,3 +52,5 @@ dist/
 /docs/tsdf-domain-cross-view.md
 /docs/tsdf-plan-expansion.md
 /docs/tsdf-expanded-plan.md
+/docs/tsdf-block-contributions.md
+/docs/tsdf-block-vector-fusion.md
