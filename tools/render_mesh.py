@@ -25,6 +25,10 @@ scale.
 to look into a room from outside it: the walls nearest the viewer are seen
 from behind and disappear.
 
+Given both ``--session`` and ``--vertex-errors``, the two are drawn side by
+side from one camera, cropped as one: what the surface looks like, and how
+far it is from the truth, frame for frame.
+
 Usage:
 
     python tools/render_mesh.py MESH.ply OUTPUT_PREFIX
@@ -67,8 +71,11 @@ _CLAY = np.array((205.0, 208.0, 214.0))
 _UNSEEN = np.array((120.0, 124.0, 132.0))
 _BACK_TINT = np.array((0.34, 0.38, 0.50))
 _AMBIENT = 0.30
-# Error maps are lit more evenly: the colour is the data.
-_ERROR_AMBIENT = 0.62
+# Error maps are lit almost flat: the colour is the data, and a surface
+# that is merely better lit reads as a different value on the scale. At
+# 0.62 a floor facing the light looked a millimetre worse than the walls
+# beside it when its median error was within 0.06 mm of theirs.
+_ERROR_AMBIENT = 0.85
 # Zero error to the top of the scale and beyond.
 _ERROR_RAMP = np.array(
     (
@@ -499,6 +506,23 @@ def draw_error_legend(image: Image.Image, scale_mm: float) -> Image.Image:
     return image
 
 
+def join_panels(panels: list[Image.Image]) -> Image.Image:
+    """Set equally sized images side by side with a thin gap between."""
+
+    if len(panels) == 1:
+        return panels[0]
+    width, height = panels[0].size
+    gap = max(1, round(width * 0.02))
+    joined = Image.new(
+        "RGB",
+        (width * len(panels) + gap * (len(panels) - 1), height),
+        tuple(int(value) for value in _BACKGROUND),
+    )
+    for index, panel in enumerate(panels):
+        joined.paste(panel, (index * (width + gap), 0))
+    return joined
+
+
 def render(
     vertices: np.ndarray,
     faces: np.ndarray,
@@ -620,10 +644,6 @@ def main(argv: list[str] | None = None) -> int:
         )
     if arguments.sweep is not None and not 0.0 < arguments.sweep <= 180.0:
         raise SystemExit("--sweep must be within (0, 180] degrees")
-    if arguments.session is not None and arguments.vertex_errors is not None:
-        raise SystemExit(
-            "--session and --vertex-errors both set the colour; give one"
-        )
     if not (
         np.isfinite(arguments.error_scale_mm)
         and arguments.error_scale_mm > 0.0
@@ -653,24 +673,11 @@ def main(argv: list[str] | None = None) -> int:
         f"{extent[0]:.2f} x {extent[1]:.2f} x {extent[2]:.2f} m"
     )
     normals = vertex_normals(vertices, faces)
-    ambient = _AMBIENT
-    back = BACK_CULLED if arguments.cull_back_faces else BACK_TINTED
-    if arguments.vertex_errors is not None:
-        if not arguments.cull_back_faces:
-            back = BACK_PLAIN
-        errors = read_vertex_errors(arguments.vertex_errors, len(vertices))
-        colours = error_colours(errors, arguments.error_scale_mm / 1000.0)
-        ambient = _ERROR_AMBIENT
-        print(
-            f"colour: distance to ground truth, 0 to "
-            f"{arguments.error_scale_mm:g} mm, "
-            f"{int(np.count_nonzero(np.isfinite(errors)))} of "
-            f"{len(vertices)} vertices measured"
-        )
-    elif arguments.session is None:
-        colours = np.repeat(_CLAY[None, :], len(vertices), axis=0)
-        print("colour: uniform")
-    else:
+    reverse = BACK_CULLED if arguments.cull_back_faces else BACK_TINTED
+    # One entry per picture drawn side by side: vertex colours, ambient
+    # light, how reverse sides are drawn, and whether it carries a scale.
+    panels: list[tuple[np.ndarray, float, str, bool]] = []
+    if arguments.session is not None:
         colours, frames_used, seen = scan_vertex_colours(
             arguments.session,
             vertices,
@@ -680,6 +687,33 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"colour: scan RGB from {frames_used} frames, "
             f"{seen} of {len(vertices)} vertices observed"
+        )
+        panels.append((colours, _AMBIENT, reverse, False))
+    if arguments.vertex_errors is not None:
+        errors = read_vertex_errors(arguments.vertex_errors, len(vertices))
+        print(
+            f"colour: distance to ground truth, 0 to "
+            f"{arguments.error_scale_mm:g} mm, "
+            f"{int(np.count_nonzero(np.isfinite(errors)))} of "
+            f"{len(vertices)} vertices measured"
+        )
+        panels.append(
+            (
+                error_colours(errors, arguments.error_scale_mm / 1000.0),
+                _ERROR_AMBIENT,
+                BACK_CULLED if arguments.cull_back_faces else BACK_PLAIN,
+                True,
+            )
+        )
+    if not panels:
+        print("colour: uniform")
+        panels.append(
+            (
+                np.repeat(_CLAY[None, :], len(vertices), axis=0),
+                _AMBIENT,
+                reverse,
+                False,
+            )
         )
 
     azimuths = animation_azimuths(
@@ -695,40 +729,49 @@ def main(argv: list[str] | None = None) -> int:
         arguments.fill,
     )
 
-    def frame(azimuth: float) -> Image.Image:
-        return render(
-            vertices,
-            faces,
-            normals,
-            colours,
-            azimuth,
-            arguments.elevation,
-            arguments.size,
-            focal,
-            ambient,
-            back,
-        )
+    def frames(views: list[float]) -> list[Image.Image]:
+        """Each view drawn once per panel, cropped together, then joined."""
 
-    def finish(images: list[Image.Image]) -> list[Image.Image]:
-        images = crop_to_content(images)
-        if arguments.vertex_errors is None:
-            return images
-        return [
-            draw_error_legend(image, arguments.error_scale_mm)
-            for image in images
+        drawn = [
+            render(
+                vertices,
+                faces,
+                normals,
+                colours,
+                azimuth,
+                arguments.elevation,
+                arguments.size,
+                focal,
+                ambient,
+                back,
+            )
+            for colours, ambient, back, _ in panels
+            for azimuth in views
         ]
+        # One crop for every panel and every view, so that panels stay
+        # registered with each other and the subject does not drift.
+        drawn = crop_to_content(drawn)
+        columns = []
+        for index, (_, _, _, has_scale) in enumerate(panels):
+            column = drawn[index * len(views):(index + 1) * len(views)]
+            if has_scale:
+                column = [
+                    draw_error_legend(image, arguments.error_scale_mm)
+                    for image in column
+                ]
+            columns.append(column)
+        return [join_panels(list(row)) for row in zip(*columns)]
 
-    still = finish([frame(arguments.azimuth)])[0]
+    still = frames([arguments.azimuth])[0]
     with publishing(still_path, ".png") as temporary:
         still.save(temporary, format="PNG")
     print(f"wrote {still_path}")
 
-    animation = finish([frame(azimuth) for azimuth in azimuths])
+    animation = frames(azimuths)
     with publishing(gif_path, ".gif") as temporary:
         encode_gif(animation, temporary)
     print(f"wrote {gif_path} ({len(animation)} frames)")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

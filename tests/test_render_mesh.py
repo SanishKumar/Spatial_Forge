@@ -299,6 +299,66 @@ class ErrorMapCommandTests(unittest.TestCase):
         np.testing.assert_allclose(pixels[67, 3], np.round(_ERROR_RAMP[0]))
         np.testing.assert_allclose(pixels[67, 26], np.round(_ERROR_RAMP[-1]))
 
+    def test_scan_colour_and_error_are_drawn_side_by_side(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            mesh_path = fixture_mesh(temporary_root)
+            errors_path = temporary_root / "errors.npy"
+            np.save(errors_path, np.linspace(0.0, 0.02, 225, dtype=np.float32))
+            common = [
+                str(mesh_path),
+                "--colour-stride",
+                "1",
+                "--size",
+                "72",
+                "--frames",
+                "3",
+                "--sweep",
+                "20",
+            ]
+
+            def run(name: str, *colour: str) -> tuple[np.ndarray, str]:
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    render_main(
+                        [common[0], str(temporary_root / name), *common[1:], *colour]
+                    )
+                with Image.open(temporary_root / f"{name}.png") as still:
+                    pixels = np.asarray(
+                        still.convert("RGB"), dtype=np.float64
+                    )
+                return pixels, stdout.getvalue()
+
+            scan, _ = run("scan", "--session", str(FIXTURE))
+            error, _ = run("error", "--vertex-errors", str(errors_path))
+            both, printed = run(
+                "both",
+                "--session",
+                str(FIXTURE),
+                "--vertex-errors",
+                str(errors_path),
+            )
+            with Image.open(temporary_root / "both.gif") as animation:
+                gif_size = animation.size
+                gif_frames = animation.n_frames
+
+        # Two 72-pixel panels and a one-pixel gap between them.
+        self.assertEqual(both.shape, (72, 145, 3))
+        self.assertEqual(gif_size, (145, 72))
+        self.assertEqual(gif_frames, 3)
+        self.assertIn("colour: scan RGB", printed)
+        self.assertIn("colour: distance to ground truth", printed)
+        # Each panel is exactly the picture that colouring gives alone, so
+        # the two are the same camera and the same crop.
+        self.assertTrue(bool(np.array_equal(both[:, :72], scan)))
+        self.assertTrue(bool(np.array_equal(both[:, 73:], error)))
+        self.assertTrue(bool(np.all(both[:, 72] == (14.0, 16.0, 22.0))))
+        # The scale belongs to the error panel only.
+        np.testing.assert_allclose(both[67, 73 + 3], np.round(_ERROR_RAMP[0]))
+        self.assertFalse(
+            bool(np.allclose(both[67, 3], np.round(_ERROR_RAMP[0])))
+        )
+
     def test_errors_that_do_not_belong_to_the_mesh_are_refused(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
             temporary_root = Path(temporary_dir)
@@ -350,17 +410,6 @@ class ErrorMapCommandTests(unittest.TestCase):
                     ]
                 )
             np.save(temporary_root / "good.npy", good)
-            with self.assertRaisesRegex(SystemExit, "both set the colour"):
-                render_main(
-                    [
-                        str(mesh_path),
-                        str(temporary_root / "out-both"),
-                        "--vertex-errors",
-                        str(temporary_root / "good.npy"),
-                        "--session",
-                        str(FIXTURE),
-                    ]
-                )
             for scale in ("0", "-1", "nan", "inf"):
                 with self.assertRaisesRegex(SystemExit, "error-scale-mm"):
                     render_main(
