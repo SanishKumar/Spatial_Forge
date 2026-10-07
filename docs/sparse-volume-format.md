@@ -110,7 +110,7 @@ wrong in one way — and require each to be refused.
 
 ## Limits
 
-A volume holds at most 10,922 blocks, the 64 MB accumulator ceiling fusion
+A volume holds at most 43,690 blocks, the 256 MiB accumulator ceiling fusion
 itself works under. The whole file is read into memory to be verified. There
 is no partial or memory-mapped load, no compression, and no way to append to
 or resume a volume: it is written once, complete.

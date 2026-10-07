@@ -294,8 +294,8 @@ Stated plainly, because the gaps matter more than the features:
   would still score well. That needs a dataset with a ground-truth surface.
 - **Not real time.** About ten million voxel-observations per second on one
   CPU core. A GPU system does this live; this one takes minutes.
-- **A storage ceiling.** Accumulators are capped at 64 MB, or 10,922 blocks.
-  The TUM scene at 10 mm needs 12,503 and is refused with a message saying so.
+- **A storage ceiling.** Accumulators are capped at 256 MiB, or 43,690
+  blocks. A plan that needs more is refused with a message saying so.
 - **Fusion does not resume across runs.** A volume is written once, complete.
   The resumable fusion ledgers exist but live in memory.
 - **The free-space path is fixture-scale.** Coverage, cross-view resolution

@@ -64,10 +64,10 @@ from .tsdf_voxel_update import (
     _validate_update_storage,
 )
 
-# Voxels evaluated per NumPy pass. Small enough that the dozen or so
+# Blocks evaluated per NumPy pass. Small enough that the dozen or so
 # temporaries of one pass stay cache-resident, which is worth more than the
 # Python overhead it costs; the fused bytes do not depend on it.
-STREAM_FUSION_CHUNK_VOXELS = 256 * TSDF_BLOCK_VOXELS
+STREAM_FUSION_CHUNK_BLOCKS = 256
 
 
 def _is_sha256(value: object) -> bool:
@@ -285,10 +285,14 @@ def fuse_tsdf_plan_streaming(
     )
     _validate_plan_associations(plan, selected, camera)
 
-    world_xyz_m = _plan_voxel_centres_world_m(
-        storage.block_indices,
-        plan.voxel_size_m,
-    )
+    blocks = np.asarray(storage.block_indices, dtype=np.int64)
+    # Checked for the whole plan before anything is accumulated, so an
+    # unrepresentable grid is refused rather than discovered mid-fusion.
+    for first_block in range(0, len(blocks), STREAM_FUSION_CHUNK_BLOCKS):
+        _chunk_voxel_centres_world_m(
+            blocks[first_block:first_block + STREAM_FUSION_CHUNK_BLOCKS],
+            plan.voxel_size_m,
+        )
     voxel_slots = storage.voxel_slots
     sums = storage.tsdf_sums.reshape(-1)
     weights = storage.weights.reshape(-1)
@@ -341,18 +345,20 @@ def fuse_tsdf_plan_streaming(
             valid_depth_samples += frame_valid
             invalid_depth_samples += int(depth_m.size) - frame_valid
 
-            for start in range(0, voxel_slots, STREAM_FUSION_CHUNK_VOXELS):
-                stop = min(start + STREAM_FUSION_CHUNK_VOXELS, voxel_slots)
+            for first_block in range(
+                0, len(blocks), STREAM_FUSION_CHUNK_BLOCKS
+            ):
+                chunk = blocks[
+                    first_block:first_block + STREAM_FUSION_CHUNK_BLOCKS
+                ]
+                start = first_block * TSDF_BLOCK_VOXELS
+                stop = start + len(chunk) * TSDF_BLOCK_VOXELS
                 codes, sum_deltas, weight_deltas = _evaluate_ready_voxels(
                     camera,
                     transform,
                     depth_m,
                     plan.truncation_m,
-                    (
-                        world_xyz_m[0][start:stop],
-                        world_xyz_m[1][start:stop],
-                        world_xyz_m[2][start:stop],
-                    ),
+                    _chunk_voxel_centres_world_m(chunk, plan.voxel_size_m),
                 )
                 sums[start:stop] += sum_deltas
                 weights[start:stop] += weight_deltas
@@ -455,18 +461,22 @@ def _decode_metric_depth(
     return depth_m
 
 
-def _plan_voxel_centres_world_m(
-    block_indices: tuple[tuple[int, int, int], ...],
+def _chunk_voxel_centres_world_m(
+    blocks: np.ndarray,
     voxel_size_m: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """World centres of every planned voxel, in storage order.
+    """World centres of every voxel of some blocks, in storage order.
 
     Storage order is block row, then canonical local-flat, which is exactly
     the flattened layout of the ``(blocks, z, y, x)`` accumulator arrays. The
     arithmetic matches the per-block form term for term.
+
+    Computed for a run of blocks at a time and thrown away, rather than
+    once for the plan: three float64 per voxel is twice the size of the
+    accumulators themselves, and holding it would make that, not the
+    volume, the memory fusion needs.
     """
 
-    blocks = np.asarray(block_indices, dtype=np.int64)
     centres = tuple(
         (
             (

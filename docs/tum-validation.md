@@ -156,9 +156,9 @@ now a file, and the mesh and the render come from it.
 - **No absolute accuracy.** That needs a dataset with a ground-truth surface.
 - **One sequence, one kind of scene.** A well-lit, textured desk at close
   range. Not a corridor, a glass door, a dark room or a building.
-- **10 mm is refused.** At 10 mm this scene needs 12,503 blocks; accumulator
-  storage is capped at 64 MB, which is 10,922. The limit is a constant, not a
-  design boundary, but it is the limit today.
+- **10 mm is not published here.** At 10 mm this scene needs 12,503 blocks.
+  That was refused while accumulator storage was capped at 10,922; the cap
+  is now 43,690, so it fits, but no manifest for it has been produced.
 - **Half the frames, by design.** Stride 2 is what leaves frames to hold out.
   A volume fused from every frame cannot be scored this way at all.
 - **The free-space path was not run.** Coverage, cross-view resolution and

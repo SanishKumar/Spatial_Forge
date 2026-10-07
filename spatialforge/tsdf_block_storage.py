@@ -19,7 +19,7 @@ from .tsdf_block_plan_loader import (
     verify_tsdf_block_plan_replay,
 )
 
-MAX_TSDF_BLOCK_STORAGE_BYTES = 64 * 1024 * 1024
+MAX_TSDF_BLOCK_STORAGE_BYTES = 256 * 1024 * 1024
 TSDF_BLOCK_VOXELS = TSDF_BLOCK_RESOLUTION**3
 TSDF_SUM_DTYPE = np.dtype(np.float64)
 TSDF_WEIGHT_DTYPE = np.dtype(np.uint32)

@@ -193,12 +193,13 @@ class StreamFusionParityTests(unittest.TestCase):
         case = shared_room_case()
         expected = allocate_empty_tsdf_blocks(case.plan, case.session)
         fuse_tsdf_plan_streaming(expected, case.session)
-        for chunk in (512, 7 * 512, 1_000_003):
+        self.assertGreater(case.plan.active_block_count, 7)
+        for chunk in (1, 7, 1_000_003):
             with self.subTest(chunk=chunk):
                 storage = allocate_empty_tsdf_blocks(case.plan, case.session)
                 with patch(
                     "spatialforge.tsdf_stream_fusion."
-                    "STREAM_FUSION_CHUNK_VOXELS",
+                    "STREAM_FUSION_CHUNK_BLOCKS",
                     chunk,
                 ):
                     fuse_tsdf_plan_streaming(storage, case.session)
