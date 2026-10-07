@@ -1,0 +1,173 @@
+{
+  "depth_reference": {
+    "beyond_limit": 3947,
+    "frames": 44,
+    "limit_m": 0.16,
+    "matched": 87533,
+    "model_normals_facing_camera_fraction": 0.9865079455748118,
+    "nearest_point": {
+      "max_matched_mm": 159.983459626065,
+      "mean_mm": 12.3498318415684,
+      "median_mm": 8.90396886135473,
+      "p90_mm": 31.729522558677385,
+      "p95_mm": 59.022454265343825,
+      "p99_mm": null,
+      "rms_mm": 17.427905114966883,
+      "std_mm": 12.296891077881112
+    },
+    "normals_trusted_at_fraction": 0.9924210841377246,
+    "normals_trusted_from": "the report the alignment came from",
+    "point_to_plane": {
+      "max_matched_mm": 159.1677763729974,
+      "mean_mm": 10.897752189828145,
+      "mean_signed_mm": 9.64171526939556,
+      "median_mm": 7.660018450238097,
+      "p90_mm": 30.648283655111076,
+      "p95_mm": 57.52639819987202,
+      "p99_mm": null,
+      "rms_mm": 16.415486993112705,
+      "std_mm": 12.276286508148472
+    },
+    "points": 91480,
+    "within_fraction": {
+      "10mm": 0.5480760822037604,
+      "20mm": 0.7928290336685614,
+      "5mm": 0.23870791429820726
+    }
+  },
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "evaluation": {
+    "beyond_limit": 0,
+    "limit_m": 0.16,
+    "matched": 1640074,
+    "nearest_point": {
+      "max_matched_mm": 56.77582323853295,
+      "mean_mm": 11.832794456611031,
+      "median_mm": 10.205561023174218,
+      "p90_mm": 21.656310300564364,
+      "p95_mm": 24.05937514164385,
+      "p99_mm": 31.171239373329083,
+      "rms_mm": 13.769468870161433,
+      "std_mm": 7.041537354437599
+    },
+    "point_to_plane": {
+      "max_matched_mm": 55.984103658634375,
+      "mean_mm": 10.529591356758575,
+      "mean_signed_mm": 9.824339491378305,
+      "median_mm": 9.266025160640424,
+      "p90_mm": 20.736321760743994,
+      "p95_mm": 22.95675862092014,
+      "p99_mm": 30.734448977722998,
+      "rms_mm": 12.877269604851769,
+      "std_mm": 7.412946670232717
+    },
+    "points": 1640074,
+    "within_fraction": {
+      "10mm": 0.4841708361939766,
+      "20mm": 0.8383097348046491,
+      "5mm": 0.17501710288682096
+    }
+  },
+  "inputs": {
+    "model": "datasets/icl/model/living-room.ply",
+    "model_points": 9982296,
+    "model_sha256": "414c05790dac39abe97aaa298939ead6855cdc72d24d35442ce84db22be4279c",
+    "plan_sha256": "7139327d32418ff0853a556fb5514f173baba13809ff22a60faefb4a6c003b83",
+    "replay_digest_sha256": "f354133bb61c4149dc86175fa2b6a6829d59e0c6149190556b20e9f82a43f3d0",
+    "session": "datasets/icl-kt2n.vgsession",
+    "session_id": "tum-icl-nuim-living-room-kt2n",
+    "source_trajectory_sha256": "550ecf2f3129b8113ef5cba7e6a1628f129d96c8e75d02e95bf1641baad327de",
+    "volume": "datasets/icl-kt2n-15mm.sftvol",
+    "volume_sha256": "93dac343f269616ca04bb30322bbed48b1c44dd32ec235febfd3d702c5d60f26"
+  },
+  "measurement": "surface-distance-to-ground-truth-model",
+  "measures": "distance from each vertex of the reconstructed mesh to a ground-truth surface model: to the nearest model point, and to the tangent plane through it. The frames are aligned by one rigid motion fitted to raw depth, not to the reconstruction, and the same distances for raw depth are given as the floor of the measurement. Camera poses are the dataset's ground truth.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/icl-kt2n-15mm.ply",
+    "sha256": "0082056ec0d5bb6abe23a39a0f96d6fbafad4f39fe1c6ea812b007baedb65f75",
+    "source_volume_sha256": "93dac343f269616ca04bb30322bbed48b1c44dd32ec235febfd3d702c5d60f26",
+    "triangles": 3238872,
+    "vertices": 1640074
+  },
+  "reconstruction": {
+    "active_blocks": 41455,
+    "contributions_applied": 1403599176,
+    "contributions_evaluated": 9338982400,
+    "frame_stride": 2,
+    "fused_frames": 440,
+    "maximum_weight": 248,
+    "observed_voxel_slots": 16914375,
+    "path": "sparse-block-streaming-fusion",
+    "persisted": true,
+    "planned_voxel_slots": 21224960,
+    "truncation_m": 0.045,
+    "voxel_size_m": 0.015
+  },
+  "registration": {
+    "fit_frame_stride": 20,
+    "fit_frames": 0,
+    "fit_samples": 0,
+    "fitted_to": "raw depth of the session named in reused_from",
+    "initial_translation_m": null,
+    "method": "reused from an earlier report",
+    "model_from_source": [
+      0.999789494576059,
+      -0.00021254018821276964,
+      -0.02051636814878936,
+      -0.7453879939365118,
+      0.00020594027793598214,
+      0.9999999263703494,
+      -0.00032380225022556053,
+      1.2997775529750817,
+      0.020516435459167554,
+      0.00031950894153713995,
+      0.9997894647324935,
+      -0.7878792937695777,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "pixel_step": 12,
+    "reused_from": {
+      "model_normals_facing_camera_fraction": 0.9924210841377246,
+      "path": "results/icl-nuim-lr-kt2-10mm-surface.json",
+      "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
+      "session_id": "tum-icl-nuim-living-room-kt2",
+      "sha256": "848cc822d93dced895fe5068997ccc26bf70e3b5b93ddb60b9277ce553ae5c63",
+      "trajectory_match": {
+        "by": "poses",
+        "largest_rotation_difference_rad": 7.258043423697274e-06,
+        "largest_translation_difference_m": 1.0246950766034854e-05,
+        "poses": 880,
+        "tolerance_m": 0.0001,
+        "tolerance_rad": 0.0001
+      }
+    },
+    "rotation_degrees": 1.1757913436346203,
+    "session_was_imported": true,
+    "source_pose_consistency": 3.1086244689504383e-15,
+    "stages": []
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.2.0",
+  "source_commit": "b906aee47bb7f815e76e8424cf673ce2e365579a",
+  "source_worktree_clean": true,
+  "timings_seconds": {
+    "evaluation": 52.059,
+    "model_load": 0.623,
+    "registration": 1.977
+  },
+  "vertex_errors": {
+    "path": "datasets/icl-kt2n-15mm-errors.npy",
+    "quantity": "absolute distance to model tangent plane, m",
+    "sha256": "b595ce36f8eacc0d2f883fddc8ee7eb3793d68031cc5be2f7a52c3dc24a50fd3"
+  }
+}

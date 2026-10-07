@@ -15,10 +15,12 @@
       "rms_mm": 9.980407086789082,
       "std_mm": 7.0591025562673835
     },
+    "normals_trusted_at_fraction": 0.9924210841377246,
+    "normals_trusted_from": "the report the alignment came from",
     "point_to_plane": {
       "max_matched_mm": 156.44010143448912,
       "mean_mm": 5.276679602465034,
-      "mean_signed_mm": null,
+      "mean_signed_mm": 0.8015827728776762,
       "median_mm": 3.1579910662329427,
       "p90_mm": 12.522620171948367,
       "p95_mm": 16.91238382518548,
@@ -56,7 +58,7 @@
     "point_to_plane": {
       "max_matched_mm": 68.60378733947388,
       "mean_mm": 1.5494202588231114,
-      "mean_signed_mm": null,
+      "mean_signed_mm": -0.31721516364279734,
       "median_mm": 0.863310652000551,
       "p90_mm": 3.344540438132077,
       "p95_mm": 4.873560357168483,
@@ -135,10 +137,14 @@
     ],
     "pixel_step": 12,
     "reused_from": {
+      "model_normals_facing_camera_fraction": 0.9924210841377246,
       "path": "results/icl-nuim-lr-kt2-10mm-surface.json",
       "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
       "session_id": "tum-icl-nuim-living-room-kt2",
-      "sha256": "848cc822d93dced895fe5068997ccc26bf70e3b5b93ddb60b9277ce553ae5c63"
+      "sha256": "848cc822d93dced895fe5068997ccc26bf70e3b5b93ddb60b9277ce553ae5c63",
+      "trajectory_match": {
+        "by": "digest"
+      }
     },
     "rotation_degrees": 1.1757913436346203,
     "session_was_imported": true,
@@ -147,12 +153,12 @@
   },
   "schema": "spatialforge.result-manifest",
   "schema_version": "0.2.0",
-  "source_commit": "aa4f3c8c94c839bbbeb5240bf3d07f13bfdb2541",
+  "source_commit": "b906aee47bb7f815e76e8424cf673ce2e365579a",
   "source_worktree_clean": true,
   "timings_seconds": {
-    "evaluation": 80.235,
-    "model_load": 0.928,
-    "registration": 2.768
+    "evaluation": 56.023,
+    "model_load": 0.647,
+    "registration": 1.975
   },
   "vertex_errors": {
     "path": "datasets/icl-kt2-kinect-10mm-errors.npy",

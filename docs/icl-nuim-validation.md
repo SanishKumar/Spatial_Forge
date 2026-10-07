@@ -194,9 +194,11 @@ the true surface, where an exact frame is 0.43 mm.
 
 It is simulated here, from a seed, by
 [`tools/simulate_kinect_noise.py`](../tools/simulate_kinect_noise.py).
-**It is not the dataset's published noisy sequence**, which has not been
-run. The paper also displaces points along their normals by an amount it
-gives no parameters for, and that step is left out rather than guessed.
+**It is not the dataset's published noisy sequence.** That is measured
+[further down](#the-datasets-own-noisy-sequence), and it turns out to be a
+different thing. The paper also displaces points along their normals by an
+amount it gives no parameters for, and that step is left out here rather
+than guessed.
 
 <p align="center">
   <img src="assets/icl-room-error.png" width="49%" alt="The room reconstructed from exact depth, coloured by distance to the ground-truth model: blue almost everywhere, with thin red lines along edges">
@@ -233,7 +235,8 @@ the point of a TSDF, and this is what it is worth.
 
 **What is left costs 0.4 mm.** At 10 mm the median goes from 0.45 mm on
 exact depth to 0.86 mm on noisy depth, and the mean and RMS roughly
-double.
+double. It has no direction: the mean signed error is +0.5, +0.3 and
+-0.3 mm at the three voxel sizes.
 
 **A finer grid no longer moves the median.** On exact depth the median sat
 at the measurement floor at every voxel size. With noise it sits near
@@ -273,6 +276,112 @@ simulation does not have.
 Each noisy volume has the same chain of digests as the exact ones, in
 `../results/icl-nuim-lr-kt2-kinect-noise-*`: surface and held-out reports
 for 20, 15 and 10 mm.
+
+## The dataset's own noisy sequence
+
+ICL-NUIM also publishes this trajectory with noise already applied,
+`living_room_traj2n`. It went through the same pipeline and was judged in
+the same frame.
+
+Its trajectory file is the clean one printed again with different rounding:
+878 of 880 rows differ, by at most 10 micrometres and 7 microradians. So
+the two have different digests, and the alignment is reused after comparing
+them pose by pose instead.
+
+### What is in the files
+
+[`tools/depth_noise_report.py`](../tools/depth_noise_report.py) compares a
+noisy sequence with the exact one it came from, pixel by pixel, in
+disparity:
+
+| | Dataset's noisy files | Equation 3, simulated here |
+|---|---|---|
+| Distance from a noisy disparity to a whole number, median (0.25 if not quantised) | 0.022 | 0.003 |
+| Disparity error in smooth regions, median | **+0.51 levels** | 0.00 levels |
+| The same as depth, at 1.2 / 2.2 / 3.5 m | -3 / -7 / -17 mm | 0 / 0 / 0 mm |
+| Depth error over all pixels, median | 10.0 mm | 4.6 mm |
+| Pixels more than 100 mm out | 4.0% | 0.5% |
+| Pixels with no depth | 0.55% | 0.04% |
+
+The files are quantised on exactly the disparity levels the paper's
+equation gives, with depth in centimetres. That settles the unit the paper
+leaves out.
+
+They are also half a level nearer the camera than the exact depth, in
+smooth regions, at every range beyond a metre.
+The equation as printed rounds to the nearest level, which leaves no
+offset, and simulating it leaves none. Rounding up instead would leave
+exactly this. What the dataset's generator did cannot be read from its
+files; only what it produced can.
+
+Half a level is 3 mm at 1.2 m and 17 mm at 3.5 m, and it has the same sign
+in every frame.
+
+### What it does to the reconstruction
+
+Distance to the model's tangent plane. The last column is the mean with
+its sign, positive on the camera's side of the true surface:
+
+| | Median | Mean | RMS | p95 | Mean signed |
+|---|---|---|---|---|---|
+| one frame of the dataset's noisy depth | 7.66 mm | 10.90 mm | 16.42 mm | 57.53 mm | +9.64 mm |
+| mesh from it, 20 mm voxels | 9.67 mm | 10.83 mm | 13.25 mm | 23.55 mm | +10.17 mm |
+| mesh from it, 15 mm voxels | **9.27 mm** | 10.53 mm | 12.88 mm | 22.96 mm | **+9.82 mm** |
+| mesh from simulated noise, 15 mm voxels | 0.77 mm | 1.63 mm | 3.82 mm | 5.02 mm | +0.27 mm |
+| mesh from exact depth, 15 mm voxels | 0.45 mm | 1.02 mm | 2.87 mm | 3.20 mm | +0.40 mm |
+
+<p align="center">
+  <img src="assets/icl-room-error-dataset-noise.png" width="60%" alt="The room reconstructed from the dataset's noisy depth, coloured by distance to the ground-truth model on a scale that saturates at 20 mm: floor, table and sofa near the camera are blue, and the walls shade smoothly through green and yellow to red with distance">
+</p>
+
+<p align="center">
+  <em>The 15 mm mesh from the dataset's noisy depth, on a scale four times
+  coarser than the maps above.<br>The error is not speckle. It grows
+  smoothly with distance from the camera.</em>
+</p>
+
+**Averaging does not remove an offset.** With noise that has none, the mesh
+was about four times closer to the truth than a single frame. Here it is no
+closer: a frame is 7.7 mm out at the median and the mesh 9.3 to 9.7 mm. The
+signed column says why. The surface sits 10 mm on the camera's side of the
+truth, which is the half level, carried through fusion intact.
+
+**The error has the offset's shape.** Binning the 15 mm mesh's vertices by
+distance to the nearest camera, the median error rises from 5 mm within a
+metre to 22 mm beyond 3.5 m. The mesh from simulated noise goes from 0.5 to
+1.6 mm over the same bins. (Measured once from the per-vertex errors; the
+picture shows the same thing.)
+
+**It is not that the noise is larger.** Over all pixels the dataset's noise
+is about twice the simulated noise at the median, and the reconstruction is
+twelve times worse: 9.3 mm against 0.77 mm. The difference is the offset.
+
+**The held-out residual cannot see it.** Frames that are all wrong the same
+way agree with each other:
+
+| Depth, at 15 mm voxels | Held-out residual, median | True error, median | Ratio |
+|---|---|---|---|
+| exact | 0.38 mm | 0.45 mm | 0.8 |
+| noise without offset, simulated | 4.75 mm | 0.77 mm | 6.2 |
+| the dataset's noisy files | 7.02 mm | 9.27 mm | 0.8 |
+
+On exact depth the residual ran just under the true error. With noise and
+no offset it ran six times over. With an offset it runs under again, and
+for the opposite reason: it never sees the part of the error every frame
+shares. No fixed factor turns a held-out residual into accuracy, in either
+direction, and that is the caveat the TUM page has carried from the start,
+now with a measured example of each case.
+
+**10 mm was refused.** The planner stops at 100,000 blocks and this
+sequence needs more: its outliers scatter surface through the room, 41,455
+blocks at 15 mm where exact depth needs 14,059.
+
+**A fit to its own depth was refused too.** Asked to fit the alignment to
+this sequence's own depth rather than reuse the exact one, the registration
+was still moving by 39 micrometres a step when it stopped, and the report
+declined to measure in a frame that had not settled.
+
+The manifests are `../results/icl-nuim-lr-kt2n-*`.
 
 ## One chain per volume
 
@@ -393,6 +502,24 @@ python tools/surface_accuracy_report.py \
 ```
 
 ```bash
+# 4c. The dataset's own noisy sequence: prepare, import, plan, fuse and
+#     mesh living_room_traj2n the same way, see what its depth contains,
+#     and judge it in the exact sequence's frame. Its trajectory is the
+#     same motion with different rounding, so name the earlier session
+python tools/depth_noise_report.py \
+  datasets/icl/icl-nuim-living-room-kt2 \
+  datasets/icl/icl-nuim-living-room-kt2n
+```
+
+```bash
+python tools/surface_accuracy_report.py \
+  datasets/icl-kt2n.vgsession datasets/icl-kt2n-15mm.sftvol \
+  datasets/icl-kt2n-15mm.ply datasets/icl/model/living-room.ply \
+  --alignment results/icl-nuim-lr-kt2-10mm-surface.json \
+  --alignment-session datasets/icl-kt2.vgsession
+```
+
+```bash
 # 5. Draw where the error is
 python tools/render_mesh.py datasets/icl-kt2-10mm.ply datasets/icl-error \
   --vertex-errors datasets/icl-kt2-10mm-errors.npy --error-scale-mm 5 \
@@ -420,8 +547,8 @@ digits and the same statistics.
 - **A real sensor.** The noise section simulates one published model of
   a Kinect: shifted readings, disparity noise and quantisation. It has
   no missing returns, no fringing at edges, no rolling shutter and no
-  calibration error. ICL-NUIM also publishes this sequence with its own
-  simulated noise; that file has not been run.
+  calibration error. The dataset's own noisy sequence adds an offset and
+  outliers, and is still a simulation.
 - **Pose error.** Poses are ground truth. The engine has no tracker.
 - **Completeness.** This is accuracy: how close the reconstructed surface
   is to the true one. It says nothing about surface that was never

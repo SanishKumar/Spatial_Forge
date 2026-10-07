@@ -22,12 +22,16 @@ pixel, with depth in centimetres. The paper does not state the unit; it is
 fixed by what the model then predicts. In centimetres, neighbouring
 disparity levels are 11 mm apart at 2 m, and a Kinect is reported to resolve
 about 1 cm there (Khoshelham and Elberink, 2012). In metres they would be a
-tenth of a millimetre apart and the rounding would do nothing.
+tenth of a millimetre apart and the rounding would do nothing. The
+dataset's own noisy files settle it: their disparities, computed this way,
+are whole numbers.
 
 Two things this is not. It is not ICL-NUIM's published noisy sequence: the
 paper also displaces points along their normals by an amount it gives no
-parameters for, and that step is not applied here. And it is not a sensor:
-no missing returns, no edge fringing, no rolling shutter.
+parameters for, and that step is not applied here. Nor does it reproduce
+the half-level offset towards the camera that those files carry and the
+printed equation does not; ``depth_noise_report.py`` measures both. And it
+is not a sensor: no missing returns, no edge fringing, no rolling shutter.
 
 Noise is drawn from a generator seeded with the given seed and the frame's
 index, so a frame's noise does not depend on which other frames exist, and

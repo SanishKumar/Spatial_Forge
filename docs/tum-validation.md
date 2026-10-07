@@ -77,9 +77,13 @@ that sequence the held-out residual is 4.5 mm at the median while the mesh is
 0.86 mm from the true surface
 ([details](icl-nuim-validation.md#what-it-does-to-the-held-out-residual)).
 Held-out frames carry the sensor's noise in full, so the residual mostly
-reads that. The figures below say the volume agrees with this Kinect to
-within the Kinect's noise. They are not an estimate of how far the
-surface is from the truth.
+reads that. And where every frame is wrong the same way it reads too
+little: on the dataset's own noisy sequence, whose depth is offset towards
+the camera, the residual is 7.0 mm and the true error 9.3 mm
+([details](icl-nuim-validation.md#the-datasets-own-noisy-sequence)).
+The figures below say the volume agrees with this Kinect to within the
+Kinect's noise. They are not an estimate of how far the surface is from
+the truth, in either direction.
 
 ## Results
 

@@ -193,6 +193,25 @@ the truth. The residual compares the volume with held-out frames, and
 those carry the noise in full. On a real sensor it mostly measures the
 sensor.
 
+The dataset also publishes this sequence with its own noise applied, and
+that is a different thing. Its depth is quantised as the paper says, but it
+sits half a disparity level nearer the camera than the exact depth, in
+every frame: 3 mm at 1.2 m, 17 mm at 3.5 m. The paper's equation, simulated
+above, leaves no such offset.
+
+| | Median | Mean signed |
+|---|---|---|
+| one frame of the dataset's noisy depth | 7.66 mm | +9.64 mm |
+| mesh from it, 15 mm voxels | **9.27 mm** | **+9.82 mm** |
+| mesh from simulated noise, 15 mm voxels | 0.77 mm | +0.27 mm |
+
+Averaging removes noise and cannot remove an offset. The mesh ends up
+10 mm on the camera's side of the truth, no better than a single frame, and
+the held-out residual does not notice: frames that are all wrong the same
+way agree with each other. Between them the three cases put the residual at
+0.8, 6 and 0.8 times the true error, so nothing converts one into the
+other.
+
 Method, the three undocumented conventions of the dataset, and everything
 this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
 
