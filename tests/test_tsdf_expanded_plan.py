@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -17,6 +18,8 @@ from spatialforge.cli import main
 from spatialforge.errors import TsdfError
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import (
+    TSDF_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
     TSDF_FREE_SPACE_RULE_FOOTPRINT,
     TSDF_FREE_SPACE_RULE_NOT_PLANNED,
 )
@@ -395,6 +398,149 @@ class TsdfPlanFreeSpaceRuleTests(unittest.TestCase):
             TSDF_FREE_SPACE_RULE_NOT_PLANNED,
         )
         self.assertIsNone(case.plan.expanded_from_plan_sha256)
+
+
+def _rewrite(path: Path, document: dict) -> None:
+    path.write_bytes(
+        (json.dumps(document, indent=2, sort_keys=True) + "\n").encode(
+            "ascii"
+        )
+    )
+
+
+class TsdfPlanKindTests(unittest.TestCase):
+    """A plan is one kind or the other, and its fields must agree."""
+
+    def test_each_kind_declares_its_own_schema_version(self) -> None:
+        case, proposal = proposal_for()
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            output = Path(temporary) / "expanded.sftplan"
+            write_tsdf_expanded_block_plan(case.plan, proposal, output)
+            expanded = json.loads(output.read_bytes())
+        original = json.loads(case.plan_path.read_bytes())
+
+        self.assertEqual(TSDF_BLOCK_PLAN_SCHEMA_VERSION, "0.1.0")
+        self.assertEqual(TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION, "0.2.0")
+        self.assertEqual(original["schema_version"], "0.1.0")
+        self.assertNotIn("expansion", original)
+        self.assertEqual(expanded["schema_version"], "0.2.0")
+        self.assertIn("expansion", expanded)
+
+    def test_loader_refuses_plans_that_contradict_themselves(self) -> None:
+        case, proposal = proposal_for()
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            folder = Path(temporary)
+            output = folder / "expanded.sftplan"
+            write_tsdf_expanded_block_plan(case.plan, proposal, output)
+
+            def original() -> dict:
+                return json.loads(case.plan_path.read_bytes())
+
+            def expanded() -> dict:
+                return json.loads(output.read_bytes())
+
+            # Rewriting a genuine plan without changing it must still
+            # load, or the refusals below would prove nothing about the
+            # one field each of them changes.
+            controls = (
+                ("original", original()),
+                ("expanded", expanded()),
+            )
+            for name, document in controls:
+                with self.subTest(control=name):
+                    path = folder / f"control-{name}.sftplan"
+                    _rewrite(path, document)
+                    load_tsdf_block_plan(path)
+
+            def with_version(document: dict, version: str) -> dict:
+                document["schema_version"] = version
+                return document
+
+            def with_rule(document: dict, rule: str) -> dict:
+                document["activation"]["free_space_rule"] = rule
+                return document
+
+            def without_expansion(document: dict) -> dict:
+                del document["expansion"]
+                return document
+
+            def with_expansion(document: dict) -> dict:
+                document["expansion"] = expanded()["expansion"]
+                return document
+
+            def with_added(document: dict, added: int) -> dict:
+                document["expansion"]["added_blocks"] = added
+                return document
+
+            halo = expanded()["planning"]["halo_blocks"]
+            cases = (
+                (
+                    "expanded-under-the-original-version",
+                    with_version(expanded(), "0.1.0"),
+                    "expansion: not permitted by schema version '0.1.0'",
+                ),
+                (
+                    "expanded-without-provenance",
+                    without_expansion(expanded()),
+                    "expansion: required by schema version '0.2.0'",
+                ),
+                (
+                    "expanded-claiming-no-free-space",
+                    with_rule(expanded(), TSDF_FREE_SPACE_RULE_NOT_PLANNED),
+                    "free_space_rule: schema version '0.2.0'",
+                ),
+                (
+                    "expanded-adding-more-than-it-holds",
+                    with_added(expanded(), halo + 1),
+                    f"added_blocks: {halo + 1} blocks added, but only {halo}",
+                ),
+                (
+                    "original-under-the-expanded-version",
+                    with_version(original(), "0.2.0"),
+                    "expansion: required by schema version '0.2.0'",
+                ),
+                (
+                    "original-claiming-free-space",
+                    with_rule(original(), TSDF_FREE_SPACE_RULE_FOOTPRINT),
+                    "free_space_rule: schema version '0.1.0'",
+                ),
+                (
+                    "original-with-provenance",
+                    with_expansion(original()),
+                    "expansion: not permitted by schema version '0.1.0'",
+                ),
+                (
+                    "a-version-nobody-wrote",
+                    with_version(expanded(), "0.3.0"),
+                    "schema_version: expected one of",
+                ),
+            )
+            for name, document, message in cases:
+                with self.subTest(name=name):
+                    path = folder / f"{name}.sftplan"
+                    _rewrite(path, document)
+                    with self.assertRaises(TsdfError) as raised:
+                        load_tsdf_block_plan(path)
+                    self.assertIn(message, str(raised.exception))
+
+    def test_an_expansion_may_add_every_block_that_is_not_surface(self) -> None:
+        case, proposal = proposal_for()
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            folder = Path(temporary)
+            output = folder / "expanded.sftplan"
+            write_tsdf_expanded_block_plan(case.plan, proposal, output)
+            document = json.loads(output.read_bytes())
+            document["expansion"]["added_blocks"] = document["planning"][
+                "halo_blocks"
+            ]
+            path = folder / "boundary.sftplan"
+            _rewrite(path, document)
+            reloaded = load_tsdf_block_plan(path)
+
+        self.assertEqual(
+            reloaded.expanded_from_plan_sha256,
+            case.plan.artifact_digest_sha256,
+        )
 
 
 if __name__ == "__main__":

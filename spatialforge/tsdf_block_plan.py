@@ -29,6 +29,13 @@ from .tsdf import (
 
 TSDF_BLOCK_PLAN_SCHEMA = "spatialforge.tsdf-block-plan"
 TSDF_BLOCK_PLAN_SCHEMA_VERSION = "0.1.0"
+# An expanded plan is a different claim from the plan it grew from, so it
+# is a different version rather than the same version with extra fields.
+TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION = "0.2.0"
+TSDF_BLOCK_PLAN_SCHEMA_VERSIONS = (
+    TSDF_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
+)
 
 # A surface/truncation plan makes no free-space claim. An expanded plan adds
 # blocks approved from conservative nearest-pixel footprint coverage, so it

@@ -19,7 +19,10 @@ from .tsdf_block_plan import (
     MAX_PLANNED_BLOCKS,
     MIN_BLOCK_INDEX,
     TSDF_BLOCK_PLAN_SCHEMA,
-    TSDF_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_BLOCK_PLAN_SCHEMA_VERSIONS,
+    TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_FREE_SPACE_RULE_FOOTPRINT,
+    TSDF_FREE_SPACE_RULE_NOT_PLANNED,
     TSDF_FREE_SPACE_RULES,
     TSDF_BLOCK_RESOLUTION,
 )
@@ -151,10 +154,10 @@ def load_tsdf_block_plan(path: str | Path) -> TsdfBlockPlan:
         TSDF_BLOCK_PLAN_SCHEMA,
         "block_plan",
     )
-    _require_exact_string(
+    schema_version = _require_enum_string(
         root,
         "schema_version",
-        TSDF_BLOCK_PLAN_SCHEMA_VERSION,
+        TSDF_BLOCK_PLAN_SCHEMA_VERSIONS,
         "block_plan",
     )
     session_id = _require_string(root, "session_id", "block_plan")
@@ -177,8 +180,15 @@ def load_tsdf_block_plan(path: str | Path) -> TsdfBlockPlan:
         block_extent,
     ) = _load_grid(root)
     truncation, free_space_rule = _load_activation(root, voxel_size)
-    expanded_from = _load_expansion(root)
+    expansion = _load_expansion(root)
     planning = _load_planning(root)
+    _validate_plan_kind(
+        schema_version,
+        free_space_rule,
+        expansion,
+        planning,
+    )
+    expanded_from = None if expansion is None else expansion[0]
     surface_blocks = _load_block_list(
         _require_field(root, "surface_blocks", "block_plan"),
         "block_plan.surface_blocks",
@@ -673,8 +683,8 @@ def _require_enum_string(
     return result
 
 
-def _load_expansion(root: dict[str, Any]) -> str | None:
-    """Load optional expansion provenance, returning the source digest."""
+def _load_expansion(root: dict[str, Any]) -> tuple[str, int] | None:
+    """Load expansion provenance: the source digest and the blocks added."""
 
     if "expansion" not in root:
         return None
@@ -709,7 +719,57 @@ def _load_expansion(root: dict[str, Any]) -> str | None:
             "block_plan.expansion.added_blocks: expected a nonnegative "
             "integer"
         )
-    return source_digest
+    return source_digest, added
+
+
+def _validate_plan_kind(
+    schema_version: str,
+    free_space_rule: str,
+    expansion: tuple[str, int] | None,
+    planning: dict[str, Any],
+) -> None:
+    """Refuse a plan whose version, free-space rule and provenance disagree.
+
+    A surface/truncation plan and an expanded plan are different claims.
+    Each is one schema version, one free-space rule, and either no
+    provenance or exactly one. A file that mixes them describes neither.
+    """
+
+    if schema_version == TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION:
+        if expansion is None:
+            raise TsdfError(
+                "block_plan.expansion: required by schema version "
+                f"{schema_version!r}, which is an expanded plan"
+            )
+        if free_space_rule != TSDF_FREE_SPACE_RULE_FOOTPRINT:
+            raise TsdfError(
+                "block_plan.activation.free_space_rule: schema version "
+                f"{schema_version!r} is an expanded plan and requires "
+                f"{TSDF_FREE_SPACE_RULE_FOOTPRINT!r}, received "
+                f"{free_space_rule!r}"
+            )
+        added_blocks = expansion[1]
+        if added_blocks > planning["halo_blocks"]:
+            raise TsdfError(
+                "block_plan.expansion.added_blocks: "
+                f"{added_blocks} blocks added, but only "
+                f"{planning['halo_blocks']} active blocks are not "
+                "surface blocks"
+            )
+        return
+    if expansion is not None:
+        raise TsdfError(
+            "block_plan.expansion: not permitted by schema version "
+            f"{schema_version!r}; an expanded plan is version "
+            f"{TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION!r}"
+        )
+    if free_space_rule != TSDF_FREE_SPACE_RULE_NOT_PLANNED:
+        raise TsdfError(
+            "block_plan.activation.free_space_rule: schema version "
+            f"{schema_version!r} plans no free space and requires "
+            f"{TSDF_FREE_SPACE_RULE_NOT_PLANNED!r}, received "
+            f"{free_space_rule!r}"
+        )
 
 
 def _require_number_triplet(

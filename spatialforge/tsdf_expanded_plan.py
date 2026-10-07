@@ -11,8 +11,8 @@ from .errors import TsdfError
 from .tsdf_block_plan import (
     MAX_PLANNED_BLOCKS,
     TSDF_BLOCK_PLAN_SCHEMA,
-    TSDF_BLOCK_PLAN_SCHEMA_VERSION,
     TSDF_BLOCK_RESOLUTION,
+    TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
     TSDF_FREE_SPACE_RULE_FOOTPRINT,
     _clean_float,
     _validate_tsdf_block_plan_output,
@@ -53,9 +53,9 @@ def write_tsdf_expanded_block_plan(
     """Write the proposal's expanded block set as a new `.sftplan`.
 
     The source plan is never modified and never overwritten: the output must
-    be a new path. Every field except the active-block set, the counts derived
-    from it, the free-space rule and the expansion provenance is carried
-    through from the source plan unchanged.
+    be a new path. Every field except the schema version, the active-block
+    set, the counts derived from it, the free-space rule and the expansion
+    provenance is carried through from the source plan unchanged.
     """
 
     if not isinstance(plan, TsdfBlockPlan):
@@ -107,7 +107,7 @@ def write_tsdf_expanded_block_plan(
     )
     document = {
         "schema": TSDF_BLOCK_PLAN_SCHEMA,
-        "schema_version": TSDF_BLOCK_PLAN_SCHEMA_VERSION,
+        "schema_version": TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
         "session_id": plan.session_id,
         "replay_digest_sha256": plan.replay_digest_sha256,
         "grid": {

@@ -120,13 +120,45 @@ digest before publication, permits at most 100,000 unique active blocks,
 requires signed 32-bit block coordinates, and refuses to overwrite either an
 existing or race-created target.
 
+### Two kinds of plan
+
+`reconstruct tsdf-block-plan-expand` grows a plan by adding blocks of
+observed free space around the surface band. The result is a different
+claim, its active set holds blocks with no measured surface in them, so it
+is a different version. Three fields say which kind a file is, and they have
+to agree:
+
+| `schema_version` | `activation.free_space_rule` | `expansion` |
+|---|---|---|
+| `0.1.0` | `not-planned` | absent |
+| `0.2.0` | `conservative-nearest-pixel-footprint` | present |
+
+`expansion` records the SHA-256 of the plan it grew from, the rule that
+approved the added blocks, and how many were added.
+
+The loader refuses every other combination and names the field that
+disagrees: a `0.1.0` plan carrying provenance, a `0.2.0` plan without it,
+either version under the other's free-space rule, and any version it does
+not know. It also refuses a count of added blocks larger than the number of
+active blocks that are not surface blocks. Expansion never adds a surface
+block, so it cannot have added more than that.
+
+Expanded plans were first written as `0.1.0` with the two extra fields, which
+told a reader of the original format that it understood a file whose active
+set it did not. Files of that form are now refused. Expanding the source
+plan again writes a `0.2.0` plan with the same blocks. The plans this section
+started with are written byte for byte as before, so every published plan
+digest still holds.
+
 ## Strict loading and replay-bound verification
 
 The `.sftplan` loader creates a frozen in-memory snapshot after strictly
 checking:
 
-- the exact schema version, required fields, and absence of unknown or duplicate
+- a known schema version, required fields, and absence of unknown or duplicate
   JSON keys;
+- agreement between the version, the free-space rule and the expansion
+  provenance;
 - ASCII JSON types, finite numeric values, fixed grid and activation
   conventions, and the 100,000-block limit;
 - positive and internally consistent frame, depth-sample, and block counters;
