@@ -18,6 +18,20 @@ and it is the same here: observation order, one addition per observation,
 of blocks changes which voxel is visited when, never the order in which one
 voxel receives its contributions. The evaluation itself is the single shared
 ``_evaluate_ready_voxels``.
+
+Most of that evaluation is spent on voxels a frame cannot see. In a room,
+four in five voxel-observations end as "behind the camera" or "projects
+outside the image". Those two verdicts can be reached for a whole block at
+once, because each is a half-space in camera coordinates and a block's
+voxel centres lie inside the box spanned by its eight extreme centres: if
+all eight corners are behind the camera, or all eight are on the outer
+side of one edge of the image, so is every centre between them.
+
+Such a block is not evaluated. Its 512 voxels are counted under the
+status every one of them would have received, and nothing is added to its
+accumulators, which is what the evaluation would have added: ``+0.0`` and
+zero weight. The fused bytes and the receipt are therefore unchanged, and
+the tests hold the block verdict to the per-voxel one directly.
 """
 
 from __future__ import annotations
@@ -68,6 +82,25 @@ from .tsdf_voxel_update import (
 # temporaries of one pass stay cache-resident, which is worth more than the
 # Python overhead it costs; the fused bytes do not depend on it.
 STREAM_FUSION_CHUNK_BLOCKS = 256
+
+# Verdicts of the whole-block visibility test.
+BLOCK_EVALUATE = 0
+BLOCK_BEHIND_CAMERA = 1
+BLOCK_OUTSIDE_IMAGE = 2
+
+# A whole-block verdict is a claim about 512 voxels that are evaluated with
+# rounding the block test does not reproduce, so it is only given with room
+# to spare: this far in depth, relative to how far away the block is, and
+# this many pixels beyond the edge of the image. For a camera within the
+# bounds below, rounding is orders of magnitude smaller than either.
+_CULL_RELATIVE_DEPTH_SLACK = 1e-9
+_CULL_PIXEL_SLACK = 0.5
+_CULL_MAX_FOCAL_PIXELS = 1.0e4
+_CULL_MAX_IMAGE_PIXELS = 1.0e5
+
+# Set to False to evaluate every voxel of every block; the result must be
+# the same, and a test fuses both ways to hold it to that.
+STREAM_FUSION_CULLS_BLOCKS = True
 
 
 def _is_sha256(value: object) -> bool:
@@ -296,9 +329,15 @@ def fuse_tsdf_plan_streaming(
     voxel_slots = storage.voxel_slots
     sums = storage.tsdf_sums.reshape(-1)
     weights = storage.weights.reshape(-1)
+    block_sums = storage.tsdf_sums.reshape((len(blocks), TSDF_BLOCK_VOXELS))
+    block_weights = storage.weights.reshape(
+        (len(blocks), TSDF_BLOCK_VOXELS)
+    )
     if not (
         np.shares_memory(sums, storage.tsdf_sums)
         and np.shares_memory(weights, storage.weights)
+        and np.shares_memory(block_sums, storage.tsdf_sums)
+        and np.shares_memory(block_weights, storage.weights)
     ):
         raise TsdfError(
             "TSDF stream fusion could not address storage in place"
@@ -345,23 +384,48 @@ def fuse_tsdf_plan_streaming(
             valid_depth_samples += frame_valid
             invalid_depth_samples += int(depth_m.size) - frame_valid
 
-            for first_block in range(
-                0, len(blocks), STREAM_FUSION_CHUNK_BLOCKS
-            ):
-                chunk = blocks[
-                    first_block:first_block + STREAM_FUSION_CHUNK_BLOCKS
-                ]
-                start = first_block * TSDF_BLOCK_VOXELS
-                stop = start + len(chunk) * TSDF_BLOCK_VOXELS
+            if STREAM_FUSION_CULLS_BLOCKS:
+                verdicts = _classify_blocks(
+                    camera, transform, blocks, plan.voxel_size_m
+                )
+                for verdict, settled in (
+                    (
+                        BLOCK_BEHIND_CAMERA,
+                        TsdfContributionStatus.CAMERA_Z_NONPOSITIVE,
+                    ),
+                    (
+                        BLOCK_OUTSIDE_IMAGE,
+                        TsdfContributionStatus.PROJECTION_OUTSIDE_IMAGE,
+                    ),
+                ):
+                    status_totals[_STATUS_CODE[settled]] += (
+                        TSDF_BLOCK_VOXELS
+                        * int(np.count_nonzero(verdicts == verdict))
+                    )
+                visible = np.flatnonzero(verdicts == BLOCK_EVALUATE)
+            else:
+                visible = np.arange(len(blocks), dtype=np.int64)
+
+            for first in range(0, len(visible), STREAM_FUSION_CHUNK_BLOCKS):
+                rows = visible[first:first + STREAM_FUSION_CHUNK_BLOCKS]
                 codes, sum_deltas, weight_deltas = _evaluate_ready_voxels(
                     camera,
                     transform,
                     depth_m,
                     plan.truncation_m,
-                    _chunk_voxel_centres_world_m(chunk, plan.voxel_size_m),
+                    _chunk_voxel_centres_world_m(
+                        blocks[rows], plan.voxel_size_m
+                    ),
                 )
-                sums[start:stop] += sum_deltas
-                weights[start:stop] += weight_deltas
+                # Rows are distinct, so this gathers, adds and scatters
+                # each voxel exactly once: the same single addition per
+                # observation as a slice would make.
+                block_sums[rows] += sum_deltas.reshape(
+                    (len(rows), TSDF_BLOCK_VOXELS)
+                )
+                block_weights[rows] += weight_deltas.reshape(
+                    (len(rows), TSDF_BLOCK_VOXELS)
+                )
                 status_totals += np.bincount(
                     codes,
                     minlength=len(TSDF_CONTRIBUTION_STATUS_ORDER),
@@ -459,6 +523,111 @@ def _decode_metric_depth(
     with np.errstate(over="ignore", invalid="ignore"):
         np.multiply(depth_m, depth_scale_m, out=depth_m)
     return depth_m
+
+
+def _classify_blocks(
+    camera,
+    transform: tuple[float, ...],
+    blocks: np.ndarray,
+    voxel_size_m: float,
+) -> np.ndarray:
+    """Blocks none of whose voxels one frame can possibly see.
+
+    Returns one verdict per block. ``BLOCK_BEHIND_CAMERA`` and
+    ``BLOCK_OUTSIDE_IMAGE`` promise that the per-voxel evaluator would
+    give all 512 voxels of the block that one status; ``BLOCK_EVALUATE``
+    promises nothing and is always safe.
+
+    A block's voxel centres span, on each axis, from local index 0 to
+    local index 7, computed here by the same expression the evaluator's
+    centres use, so every centre lies in the box these eight corners
+    span. Camera depth is linear in position, and so is each image-edge
+    test once multiplied through by a positive depth: ``u < -0.5`` is
+    ``fx * x + (cx + 0.5) * z < 0``. A linear function that has one sign
+    at all eight corners has it throughout the box.
+    """
+
+    verdicts = np.zeros(len(blocks), dtype=np.int8)
+    if not (
+        0.0 < abs(camera.fx) <= _CULL_MAX_FOCAL_PIXELS
+        and 0.0 < abs(camera.fy) <= _CULL_MAX_FOCAL_PIXELS
+        and camera.width <= _CULL_MAX_IMAGE_PIXELS
+        and camera.height <= _CULL_MAX_IMAGE_PIXELS
+        and abs(camera.cx) <= _CULL_MAX_IMAGE_PIXELS
+        and abs(camera.cy) <= _CULL_MAX_IMAGE_PIXELS
+    ):
+        # Outside these bounds the slack below is not known to cover the
+        # evaluator's rounding, so no block is settled without it.
+        return verdicts
+
+    matrix = [float(component) for component in transform]
+    base = blocks * TSDF_BLOCK_RESOLUTION
+    corners = np.empty((len(blocks), 8, 3))
+    # A grid too large to represent overflows here and is caught by
+    # the finiteness test below, which settles nothing for it.
+    with np.errstate(over="ignore", invalid="ignore"):
+        low = (base.astype(np.float64) + 0.5) * voxel_size_m
+        high = (
+            (base + (TSDF_BLOCK_RESOLUTION - 1)).astype(np.float64) + 0.5
+        ) * voxel_size_m
+        for corner in range(8):
+            for axis in range(3):
+                corners[:, corner, axis] = (
+                    high if (corner >> axis) & 1 else low
+                )[:, axis]
+
+        delta_x = corners[:, :, 0] - matrix[3]
+        delta_y = corners[:, :, 1] - matrix[7]
+        delta_z = corners[:, :, 2] - matrix[11]
+        camera_x = (
+            matrix[0] * delta_x + matrix[4] * delta_y + matrix[8] * delta_z
+        )
+        camera_y = (
+            matrix[1] * delta_x + matrix[5] * delta_y + matrix[9] * delta_z
+        )
+        camera_z = (
+            matrix[2] * delta_x + matrix[6] * delta_y + matrix[10] * delta_z
+        )
+        reach = np.maximum(
+            np.maximum(np.abs(delta_x), np.abs(delta_y)), np.abs(delta_z)
+        ).max(axis=1)
+        slack = _CULL_RELATIVE_DEPTH_SLACK * (1.0 + reach)
+        usable = (
+            np.isfinite(reach)
+            & np.isfinite(camera_x).all(axis=1)
+            & np.isfinite(camera_y).all(axis=1)
+            & np.isfinite(camera_z).all(axis=1)
+        )
+        behind = usable & (camera_z.max(axis=1) < -slack)
+        in_front = usable & (camera_z.min(axis=1) > slack)
+
+        left = (
+            camera.fx * camera_x
+            + (camera.cx + 0.5 + _CULL_PIXEL_SLACK) * camera_z
+        )
+        right = (
+            camera.fx * camera_x
+            + (camera.cx - (camera.width - 0.5) - _CULL_PIXEL_SLACK)
+            * camera_z
+        )
+        top = (
+            camera.fy * camera_y
+            + (camera.cy + 0.5 + _CULL_PIXEL_SLACK) * camera_z
+        )
+        bottom = (
+            camera.fy * camera_y
+            + (camera.cy - (camera.height - 0.5) - _CULL_PIXEL_SLACK)
+            * camera_z
+        )
+        outside = in_front & (
+            (left.max(axis=1) < 0.0)
+            | (right.min(axis=1) > 0.0)
+            | (top.max(axis=1) < 0.0)
+            | (bottom.min(axis=1) > 0.0)
+        )
+    verdicts[behind] = BLOCK_BEHIND_CAMERA
+    verdicts[outside] = BLOCK_OUTSIDE_IMAGE
+    return verdicts
 
 
 def _chunk_voxel_centres_world_m(

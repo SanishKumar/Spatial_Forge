@@ -86,7 +86,44 @@ check that they agree in fact.
 Voxels are processed in chunks of 256 blocks. That is a cache decision: a
 dozen temporaries of a 131,072-element pass stay resident where a
 multi-million-element pass would not. A test fuses the same scan at three
-other chunk sizes and requires identical storage.
+other chunk sizes and requires identical storage. The world centres of a
+chunk's voxels are computed for that chunk and dropped; kept for the whole
+plan they would be twice the size of the accumulators.
+
+## Blocks a frame cannot see
+
+In a room, most of that work is wasted. Fusing the ICL-NUIM living room at
+10 mm evaluates 6.3 billion voxel-observations, and 81% of them end as
+`camera-z-nonpositive` or `projection-outside-image`: the voxel is behind
+the camera, or off to one side of it.
+
+Both verdicts can be reached for a whole block at once. Camera depth is a
+linear function of position. So is each image-edge test, once multiplied
+through by a positive depth: `u < -0.5` is `fx * x + (cx + 0.5) * z < 0`. A
+block's 512 voxel centres lie inside the box spanned by its eight extreme
+centres, and a linear function that has one sign at all eight corners has
+it everywhere between them. If every corner is behind the camera, every
+voxel is; if every corner is in front and beyond the same edge of the
+image, every voxel is.
+
+Such a block is not evaluated. Its 512 voxels are counted under the status
+each of them would have been given, and nothing is added to its
+accumulators, which is exactly what evaluating it would have added: `+0.0`
+and zero weight. The fused bytes are the same and so is the receipt.
+
+The corners are not the voxels, though, and the evaluator rounds. A verdict
+is therefore only given with room to spare: a billionth of the block's
+distance in depth, half a pixel at the image edge, and only for a camera
+whose focal length and image size are within bounds for which that slack
+is known to cover the rounding by orders of magnitude. Anything closer is
+evaluated the ordinary way.
+
+Two kinds of test hold it to that. The block verdict is compared with the
+evaluator's status for all 512 voxels over thousands of poses, half of them
+built to put a block across the camera plane or the edge of the image. And
+whole scans are fused with the test on and off: same accumulator bytes,
+equal receipts, less work. On real data it reproduces every published
+volume to the digest.
 
 Storage must be canonically empty on entry — weights zero, sums positive
 zero — and any failure restores it to exactly that, which is trivially exact
@@ -102,6 +139,8 @@ because there is no earlier state to lose.
 | block-major fusion | scalar block and plan traversals | whole storage buffers |
 | streaming fusion | scalar one-shot plan traversal (fixture) | whole storage buffers |
 | streaming fusion | block-major fusion (room scan) | whole storage buffers |
+| whole-block verdict | evaluator, all 512 voxels of the block | status of every voxel |
+| fusion with verdicts | fusion without them (two scans) | storage buffers and receipt |
 
 The committed fixtures only ever produce three statuses: `contributes`,
 `projection-outside-image` and `behind-truncation`. A non-finite camera
@@ -123,8 +162,24 @@ streaming fusion            0.3 s
 ```
 
 All three produce the same 1,127,112 contributions over 81,292 voxels, and
-the latter two the same bytes. On real 640x480 data streaming fusion runs at
-about ten million voxel-observations per second on one core.
+the latter two the same bytes.
+
+On real 640x480 data, one core, with whole blocks settled where they can
+be:
+
+```text
+                          voxel-observations   without   with
+TUM desk, 15 mm                 1.10e9          106 s    79 s
+ICL-NUIM room, 20 mm            1.72e9          257 s    54 s
+TUM desk, 10 mm                 2.54e9             -    147 s
+ICL-NUIM room, 10 mm            6.30e9             -    211 s
+```
+
+The TUM figure without is the one published before block verdicts existed;
+the ICL-NUIM one is today's code with them switched off. The room gains
+more than the desk because a camera inside a room has most of the plan
+behind it or beside it, while a camera circling a desk keeps most of it in
+view. Each volume has the same digest either way.
 
 ## What remains scalar
 
