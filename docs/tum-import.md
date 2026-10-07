@@ -87,6 +87,21 @@ depth_scale_m = 0.0002
 Device-specific depth correction is not applied again because TUM already
 pre-scaled the released depth images.
 
+Other datasets publish in the TUM layout with a different camera. For those,
+the projection can be given explicitly; the defaults are the values above,
+so an import without these options is byte-for-byte what it always was:
+
+```powershell
+python -m spatialforge scan import-tum SOURCE OUTPUT.vgsession `
+  --fx 481.2 --fy 480 --cx 319.5 --cy 239.5
+```
+
+A focal length that is zero, negative or not finite is refused. A negative
+one is not a typo to be corrected by taking its absolute value: it is how
+some renderers describe a left-handed camera, and flipping the sign of one
+number without converting the poses would import a mirrored room. ICL-NUIM
+is published that way.
+
 ## Pose conversion
 
 When `groundtruth.txt` exists, rows have:

@@ -145,7 +145,12 @@ from .tsdf_voxel_update import (
     apply_tsdf_voxel_contribution_from_context,
 )
 from .tsdf_bounds import TsdfBoundsReport, infer_tsdf_bounds
-from .tum_importer import TumImportReport, import_tum_dataset
+from .tum_importer import (
+    TUM_DEFAULT_INTRINSICS,
+    TumCameraIntrinsics,
+    TumImportReport,
+    import_tum_dataset,
+)
 
 __all__ = [
     "Observation",
@@ -194,6 +199,8 @@ __all__ = [
     "TsdfVoxelUpdateReceipt",
     "TsdfVoxelAddress",
     "TsdfVoxelContribution",
+    "TUM_DEFAULT_INTRINSICS",
+    "TumCameraIntrinsics",
     "TumImportReport",
     "allocate_empty_tsdf_blocks",
     "apply_tsdf_voxel_contribution",

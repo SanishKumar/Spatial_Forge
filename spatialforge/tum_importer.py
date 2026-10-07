@@ -44,6 +44,25 @@ T_RIG_CAMERA = (
 
 
 @dataclass(frozen=True, slots=True)
+class TumCameraIntrinsics:
+    """Pinhole parameters, in pixels, for a 640 by 480 registered image."""
+
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+
+
+# The projection the TUM benchmark recommends for its Kinect sequences.
+TUM_DEFAULT_INTRINSICS = TumCameraIntrinsics(
+    fx=525.0,
+    fy=525.0,
+    cx=319.5,
+    cy=239.5,
+)
+
+
+@dataclass(frozen=True, slots=True)
 class TumImportReport:
     source: Path
     output: Path
@@ -85,11 +104,18 @@ class _TumPose:
 def import_tum_dataset(
     source: str | Path,
     output: str | Path,
+    *,
+    intrinsics: TumCameraIntrinsics = TUM_DEFAULT_INTRINSICS,
 ) -> TumImportReport:
-    """Convert one extracted TUM folder into a validated ScanSession."""
+    """Convert one extracted TUM folder into a validated ScanSession.
+
+    ``intrinsics`` is for sequences published in the TUM layout by a
+    different camera; the default is the benchmark's own.
+    """
 
     source_root = Path(source)
     output_root = Path(output)
+    _validate_intrinsics(intrinsics)
 
     if not source_root.exists():
         raise TumImportError(f"source directory does not exist: {source_root}")
@@ -162,6 +188,7 @@ def import_tum_dataset(
             poses,
             matched_pairs,
             pose_matches,
+            intrinsics,
         )
         try:
             load_scan_session(temporary_root)
@@ -185,6 +212,27 @@ def import_tum_dataset(
             shutil.rmtree(temporary_root, ignore_errors=True)
 
     return report
+
+
+def _validate_intrinsics(intrinsics: TumCameraIntrinsics) -> None:
+    for name in ("fx", "fy", "cx", "cy"):
+        value = getattr(intrinsics, name)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise TumImportError(f"intrinsics {name} must be a finite number")
+    for name in ("fx", "fy"):
+        if getattr(intrinsics, name) <= 0.0:
+            # A negative focal length is how some renderers publish a
+            # left-handed camera. Accepting it would mirror the scene
+            # silently; the poses have to be converted along with it.
+            raise TumImportError(
+                f"intrinsics {name} must be positive; a sequence published "
+                "with a negative focal length uses a mirrored camera frame "
+                "and must be converted before import"
+            )
 
 
 def _parse_timed_paths(root: Path, filename: str) -> list[_TimedPath]:
@@ -439,6 +487,7 @@ def _write_session(
     poses: Sequence[_TumPose],
     matched_pairs: Sequence[tuple[int, int]],
     pose_matches: dict[int, int],
+    intrinsics: TumCameraIntrinsics,
 ) -> None:
     (root / "calibration").mkdir(parents=True)
     (root / "streams").mkdir()
@@ -550,10 +599,10 @@ def _write_session(
                 "width": 640,
                 "height": 480,
                 "intrinsics": {
-                    "fx": 525.0,
-                    "fy": 525.0,
-                    "cx": 319.5,
-                    "cy": 239.5,
+                    "fx": float(intrinsics.fx),
+                    "fy": float(intrinsics.fy),
+                    "cx": float(intrinsics.cx),
+                    "cy": float(intrinsics.cy),
                 },
                 "distortion": {
                     "model": "none",

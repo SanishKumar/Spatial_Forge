@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import shutil
 import tempfile
 import unittest
@@ -13,6 +14,8 @@ from spatialforge.replay import replay_session
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tum_importer import (
     T_RIG_CAMERA,
+    TUM_DEFAULT_INTRINSICS,
+    TumCameraIntrinsics,
     _associate_timestamps,
     import_tum_dataset,
 )
@@ -215,6 +218,115 @@ class TumImporterTests(unittest.TestCase):
             self.assertEqual(marker.read_text(encoding="utf-8"), "keep")
 
 
+class TumImporterIntrinsicsTests(unittest.TestCase):
+    def test_default_intrinsics_are_the_benchmark_projection(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            implicit = temporary_root / "implicit.vgsession"
+            explicit = temporary_root / "explicit.vgsession"
+            import_tum_dataset(TUM_FIXTURE, implicit)
+            import_tum_dataset(
+                TUM_FIXTURE,
+                explicit,
+                intrinsics=TUM_DEFAULT_INTRINSICS,
+            )
+            implicit_files = tree_snapshot(implicit)
+            explicit_files = tree_snapshot(explicit)
+
+        self.assertEqual(implicit_files, explicit_files)
+        self.assertEqual(
+            json.loads(implicit_files["calibration/cameras.json"])["cameras"][
+                0
+            ]["intrinsics"],
+            {"fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5},
+        )
+
+    def test_override_changes_the_calibration_and_nothing_else(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
+            temporary_root = Path(temporary_directory)
+            default = temporary_root / "default.vgsession"
+            overridden = temporary_root / "overridden.vgsession"
+            import_tum_dataset(TUM_FIXTURE, default)
+            import_tum_dataset(
+                TUM_FIXTURE,
+                overridden,
+                intrinsics=TumCameraIntrinsics(
+                    fx=481.2,
+                    fy=480.0,
+                    cx=319.5,
+                    cy=239.5,
+                ),
+            )
+            load_scan_session(overridden)
+            default_files = tree_snapshot(default)
+            overridden_files = tree_snapshot(overridden)
+
+        self.assertEqual(set(default_files), set(overridden_files))
+        self.assertEqual(
+            [
+                name
+                for name in sorted(default_files)
+                if default_files[name] != overridden_files[name]
+            ],
+            ["calibration/cameras.json"],
+        )
+        self.assertEqual(
+            json.loads(overridden_files["calibration/cameras.json"])[
+                "cameras"
+            ][0]["intrinsics"],
+            {"fx": 481.2, "fy": 480.0, "cx": 319.5, "cy": 239.5},
+        )
+
+    def test_a_mirrored_or_malformed_camera_is_refused(self) -> None:
+        cases = (
+            ({"fy": -480.0}, "fy must be positive"),
+            ({"fx": 0.0}, "fx must be positive"),
+            ({"cx": float("nan")}, "cx must be a finite number"),
+            ({"cy": float("inf")}, "cy must be a finite number"),
+            ({"fx": True}, "fx must be a finite number"),
+            ({"fy": "480"}, "fy must be a finite number"),
+        )
+        for override, message in cases:
+            values = {"fx": 481.2, "fy": 480.0, "cx": 319.5, "cy": 239.5}
+            values.update(override)
+            with self.subTest(override=override):
+                with tempfile.TemporaryDirectory(
+                    dir=TEST_ROOT
+                ) as temporary_directory:
+                    output = Path(temporary_directory) / "refused.vgsession"
+                    with self.assertRaises(TumImportError) as raised:
+                        import_tum_dataset(
+                            TUM_FIXTURE,
+                            output,
+                            intrinsics=TumCameraIntrinsics(**values),
+                        )
+                    self.assertFalse(output.exists())
+                    self.assertEqual(
+                        list(Path(temporary_directory).iterdir()),
+                        [],
+                    )
+                self.assertIn(message, str(raised.exception))
+
+    def test_a_negative_focal_length_is_named_as_a_mirrored_frame(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
+            output = Path(temporary_directory) / "mirrored.vgsession"
+            with self.assertRaises(TumImportError) as raised:
+                import_tum_dataset(
+                    TUM_FIXTURE,
+                    output,
+                    intrinsics=TumCameraIntrinsics(
+                        fx=481.2,
+                        fy=-480.0,
+                        cx=319.5,
+                        cy=239.5,
+                    ),
+                )
+
+        self.assertIn("mirrored camera frame", str(raised.exception))
+
+
 class TumImporterCliTests(unittest.TestCase):
     def test_cli_imports_and_reports_digest(self) -> None:
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
@@ -254,6 +366,54 @@ class TumImporterCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertIn("IMPORT FAILED", stderr.getvalue())
         self.assertIn("source directory does not exist", stderr.getvalue())
+
+
+class TumImporterCliIntrinsicsTests(unittest.TestCase):
+    def test_cli_intrinsics_reach_the_calibration(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
+            output = Path(temporary_directory) / "cli.vgsession"
+            with redirect_stdout(io.StringIO()):
+                exit_code = main(
+                    [
+                        "scan",
+                        "import-tum",
+                        str(TUM_FIXTURE),
+                        str(output),
+                        "--fx",
+                        "481.2",
+                        "--fy",
+                        "480",
+                    ]
+                )
+            calibration = json.loads(
+                (output / "calibration" / "cameras.json").read_bytes()
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            calibration["cameras"][0]["intrinsics"],
+            {"fx": 481.2, "fy": 480.0, "cx": 319.5, "cy": 239.5},
+        )
+
+    def test_cli_refuses_a_negative_focal_length(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
+            output = Path(temporary_directory) / "mirrored.vgsession"
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "scan",
+                        "import-tum",
+                        str(TUM_FIXTURE),
+                        str(output),
+                        "--fy=-480",
+                    ]
+                )
+            self.assertFalse(output.exists())
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("IMPORT FAILED", stderr.getvalue())
+        self.assertIn("fy must be positive", stderr.getvalue())
 
 
 if __name__ == "__main__":

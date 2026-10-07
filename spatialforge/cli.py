@@ -127,7 +127,11 @@ from .tsdf_voxel_update import (
     apply_tsdf_voxel_contribution,
     apply_tsdf_voxel_contribution_from_context,
 )
-from .tum_importer import import_tum_dataset
+from .tum_importer import (
+    TUM_DEFAULT_INTRINSICS,
+    TumCameraIntrinsics,
+    import_tum_dataset,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -422,7 +426,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _run_scan(arguments: argparse.Namespace) -> int:
     if arguments.scan_command == "import-tum":
-        return _run_tum_import(arguments.source, arguments.output)
+        return _run_tum_import(
+            arguments.source,
+            arguments.output,
+            TumCameraIntrinsics(
+                fx=arguments.fx,
+                fy=arguments.fy,
+                cx=arguments.cx,
+                cy=arguments.cy,
+            ),
+        )
 
     try:
         session = load_scan_session(arguments.path)
@@ -488,6 +501,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     import_tum.add_argument("source", type=Path)
     import_tum.add_argument("output", type=Path)
+    for name in ("fx", "fy", "cx", "cy"):
+        import_tum.add_argument(
+            f"--{name}",
+            type=float,
+            default=getattr(TUM_DEFAULT_INTRINSICS, name),
+            help=(
+                f"Pinhole {name} in pixels, for a sequence in the TUM "
+                "layout from another camera (default: %(default)s)."
+            ),
+        )
 
     reconstruct = commands.add_parser(
         "reconstruct",
@@ -6475,9 +6498,13 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
-def _run_tum_import(source: Path, output: Path) -> int:
+def _run_tum_import(
+    source: Path,
+    output: Path,
+    intrinsics: TumCameraIntrinsics,
+) -> int:
     try:
-        report = import_tum_dataset(source, output)
+        report = import_tum_dataset(source, output, intrinsics=intrinsics)
         session = load_scan_session(report.output)
         replay = replay_session(session)
     except (TumImportError, SessionValidationError, SessionReplayError) as error:
