@@ -71,6 +71,16 @@ from every viewpoint would still score well.
 The tool refuses a held-out offset that is a multiple of the stride, so the
 evaluation set cannot silently become the fused set.
 
+What this residual reads on a noisy sensor was measured afterwards, on
+ICL-NUIM, where the truth is known. With a Kinect's noise simulated on
+that sequence the held-out residual is 4.5 mm at the median while the mesh is
+0.86 mm from the true surface
+([details](icl-nuim-validation.md#what-it-does-to-the-held-out-residual)).
+Held-out frames carry the sensor's noise in full, so the residual mostly
+reads that. The figures below say the volume agrees with this Kinect to
+within the Kinect's noise. They are not an estimate of how far the
+surface is from the truth.
+
 ## Results
 
 ```text

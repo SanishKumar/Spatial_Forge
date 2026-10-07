@@ -169,14 +169,110 @@ against the other:
 
 The residual runs at 87 to 89% of the true error at every voxel size. They
 are different measurements, of a volume in one case and a mesh in the
-other, and one scene does not make a law. But on the one dataset where it
-can be checked, the number TUM is limited to moves with the real one and
-slightly understates it.
+other, and one scene does not make a law. But on exact depth the number
+TUM is limited to moves with the real one and slightly understates it.
+With sensor noise the relation is very different, and
+[the next section](#what-it-does-to-the-held-out-residual) measures it.
 
 It also puts the TUM figure in context. The same engine that is 0.4 mm from
 held-out depth here is 6.6 mm from it on the Kinect sequence (medians,
 10 mm voxels both). The difference comes with the data: a real sensor,
 its calibration, and measured poses.
+
+## With a sensor's noise
+
+Everything above is on exact depth. To see what a sensor costs, the same
+sequence was given a Kinect's depth noise and reconstructed again: the same
+scene, the same poses, the same ground truth, with only the depth changed.
+
+The noise is the model the ICL-NUIM paper describes for its own noisy
+sequences, its equation 3. Each pixel reads the true depth a fraction of a
+pixel away from where it should; Gaussian noise is added in disparity; and
+the disparity is rounded to a whole number, which quantises depth in steps
+of 11 mm at 2 m and 26 mm at 3 m. A frame of it is a median 3.2 mm from
+the true surface, where an exact frame is 0.43 mm.
+
+It is simulated here, from a seed, by
+[`tools/simulate_kinect_noise.py`](../tools/simulate_kinect_noise.py).
+**It is not the dataset's published noisy sequence**, which has not been
+run. The paper also displaces points along their normals by an amount it
+gives no parameters for, and that step is left out rather than guessed.
+
+<p align="center">
+  <img src="assets/icl-room-error.png" width="49%" alt="The room reconstructed from exact depth, coloured by distance to the ground-truth model: blue almost everywhere, with thin red lines along edges">
+  <img src="assets/icl-room-error-kinect.png" width="49%" alt="The room reconstructed from depth with simulated Kinect noise, coloured the same way on the same scale: still mostly blue, but lighter, with faint vertical bands on the far walls, wider red along edges and more red at the far end of the room">
+</p>
+
+<p align="center">
+  <em>Distance to the true surface at 10 mm voxels, on one scale. Left: from
+  exact depth. Right: from depth<br>with a Kinect's noise simulated on it.
+  The bands on the far walls are what quantised depth leaves behind.</em>
+</p>
+
+The noisy meshes are judged in the frame fitted on the exact sequence, not
+in one fitted to their own depth. The report reuses the earlier alignment,
+and refuses to unless the model and the source trajectory are the same by
+digest. Here it would have mattered little: fitted to the noisy depth
+instead, the frame moves by at most 0.6 mm anywhere in the room, and the
+10 mm median reads 0.88 mm rather than 0.86.
+
+Distance to the model's tangent plane:
+
+| | Median | Mean | RMS | p95 |
+|---|---|---|---|---|
+| one noisy depth frame | 3.16 mm | 5.28 mm | 8.97 mm | 16.91 mm |
+| mesh from noisy depth, 20 mm voxels | 0.81 mm | 1.89 mm | 4.87 mm | 5.92 mm |
+| mesh from noisy depth, 15 mm voxels | 0.77 mm | 1.63 mm | 3.82 mm | 5.02 mm |
+| mesh from noisy depth, 10 mm voxels | **0.86 mm** | **1.55 mm** | **3.00 mm** | 4.87 mm |
+| mesh from exact depth, 10 mm voxels | 0.45 mm | 0.77 mm | 1.69 mm | 2.34 mm |
+
+**Fusion buys back most of the noise.** The 10 mm mesh is 3.7 times
+closer to the truth than the depth it was made from at the median, and
+3.0 times in RMS. Averaging many frames, up to 219 for one voxel here, is
+the point of a TSDF, and this is what it is worth.
+
+**What is left costs 0.4 mm.** At 10 mm the median goes from 0.45 mm on
+exact depth to 0.86 mm on noisy depth, and the mean and RMS roughly
+double.
+
+**A finer grid no longer moves the median.** On exact depth the median sat
+at the measurement floor at every voxel size. With noise it sits near
+0.8 mm at every voxel size: 0.81, 0.77 and 0.86 mm. The likely reading is
+that this is what is left of the noise after averaging, which is not the
+grid's to fix. The tail still shrinks with the voxel, as it did before.
+
+**Noise costs blocks.** A noisy surface is thicker. At 10 mm the plan holds
+49,658 blocks where exact depth needs 27,965. That was more than storage
+would allocate when this was first run, although the planner had accepted
+it; the two limits are now one.
+
+### What it does to the held-out residual
+
+On exact depth the held-out residual ran just under the true error. With
+noise it does not:
+
+| Voxel | Held-out residual, median | True error, median | Held-out residual, rms | True error, rms |
+|---|---|---|---|---|
+| 20 mm | 5.00 mm | 0.81 mm | 10.70 mm | 4.87 mm |
+| 15 mm | 4.75 mm | 0.77 mm | 9.72 mm | 3.82 mm |
+| 10 mm | 4.46 mm | 0.86 mm | 8.17 mm | 3.00 mm |
+
+The residual compares the volume with depth from held-out frames, and those
+frames carry the sensor's noise in full. On a noisy sensor it mostly reads
+the noise of a single frame, and the surface is several times closer to the
+truth than the residual suggests: five to six times at the median here.
+
+That is how to read the TUM figure. Its 7.5 mm median is of this kind, a
+real Kinect's frames against a volume fused from other real frames. It says
+the volume agrees with the sensor to within the sensor's noise. It does not
+say the surface is 7.5 mm from where it should be, and this experiment is a
+reason to think it is closer. How much closer TUM cannot say: it has no
+ground truth, and real poses and calibration add errors that this
+simulation does not have.
+
+Each noisy volume has the same chain of digests as the exact ones, in
+`../results/icl-nuim-lr-kt2-kinect-noise-*`: surface and held-out reports
+for 20, 15 and 10 mm.
 
 ## One chain per volume
 
@@ -281,6 +377,22 @@ python tools/surface_accuracy_report.py \
 ```
 
 ```bash
+# 4b. The same again with a Kinect's noise: simulate it, then import,
+#     plan, fuse and mesh as above, and judge it in the frame step 4
+#     fitted by handing that step's manifest to --alignment
+python tools/simulate_kinect_noise.py \
+  datasets/icl/icl-nuim-living-room-kt2 \
+  datasets/icl/icl-nuim-living-room-kt2-kinect --seed 0
+```
+
+```bash
+python tools/surface_accuracy_report.py \
+  datasets/icl-kt2-kinect.vgsession datasets/icl-kt2-kinect-10mm.sftvol \
+  datasets/icl-kt2-kinect-10mm.ply datasets/icl/model/living-room.ply \
+  --alignment results/icl-nuim-lr-kt2-10mm-surface.json
+```
+
+```bash
 # 5. Draw where the error is
 python tools/render_mesh.py datasets/icl-kt2-10mm.ply datasets/icl-error \
   --vertex-errors datasets/icl-kt2-10mm-errors.npy --error-scale-mm 5 \
@@ -305,8 +417,11 @@ digits and the same statistics.
 
 ## What this does not show
 
-- **Sensor noise.** The depth is exact. ICL-NUIM also publishes this
-  sequence with simulated Kinect noise; that variant was not run.
+- **A real sensor.** The noise section simulates one published model of
+  a Kinect: shifted readings, disparity noise and quantisation. It has
+  no missing returns, no fringing at edges, no rolling shutter and no
+  calibration error. ICL-NUIM also publishes this sequence with its own
+  simulated noise; that file has not been run.
 - **Pose error.** Poses are ground truth. The engine has no tracker.
 - **Completeness.** This is accuracy: how close the reconstructed surface
   is to the true one. It says nothing about surface that was never

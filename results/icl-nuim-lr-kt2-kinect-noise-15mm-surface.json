@@ -1,0 +1,162 @@
+{
+  "depth_reference": {
+    "beyond_limit": 76,
+    "frames": 44,
+    "limit_m": 0.16,
+    "matched": 93436,
+    "model_normals_facing_camera_fraction": 0.9813990324928293,
+    "nearest_point": {
+      "max_matched_mm": 156.44944783426658,
+      "mean_mm": 7.055323998097398,
+      "median_mm": 5.354599871249527,
+      "p90_mm": 13.415525886064449,
+      "p95_mm": 17.78084302828824,
+      "p99_mm": 29.68397151830963,
+      "rms_mm": 9.980407086789082,
+      "std_mm": 7.0591025562673835
+    },
+    "point_to_plane": {
+      "max_matched_mm": 156.44010143448912,
+      "mean_mm": 5.276679602465034,
+      "mean_signed_mm": null,
+      "median_mm": 3.1579910662329427,
+      "p90_mm": 12.522620171948367,
+      "p95_mm": 16.91238382518548,
+      "p99_mm": 28.884727478837142,
+      "rms_mm": 8.96827042893089,
+      "std_mm": 7.25165683546634
+    },
+    "points": 93512,
+    "within_fraction": {
+      "10mm": 0.8224933698348875,
+      "20mm": 0.9647745743861751,
+      "5mm": 0.45433741124133803
+    }
+  },
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "evaluation": {
+    "beyond_limit": 0,
+    "limit_m": 0.16,
+    "matched": 1672761,
+    "nearest_point": {
+      "max_matched_mm": 75.59979513513697,
+      "mean_mm": 4.175742449206027,
+      "median_mm": 3.59851986267724,
+      "p90_mm": 6.538018756634638,
+      "p95_mm": 7.790471273270059,
+      "p99_mm": 20.747968616548217,
+      "rms_mm": 5.521801439628995,
+      "std_mm": 3.6129580867466062
+    },
+    "point_to_plane": {
+      "max_matched_mm": 74.31620316193569,
+      "mean_mm": 1.6337555171830076,
+      "mean_signed_mm": null,
+      "median_mm": 0.7710689666165148,
+      "p90_mm": 3.2572202096143092,
+      "p95_mm": 5.019392188890431,
+      "p99_mm": 19.10956842244187,
+      "rms_mm": 3.821208667427647,
+      "std_mm": 3.454341990900475
+    },
+    "points": 1672761,
+    "within_fraction": {
+      "10mm": 0.9750305034610444,
+      "20mm": 0.9894976030646339,
+      "5mm": 0.7502518291614881
+    }
+  },
+  "inputs": {
+    "model": "datasets/icl/model/living-room.ply",
+    "model_points": 9982296,
+    "model_sha256": "414c05790dac39abe97aaa298939ead6855cdc72d24d35442ce84db22be4279c",
+    "plan_sha256": "09245042c402eac83103c4c0d079d2336ca5d80cb0e762621e6ad024af459b95",
+    "replay_digest_sha256": "d79b8d252e0334072c1273d0d4cb57d279959cd46f97bb4f86c6b14aa9615769",
+    "session": "datasets/icl-kt2-kinect.vgsession",
+    "session_id": "tum-icl-nuim-living-room-kt2-kinect",
+    "source_trajectory_sha256": "e851d83fc6271d53369c2fd45706af05049d6d9433e4cff2506b05f45eb9029f",
+    "volume": "datasets/icl-kt2-kinect-15mm.sftvol",
+    "volume_sha256": "2157e1106026802922974d4ab35c6851b48884c3af6ff4bb64dde2143f9a3285"
+  },
+  "measurement": "surface-distance-to-ground-truth-model",
+  "measures": "distance from each vertex of the reconstructed mesh to a ground-truth surface model: to the nearest model point, and to the tangent plane through it. The frames are aligned by one rigid motion fitted to raw depth, not to the reconstruction, and the same distances for raw depth are given as the floor of the measurement. Camera poses are the dataset's ground truth.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/icl-kt2-kinect-15mm.ply",
+    "sha256": "c3956c374cfeb746449a0e95a113d9c1efa9d0553f2f842b2ecc3af7ca42ab7b",
+    "source_volume_sha256": "2157e1106026802922974d4ab35c6851b48884c3af6ff4bb64dde2143f9a3285",
+    "triangles": 3303702,
+    "vertices": 1672761
+  },
+  "reconstruction": {
+    "active_blocks": 19968,
+    "contributions_applied": 454064825,
+    "contributions_evaluated": 4498391040,
+    "frame_stride": 2,
+    "fused_frames": 440,
+    "maximum_weight": 219,
+    "observed_voxel_slots": 6360731,
+    "path": "sparse-block-streaming-fusion",
+    "persisted": true,
+    "planned_voxel_slots": 10223616,
+    "truncation_m": 0.045,
+    "voxel_size_m": 0.015
+  },
+  "registration": {
+    "fit_frame_stride": 20,
+    "fit_frames": 0,
+    "fit_samples": 0,
+    "fitted_to": "raw depth of the session named in reused_from",
+    "initial_translation_m": null,
+    "method": "reused from an earlier report",
+    "model_from_source": [
+      0.999789494576059,
+      -0.00021254018821276964,
+      -0.02051636814878936,
+      -0.7453879939365118,
+      0.00020594027793598214,
+      0.9999999263703494,
+      -0.00032380225022556053,
+      1.2997775529750817,
+      0.020516435459167554,
+      0.00031950894153713995,
+      0.9997894647324935,
+      -0.7878792937695777,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "pixel_step": 12,
+    "reused_from": {
+      "path": "results/icl-nuim-lr-kt2-10mm-surface.json",
+      "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
+      "session_id": "tum-icl-nuim-living-room-kt2",
+      "sha256": "848cc822d93dced895fe5068997ccc26bf70e3b5b93ddb60b9277ce553ae5c63"
+    },
+    "rotation_degrees": 1.1757913436346203,
+    "session_was_imported": true,
+    "source_pose_consistency": 3.552713678800501e-15,
+    "stages": []
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.2.0",
+  "source_commit": "aa4f3c8c94c839bbbeb5240bf3d07f13bfdb2541",
+  "source_worktree_clean": true,
+  "timings_seconds": {
+    "evaluation": 66.613,
+    "model_load": 0.722,
+    "registration": 3.573
+  },
+  "vertex_errors": {
+    "path": "datasets/icl-kt2-kinect-15mm-errors.npy",
+    "quantity": "absolute distance to model tangent plane, m",
+    "sha256": "4b3aff138e311556141916dd70931161e421b72fcff22684241e7655fe58782f"
+  }
+}

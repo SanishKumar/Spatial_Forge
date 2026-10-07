@@ -1,0 +1,72 @@
+{
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "evaluation": {
+    "coverage_fraction": 0.9998328188805456,
+    "depth_samples": 8314336,
+    "held_out_frames": 440,
+    "held_out_offset": 1,
+    "nearest_voxel": {
+      "mean_signed_mm": 1.1245415182202012,
+      "median_absolute_mm": 5.333804182913636,
+      "p95_absolute_mm": 18.907933052236558,
+      "rms_mm": 9.22889366124037,
+      "samples": 8312946,
+      "within_one_voxel_fraction": 0.7525533066135639
+    },
+    "pixel_step": 4,
+    "samples_in_observed_voxels": 8312946,
+    "trilinear": {
+      "mean_signed_mm": 1.011693237530131,
+      "median_absolute_mm": 4.459907541025937,
+      "p95_absolute_mm": 17.03237336797723,
+      "rms_mm": 8.168581544161361,
+      "samples": 8293446,
+      "within_one_voxel_fraction": 0.7945962390060778
+    }
+  },
+  "inputs": {
+    "plan_sha256": "512c824a1c3c4b950b514292ddc986a80fb9ff5d68d961f70e0ec4e9b7d8c20d",
+    "replay_digest_sha256": "d79b8d252e0334072c1273d0d4cb57d279959cd46f97bb4f86c6b14aa9615769",
+    "session": "datasets/icl-kt2-kinect.vgsession",
+    "session_id": "tum-icl-nuim-living-room-kt2-kinect",
+    "volume": "datasets/icl-kt2-kinect-10mm.sftvol",
+    "volume_sha256": "298fe61838047c121179b9aff0fd68df30cfb3bc72562f9107586237bb45c839"
+  },
+  "measurement": "held-out-tsdf-residual",
+  "measures": "agreement between the fused volume and depth measured by frames it never saw, using ground-truth camera poses. This is a cross-view consistency residual, not distance to a surveyed surface.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/icl-kt2-kinect-10mm.ply",
+    "sha256": "02f71c68f60f0d5d496cad14b61307f462dff43e2741e134bc492420f0206d6f",
+    "source_volume_sha256": "298fe61838047c121179b9aff0fd68df30cfb3bc72562f9107586237bb45c839",
+    "triangles": 7827768,
+    "vertices": 3956026
+  },
+  "reconstruction": {
+    "active_blocks": 49658,
+    "contributions_applied": 1124125207,
+    "contributions_evaluated": 11186954240,
+    "frame_stride": 2,
+    "fused_frames": 440,
+    "maximum_weight": 219,
+    "observed_voxel_slots": 16376335,
+    "path": "sparse-block-streaming-fusion",
+    "persisted": true,
+    "planned_voxel_slots": 25424896,
+    "truncation_m": 0.03,
+    "voxel_size_m": 0.01
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.2.0",
+  "source_commit": "aa4f3c8c94c839bbbeb5240bf3d07f13bfdb2541",
+  "source_worktree_clean": true,
+  "timings_seconds": {
+    "evaluation": 22.725
+  }
+}

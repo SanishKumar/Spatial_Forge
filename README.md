@@ -23,6 +23,7 @@ fast path proven identical to a slower one that is easier to trust.
 | | |
 |---|---|
 | Against a known surface | **0.45 mm** median, 0.77 mm mean distance to ground truth at 10 mm voxels ([ICL-NUIM](#against-a-known-surface), synthetic depth, exact poses) |
+| With a Kinect's noise simulated | **0.86 mm** median to ground truth at 10 mm voxels, from depth frames a median 3.2 mm off |
 | On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels ([TUM RGB-D](#results-on-real-data)) |
 | Reproducible | the committed scan reconstructs to the same bytes on Linux, macOS and Windows, under Python 3.11 and 3.14, checked on every push |
 | Cost | one CPU core and NumPy: 6.3 billion voxel-observations fused in 211 s |
@@ -162,8 +163,35 @@ Three things make the figure worth having:
   single error. The importer refuses it; a converter rewrites the poses.
 - **It checks the other number.** On this dataset the held-out residual and
   the true error exist for the same volume: 1.50 mm against 1.69 mm RMS at
-  10 mm, 3.63 against 4.15 at 20 mm. The cross-view figure TUM is limited to
-  runs at 87 to 89% of the real one here.
+  10 mm, 3.63 against 4.15 at 20 mm. On exact depth the cross-view figure
+  TUM is limited to runs at 87 to 89% of the real one. With sensor noise
+  it does something else entirely; see below.
+
+### With a sensor's noise
+
+The same sequence again, with a Kinect's depth noise simulated on it: the
+model the ICL-NUIM paper describes, drawn from a seed, not the dataset's own
+noisy files. Same scene, poses, ground truth and frame; only the depth is
+worse.
+
+| | Median | Mean | RMS | p95 |
+|---|---|---|---|---|
+| one noisy depth frame | 3.16 mm | 5.28 mm | 8.97 mm | 16.91 mm |
+| mesh from noisy depth, 20 mm voxels | 0.81 mm | 1.89 mm | 4.87 mm | 5.92 mm |
+| mesh from noisy depth, 15 mm voxels | 0.77 mm | 1.63 mm | 3.82 mm | 5.02 mm |
+| mesh from noisy depth, 10 mm voxels | **0.86 mm** | **1.55 mm** | **3.00 mm** | 4.87 mm |
+| mesh from exact depth, 10 mm voxels | 0.45 mm | 0.77 mm | 1.69 mm | 2.34 mm |
+
+Fusing 440 noisy frames gives a surface 3.7 times closer to the truth than
+a single one of them is, at the median, and 0.4 mm worse than exact depth
+gives. With noise the median stops improving with voxel size: what is left
+is the sensor's, not the grid's.
+
+It also changes how the TUM number should be read. Under this noise the
+held-out residual is 4.5 mm at the median while the mesh is 0.86 mm from
+the truth. The residual compares the volume with held-out frames, and
+those carry the noise in full. On a real sensor it mostly measures the
+sensor.
 
 Method, the three undocumented conventions of the dataset, and everything
 this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
@@ -362,10 +390,10 @@ Stated plainly, because the gaps matter more than the features:
   one.
 - **No semantics.** It produces geometry, not rooms, doors or accessibility.
 - **No absolute accuracy on a real sensor.** The ground-truth comparison is
-  on synthetic, noise-free depth. On real data there is only the held-out
-  residual, which is agreement between views: a reconstruction wrong the
-  same way from every viewpoint would still score well. Closing that needs a
-  surveyed real scene.
+  on synthetic depth, exact or with simulated noise. On real data there is
+  only the held-out residual, which is agreement between views: a
+  reconstruction wrong the same way from every viewpoint would still score
+  well. Closing that needs a surveyed real scene.
 - **Not real time.** Fourteen to thirty million voxel-observations per
   second on one CPU core, depending on how much of the scene each frame
   can see. A GPU system does this live; this one takes minutes.
