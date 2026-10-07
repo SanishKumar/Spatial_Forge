@@ -79,6 +79,7 @@
     "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
     "session": "datasets/icl-kt2.vgsession",
     "session_id": "tum-icl-nuim-living-room-kt2",
+    "source_trajectory_sha256": "e851d83fc6271d53369c2fd45706af05049d6d9433e4cff2506b05f45eb9029f",
     "volume": "datasets/icl-kt2-20mm.sftvol",
     "volume_sha256": "f93e362a7c765a6aa556f7f4a9b241bac46be192d5104597df9487cd68018078"
   },
@@ -137,6 +138,7 @@
       1.0
     ],
     "pixel_step": 12,
+    "reused_from": null,
     "rotation_degrees": 1.1757913436346203,
     "session_was_imported": true,
     "source_pose_consistency": 3.552713678800501e-15,
@@ -161,12 +163,12 @@
   },
   "schema": "spatialforge.result-manifest",
   "schema_version": "0.2.0",
-  "source_commit": "8e7773ff5ada72cde8503b77d13270c935661e83",
+  "source_commit": "6677a2b868fe07e4380151c02179d1af87a5dc18",
   "source_worktree_clean": true,
   "timings_seconds": {
-    "evaluation": 37.64,
-    "model_load": 0.762,
-    "registration": 45.416
+    "evaluation": 54.92,
+    "model_load": 0.773,
+    "registration": 90.232
   },
   "vertex_errors": {
     "path": "datasets/icl-kt2-20mm-errors.npy",
