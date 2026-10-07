@@ -369,8 +369,9 @@ Stated plainly, because the gaps matter more than the features:
 - **Not real time.** Fourteen to thirty million voxel-observations per
   second on one CPU core, depending on how much of the scene each frame
   can see. A GPU system does this live; this one takes minutes.
-- **A storage ceiling.** Accumulators are capped at 256 MiB, or 43,690
-  blocks. A plan that needs more is refused with a message saying so.
+- **A size ceiling.** A plan is limited to 100,000 blocks: 51 million
+  voxels, 614 MB of accumulators held in memory. A scene that needs more
+  is refused with a message saying so.
 - **Fusion does not resume across runs.** A volume is written once, complete.
   The resumable fusion ledgers exist but live in memory.
 - **The free-space path is fixture-scale.** Coverage, cross-view resolution

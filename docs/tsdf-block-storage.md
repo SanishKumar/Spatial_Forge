@@ -81,8 +81,10 @@ float64 sum and four bytes for its uint32 weight:
 bytes per block = 512 * (8 + 4) = 6,144
 ```
 
-The reference allocator permits at most `256 MiB` (`268,435,456` bytes) of
-numeric payload, or 43,690 complete blocks. It checks this bound before calling
+The reference allocator permits as many blocks as the planner will plan:
+100,000, which is `614,400,000` bytes of numeric payload. The two limits are
+one number, so a plan the planner accepts is never refused here for its
+size. It checks this bound before calling
 NumPy. Reported payload bytes are the arrays' numeric `nbytes`; they do not
 claim to measure Python objects, NumPy headers, allocator overhead, or process
 resident memory.

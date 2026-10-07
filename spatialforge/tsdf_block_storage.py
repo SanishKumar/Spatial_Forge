@@ -19,16 +19,20 @@ from .tsdf_block_plan_loader import (
     verify_tsdf_block_plan_replay,
 )
 
-MAX_TSDF_BLOCK_STORAGE_BYTES = 256 * 1024 * 1024
 TSDF_BLOCK_VOXELS = TSDF_BLOCK_RESOLUTION**3
 TSDF_SUM_DTYPE = np.dtype(np.float64)
 TSDF_WEIGHT_DTYPE = np.dtype(np.uint32)
 TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL = (
     TSDF_SUM_DTYPE.itemsize + TSDF_WEIGHT_DTYPE.itemsize
 )
-MAX_TSDF_BLOCK_STORAGE_BLOCKS = (
-    MAX_TSDF_BLOCK_STORAGE_BYTES
-    // (TSDF_BLOCK_VOXELS * TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL)
+# Storage holds any plan the planner will write, and nothing larger.
+# The two limits used to be set separately, and a plan could be
+# accepted by one stage only to be refused by the next.
+MAX_TSDF_BLOCK_STORAGE_BLOCKS = MAX_PLANNED_BLOCKS
+MAX_TSDF_BLOCK_STORAGE_BYTES = (
+    MAX_TSDF_BLOCK_STORAGE_BLOCKS
+    * TSDF_BLOCK_VOXELS
+    * TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL
 )
 
 _BlockIndex = tuple[int, int, int]
@@ -138,10 +142,19 @@ def _preflight_storage_plan(
         raise TsdfError(
             "TSDF block storage requires at least one active block"
         )
-    if len(block_indices) > MAX_PLANNED_BLOCKS:
+    if len(block_indices) > MAX_TSDF_BLOCK_STORAGE_BLOCKS:
+        required = (
+            len(block_indices)
+            * TSDF_BLOCK_VOXELS
+            * TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL
+        )
         raise TsdfError(
-            "TSDF block storage active block count exceeds the "
-            f"{MAX_PLANNED_BLOCKS}-block plan limit"
+            "empty TSDF block storage requires "
+            f"{required} numeric payload bytes for "
+            f"{len(block_indices)} blocks; the maximum is "
+            f"{MAX_TSDF_BLOCK_STORAGE_BYTES} bytes "
+            f"({MAX_TSDF_BLOCK_STORAGE_BLOCKS} blocks), the most a plan "
+            "may hold"
         )
 
     previous_key: tuple[int, int, int] | None = None
@@ -174,15 +187,8 @@ def _preflight_storage_plan(
             "TSDF block storage voxel slots do not match the active blocks: "
             f"{plan.planned_voxel_slots} != {voxel_slots}"
         )
+    # Within the block limit checked above, so within the byte limit.
     payload_bytes = voxel_slots * TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL
-    if payload_bytes > MAX_TSDF_BLOCK_STORAGE_BYTES:
-        raise TsdfError(
-            "empty TSDF block storage requires "
-            f"{payload_bytes} numeric payload bytes for "
-            f"{len(block_indices)} blocks; reference maximum is "
-            f"{MAX_TSDF_BLOCK_STORAGE_BYTES} bytes "
-            f"({MAX_TSDF_BLOCK_STORAGE_BLOCKS} blocks)"
-        )
     shape = (
         len(block_indices),
         TSDF_BLOCK_RESOLUTION,

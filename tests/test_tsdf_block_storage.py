@@ -18,6 +18,7 @@ from spatialforge.errors import TsdfError
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import (
     MAX_BLOCK_INDEX,
+    MAX_PLANNED_BLOCKS,
     TSDF_BLOCK_RESOLUTION,
     plan_tsdf_blocks,
 )
@@ -287,8 +288,10 @@ class TsdfBlockStorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_directory:
             plan = load_tsdf_block_plan(create_plan(Path(temporary_directory)))
 
-        self.assertEqual(MAX_TSDF_BLOCK_STORAGE_BYTES, 268_435_456)
-        self.assertEqual(MAX_TSDF_BLOCK_STORAGE_BLOCKS, 43_690)
+        # Storage holds exactly what the planner will plan.
+        self.assertEqual(MAX_TSDF_BLOCK_STORAGE_BLOCKS, MAX_PLANNED_BLOCKS)
+        self.assertEqual(MAX_TSDF_BLOCK_STORAGE_BLOCKS, 100_000)
+        self.assertEqual(MAX_TSDF_BLOCK_STORAGE_BYTES, 614_400_000)
         allowed_blocks = tuple(
             (block_x, 0, 0)
             for block_x in range(MAX_TSDF_BLOCK_STORAGE_BLOCKS)
@@ -305,8 +308,8 @@ class TsdfBlockStorageTests(unittest.TestCase):
         )
 
         self.assertIs(block_indices, allowed_blocks)
-        self.assertEqual(shape, (43_690, 8, 8, 8))
-        self.assertEqual(payload_bytes, 268_431_360)
+        self.assertEqual(shape, (100_000, 8, 8, 8))
+        self.assertEqual(payload_bytes, 614_400_000)
         self.assertLessEqual(
             payload_bytes,
             MAX_TSDF_BLOCK_STORAGE_BYTES,
@@ -324,14 +327,14 @@ class TsdfBlockStorageTests(unittest.TestCase):
             * TSDF_BLOCK_VOXELS
             * TSDF_BLOCK_STORAGE_BYTES_PER_VOXEL
         )
-        self.assertEqual(rejected_bytes, 268_437_504)
+        self.assertEqual(rejected_bytes, 614_406_144)
         with self.assertRaises(TsdfError) as raised:
             _preflight_storage_plan(rejected_plan)
 
         self.assertIn(
-            "268437504 numeric payload bytes", str(raised.exception)
+            "614406144 numeric payload bytes", str(raised.exception)
         )
-        self.assertIn("(43690 blocks)", str(raised.exception))
+        self.assertIn("(100000 blocks)", str(raised.exception))
 
     def test_memory_error_is_translated_after_partial_buffer_allocation(
         self,
