@@ -174,6 +174,14 @@ class TsdfObservationFusionReceipt:
     status_counts: tuple[tuple[TsdfContributionStatus, int], ...]
 
     def __post_init__(self) -> None:
+        for digest, label in (
+            (self.source_plan_digest_sha256, "source plan"),
+            (self.replay_digest_sha256, "replay"),
+        ):
+            if not _is_sha256(digest):
+                raise TsdfError(
+                    f"TSDF observation fusion {label} digest is invalid"
+                )
         for ledger, label in (
             (self.ledger_before, "before"),
             (self.ledger_after, "after"),
@@ -187,6 +195,10 @@ class TsdfObservationFusionReceipt:
             != self.source_plan_digest_sha256
             or self.ledger_after.source_plan_digest_sha256
             != self.source_plan_digest_sha256
+            or self.ledger_before.replay_digest_sha256
+            != self.replay_digest_sha256
+            or self.ledger_after.replay_digest_sha256
+            != self.replay_digest_sha256
             or self.ledger_before.plan_block_indices
             != self.ledger_after.plan_block_indices
             or self.ledger_before.selected_observation_sequences
@@ -204,13 +216,27 @@ class TsdfObservationFusionReceipt:
                     "TSDF observation fusion must never un-absorb an "
                     "observation"
                 )
-        expected_pairs = (
-            self.ledger_after.absorbed_pair_count
-            - self.ledger_before.absorbed_pair_count
-        )
         if not isinstance(self.fused_pairs, tuple):
             raise TsdfError("TSDF observation fusion pairs must be a tuple")
-        if len(self.fused_pairs) != expected_pairs:
+        # The pairs are not free to be anything of the right length. A
+        # row that went from absorbing b observations to a has absorbed
+        # exactly positions b..a-1, and a frame-major pass visits them
+        # observation by observation, row by row within one.
+        delta = sorted(
+            (position, row)
+            for row, (before, after) in enumerate(
+                zip(
+                    self.ledger_before.absorbed_counts,
+                    self.ledger_after.absorbed_counts,
+                )
+            )
+            for position in range(before, after)
+        )
+        sequences = self.ledger_before.selected_observation_sequences
+        rows = self.ledger_before.plan_block_indices
+        if self.fused_pairs != tuple(
+            (rows[row], sequences[position]) for position, row in delta
+        ):
             raise TsdfError(
                 "TSDF observation fusion pairs must equal the ledger delta"
             )
@@ -237,6 +263,52 @@ class TsdfObservationFusionReceipt:
             raise TsdfError(
                 "TSDF observation fusion must evaluate every voxel of every "
                 "fused pair"
+            )
+        if self.applied_count > self.evaluated_count:
+            raise TsdfError(
+                "TSDF observation fusion cannot apply more contributions "
+                "than it evaluated"
+            )
+        if not isinstance(self.status_counts, tuple):
+            raise TsdfError(
+                "TSDF observation fusion status counts must be a tuple"
+            )
+        canonical = tuple(TsdfContributionStatus)
+        previous = -1
+        counted = 0
+        contributing = 0
+        for entry in self.status_counts:
+            if (
+                not isinstance(entry, tuple)
+                or len(entry) != 2
+                or not isinstance(entry[0], TsdfContributionStatus)
+                or isinstance(entry[1], bool)
+                or not isinstance(entry[1], int)
+                or entry[1] < 1
+            ):
+                raise TsdfError(
+                    "TSDF observation fusion status counts must pair each "
+                    "status that occurred with a positive count"
+                )
+            order = canonical.index(entry[0])
+            if order <= previous:
+                raise TsdfError(
+                    "TSDF observation fusion status counts must list each "
+                    "status once, in canonical order"
+                )
+            previous = order
+            counted += entry[1]
+            if entry[0] is TsdfContributionStatus.CONTRIBUTES:
+                contributing = entry[1]
+        if counted != self.evaluated_count:
+            raise TsdfError(
+                "TSDF observation fusion status counts must account for "
+                "every evaluated voxel"
+            )
+        if contributing != self.applied_count:
+            raise TsdfError(
+                "TSDF observation fusion applied count must equal the "
+                "number of contributing voxels"
             )
 
     @property

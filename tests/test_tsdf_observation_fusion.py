@@ -291,6 +291,122 @@ class TsdfObservationFusionTests(unittest.TestCase):
                 with self.assertRaises(TsdfError):
                     replace(receipt, **arguments)
 
+    def test_a_receipt_cannot_describe_a_pass_that_did_not_happen(
+        self,
+    ) -> None:
+        plan, context = shared_plan_and_context()
+        storage = fresh_storage(plan)
+        receipt = fuse_tsdf_plan_observations_from_context(
+            storage,
+            context,
+            begin_tsdf_observation_ledger(plan, context),
+            pair_limit=4,
+        )
+        # A genuine receipt rebuilt field for field is accepted, so each
+        # refusal below is about the one field that was changed.
+        self.assertEqual(replace(receipt), receipt)
+        self.assertEqual(len(receipt.fused_pairs), 4)
+        self.assertGreater(len(receipt.status_counts), 1)
+        self.assertGreater(receipt.applied_count, 0)
+        statuses = dict(receipt.status_counts)
+        other = "f" * 64
+        self.assertNotEqual(receipt.replay_digest_sha256, other)
+        first, second = receipt.status_counts[:2]
+
+        cases = {
+            # Provenance that does not match the ledgers it carries.
+            "another replay": (
+                {"replay_digest_sha256": other},
+                "provenance is inconsistent",
+            ),
+            "another plan": (
+                {"source_plan_digest_sha256": other},
+                "provenance is inconsistent",
+            ),
+            "not a digest": (
+                {"replay_digest_sha256": "replay"},
+                "replay digest is invalid",
+            ),
+            # The right number of pairs, but not the ones the ledgers say.
+            "pairs reversed": (
+                {"fused_pairs": receipt.fused_pairs[::-1]},
+                "must equal the ledger delta",
+            ),
+            "a pair repeated": (
+                {"fused_pairs": (receipt.fused_pairs[0],) * 4},
+                "must equal the ledger delta",
+            ),
+            "a pair from nowhere": (
+                {
+                    "fused_pairs": receipt.fused_pairs[:3]
+                    + (((99, 99, 99), 0),)
+                },
+                "must equal the ledger delta",
+            ),
+            # Counts that cannot all be true at once.
+            "more applied than evaluated": (
+                {
+                    "applied_count": receipt.evaluated_count + 1,
+                    "weight_delta": receipt.evaluated_count + 1,
+                },
+                "cannot apply more contributions than it evaluated",
+            ),
+            "applied disagrees with the statuses": (
+                {
+                    "applied_count": receipt.applied_count - 1,
+                    "weight_delta": receipt.applied_count - 1,
+                },
+                "must equal the number of contributing voxels",
+            ),
+            "statuses missing a voxel": (
+                {
+                    "status_counts": ((first[0], first[1] - 1),)
+                    + receipt.status_counts[1:]
+                },
+                "must",
+            ),
+            "statuses out of order": (
+                {
+                    "status_counts": (second, first)
+                    + receipt.status_counts[2:]
+                },
+                "once, in canonical order",
+            ),
+            "a status listed twice": (
+                {
+                    "status_counts": (
+                        (first[0], 1),
+                        (first[0], first[1] - 1),
+                    )
+                    + receipt.status_counts[1:]
+                },
+                "once, in canonical order",
+            ),
+            "a status with no voxels": (
+                {"status_counts": receipt.status_counts + ((first[0], 0),)},
+                "with a positive count",
+            ),
+            "statuses by name": (
+                {
+                    "status_counts": tuple(
+                        (status.value, count)
+                        for status, count in receipt.status_counts
+                    )
+                },
+                "with a positive count",
+            ),
+            "statuses as a list": (
+                {"status_counts": list(receipt.status_counts)},
+                "must be a tuple",
+            ),
+        }
+        for name, (arguments, message) in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(TsdfError) as raised:
+                    replace(receipt, **arguments)
+                self.assertIn(message, str(raised.exception))
+        self.assertEqual(sum(statuses.values()), receipt.evaluated_count)
+
     def test_ledger_never_un_absorbs_an_observation(self) -> None:
         plan, context = shared_plan_and_context()
         storage = fresh_storage(plan)
