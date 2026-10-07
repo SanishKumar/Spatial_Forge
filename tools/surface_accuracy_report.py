@@ -38,13 +38,22 @@ Usage:
 
     python tools/surface_accuracy_report.py SESSION VOLUME.sftvol MESH.ply
         MODEL.ply [--initial-translation X Y Z] [--fit-frame-stride N]
-        [--pixel-step N] [--limit-m L] [--errors-out ERRORS.npy]
-        [--manifest-out RESULT.json] [--allow-dirty]
+        [--alignment EARLIER.json] [--pixel-step N] [--limit-m L]
+        [--errors-out ERRORS.npy] [--manifest-out RESULT.json]
+        [--allow-dirty]
 
 ``--initial-translation`` is a rough position of the trajectory's origin in
 the model's frame, in metres. The fit only needs it to within a few
 centimetres. It is expressed in the frame of the trajectory the session was
 imported from or, for a session that was not imported, the session's own.
+
+``--alignment`` takes the manifest of an earlier report and judges this
+mesh in the frame that report fitted, without fitting again. It is for
+comparing scans of one trajectory, a clean one and a degraded one, in a
+single frame chosen from the better data. It is refused unless the model
+and the source trajectory are, by digest, the ones the earlier report
+used: an alignment says where one trajectory's frame sits in one model,
+and nothing about any other.
 
 ``--errors-out`` writes each vertex's distance to the model's tangent
 plane, in metres and in the mesh's vertex order, for
@@ -246,6 +255,89 @@ def session_from_source(observations) -> tuple[np.ndarray, float, bool]:
         float(np.abs(matrix - implied[0]).max()) for matrix in implied
     )
     return implied[0], deviation, True
+
+
+def source_trajectory_digest(observations) -> str:
+    """One digest for the poses that define the source frame.
+
+    The source pose where the importer kept one, the session pose where
+    it did not, for every posed observation in order. Two sessions with
+    the same digest were placed by the same trajectory, whatever their
+    images are.
+    """
+
+    rows = []
+    for observation in observations:
+        if observation.pose is None:
+            continue
+        data = observation.pose.data
+        if (
+            "source_translation_m" in data
+            and "source_quaternion_xyzw" in data
+        ):
+            values = [
+                *data["source_translation_m"],
+                *data["source_quaternion_xyzw"],
+            ]
+        else:
+            values = list(data["T_world_camera"])
+        rows.append([float(value) for value in values])
+    encoded = json.dumps(rows, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def load_alignment(
+    path: Path,
+    *,
+    model_sha256: str,
+    trajectory_sha256: str,
+) -> tuple[np.ndarray, dict[str, object]]:
+    """The transform an earlier report fitted, if it applies here."""
+
+    encoded = path.read_bytes()
+    try:
+        manifest = json.loads(encoded)
+        if manifest["measurement"] != (
+            "surface-distance-to-ground-truth-model"
+        ):
+            raise KeyError("measurement")
+        recorded_model = manifest["inputs"]["model_sha256"]
+        recorded_trajectory = manifest["inputs"][
+            "source_trajectory_sha256"
+        ]
+        values = manifest["registration"]["model_from_source"]
+        transform = np.array(values, dtype=np.float64).reshape((4, 4))
+    except (ValueError, KeyError, TypeError):
+        raise SystemExit(
+            f"{path}: not a surface-accuracy manifest that records an "
+            "alignment, its model and its source trajectory"
+        ) from None
+    rotation = transform[:3, :3]
+    if not (
+        np.all(np.isfinite(transform))
+        and np.array_equal(transform[3], (0.0, 0.0, 0.0, 1.0))
+        and np.abs(rotation @ rotation.T - np.eye(3)).max() < 1e-9
+        and abs(float(np.linalg.det(rotation)) - 1.0) < 1e-9
+    ):
+        raise SystemExit(f"{path}: recorded alignment is not rigid")
+    if recorded_model != model_sha256:
+        raise SystemExit(
+            f"{path}: that alignment was fitted to a different "
+            "ground-truth model"
+        )
+    if recorded_trajectory != trajectory_sha256:
+        raise SystemExit(
+            f"{path}: that alignment belongs to a different source "
+            "trajectory, so it does not say where this session is"
+        )
+    return transform, {
+        "path": path.as_posix(),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "session_id": manifest["inputs"].get("session_id"),
+        "replay_digest_sha256": manifest["inputs"].get(
+            "replay_digest_sha256"
+        ),
+    }
 
 
 def _invert_rigid(matrix: np.ndarray) -> np.ndarray:
@@ -549,8 +641,18 @@ def main(argv: list[str] | None = None) -> int:
         "--initial-translation",
         type=float,
         nargs=3,
-        default=(0.0, 0.0, 0.0),
+        default=None,
         metavar=("X", "Y", "Z"),
+    )
+    parser.add_argument(
+        "--alignment",
+        type=Path,
+        default=None,
+        help=(
+            "Manifest of an earlier report whose fitted alignment is "
+            "reused instead of fitting one. Same model and same source "
+            "trajectory only."
+        ),
     )
     parser.add_argument("--fit-frame-stride", type=positive_int, default=20)
     parser.add_argument("--pixel-step", type=positive_int, default=12)
@@ -582,7 +684,17 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if not (math.isfinite(arguments.limit_m) and arguments.limit_m > 0.0):
         parser.error("--limit-m must be finite and positive")
-    if not all(math.isfinite(v) for v in arguments.initial_translation):
+    if arguments.alignment is not None:
+        if arguments.initial_translation is not None:
+            parser.error(
+                "--alignment reuses a fitted alignment; an "
+                "--initial-translation would have nothing to start"
+            )
+    elif arguments.initial_translation is None:
+        arguments.initial_translation = (0.0, 0.0, 0.0)
+    if arguments.initial_translation is not None and not all(
+        math.isfinite(v) for v in arguments.initial_translation
+    ):
         parser.error("--initial-translation must be finite")
     if arguments.fit_frame_stride < 2:
         parser.error(
@@ -596,6 +708,8 @@ def main(argv: list[str] | None = None) -> int:
         arguments.mesh,
         arguments.model,
     ]
+    if arguments.alignment is not None:
+        inputs.append(arguments.alignment)
     errors_path = (
         None
         if arguments.errors_out is None
@@ -648,6 +762,7 @@ def main(argv: list[str] | None = None) -> int:
             "the model cannot be placed in the session's frame"
         )
     source_from_session = _invert_rigid(to_session)
+    trajectory_digest = source_trajectory_digest(replay.observations)
 
     posed = [
         observation
@@ -682,56 +797,81 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     started = time.perf_counter()
-    fit_points, _ = sample_depth(
-        session,
-        fit_frames,
-        camera,
-        depth_scale_m,
-        arguments.pixel_step,
-        source_from_session,
-    )
-    thinning = max(1, math.ceil(len(model_points) / COARSE_MODEL_POINTS))
-    coarse_points = model_points[::thinning]
-    coarse_normals = model_normals[::thinning]
-    transform = np.eye(4)
-    transform[:3, 3] = arguments.initial_translation
-    transform, coarse = register_point_to_plane(
-        fit_points,
-        coarse_points,
-        coarse_normals,
-        NearestPointIndex(coarse_points, cell_m=COARSE_LIMIT_M),
-        transform,
-        limit_m=COARSE_LIMIT_M,
-        iterations=COARSE_ITERATIONS,
-    )
-    index = NearestPointIndex(model_points, cell_m=FINE_LIMIT_M)
-    transform, fine = register_point_to_plane(
-        fit_points,
-        model_points,
-        model_normals,
-        index,
-        transform,
-        limit_m=FINE_LIMIT_M,
-        iterations=FINE_ITERATIONS,
-    )
-    registration_seconds = time.perf_counter() - started
-    if max(fine.last_step_m, fine.last_step_rad) > CONVERGED_STEP:
-        raise SystemExit(
-            "registration did not settle: its last update was "
-            f"{fine.last_step_m:.3g} m and {fine.last_step_rad:.3g} rad. "
-            "Give a closer --initial-translation."
+    stages: list[RegistrationStage] = []
+    fit_samples = 0
+    reused: dict[str, object] | None = None
+    if arguments.alignment is not None:
+        transform, reused = load_alignment(
+            arguments.alignment,
+            model_sha256=model_digest,
+            trajectory_sha256=trajectory_digest,
         )
+        index = NearestPointIndex(model_points, cell_m=FINE_LIMIT_M)
+    else:
+        fit_points, _ = sample_depth(
+            session,
+            fit_frames,
+            camera,
+            depth_scale_m,
+            arguments.pixel_step,
+            source_from_session,
+        )
+        fit_samples = len(fit_points)
+        thinning = max(
+            1, math.ceil(len(model_points) / COARSE_MODEL_POINTS)
+        )
+        coarse_points = model_points[::thinning]
+        coarse_normals = model_normals[::thinning]
+        transform = np.eye(4)
+        transform[:3, 3] = arguments.initial_translation
+        transform, coarse = register_point_to_plane(
+            fit_points,
+            coarse_points,
+            coarse_normals,
+            NearestPointIndex(coarse_points, cell_m=COARSE_LIMIT_M),
+            transform,
+            limit_m=COARSE_LIMIT_M,
+            iterations=COARSE_ITERATIONS,
+        )
+        index = NearestPointIndex(model_points, cell_m=FINE_LIMIT_M)
+        transform, fine = register_point_to_plane(
+            fit_points,
+            model_points,
+            model_normals,
+            index,
+            transform,
+            limit_m=FINE_LIMIT_M,
+            iterations=FINE_ITERATIONS,
+        )
+        if max(fine.last_step_m, fine.last_step_rad) > CONVERGED_STEP:
+            raise SystemExit(
+                "registration did not settle: its last update was "
+                f"{fine.last_step_m:.3g} m and {fine.last_step_rad:.3g} "
+                "rad. Give a closer --initial-translation."
+            )
+        stages = [coarse, fine]
+    registration_seconds = time.perf_counter() - started
     angle = math.degrees(
         math.acos(
             max(-1.0, min(1.0, (float(np.trace(transform[:3, :3])) - 1) / 2))
         )
     )
-    print(
-        f"registration: {len(fit_frames)} frames, {len(fit_points)} depth "
-        f"samples; rotation {angle:.4f} deg, translation "
+    placed = (
+        f"rotation {angle:.4f} deg, translation "
         f"({transform[0, 3]:+.5f}, {transform[1, 3]:+.5f}, "
-        f"{transform[2, 3]:+.5f}) m; last step {fine.last_step_m:.1e} m"
+        f"{transform[2, 3]:+.5f}) m"
     )
+    if reused is not None:
+        print(
+            f"alignment: reused from {arguments.alignment.name}, not "
+            f"fitted to this session; {placed}"
+        )
+    else:
+        print(
+            f"registration: {len(fit_frames)} frames, {fit_samples} "
+            f"depth samples; {placed}; last step "
+            f"{stages[-1].last_step_m:.1e} m"
+        )
 
     started = time.perf_counter()
     check_points, check_centres = sample_depth(
@@ -783,7 +923,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluation_seconds = time.perf_counter() - started
 
     describe(
-        f"raw depth, {len(check_frames)} frames the fit did not use",
+        f"raw depth, {len(check_frames)} frames"
+        + ("" if reused is not None else " the fit did not use"),
         depth_summary,
     )
     describe("mesh vertices", mesh_summary)
@@ -840,6 +981,7 @@ def main(argv: list[str] | None = None) -> int:
                 "volume_sha256": volume.artifact_digest_sha256,
                 "model": arguments.model.as_posix(),
                 "model_sha256": model_digest,
+                "source_trajectory_sha256": trajectory_digest,
                 "model_points": len(model_points),
             },
             "reconstruction": {
@@ -859,16 +1001,28 @@ def main(argv: list[str] | None = None) -> int:
             "mesh": mesh,
             "registration": {
                 "method": (
-                    "point-to-plane, raw depth to model, coarse then fine"
+                    "reused from an earlier report"
+                    if reused is not None
+                    else "point-to-plane, raw depth to model, coarse "
+                    "then fine"
                 ),
-                "fitted_to": "raw depth",
+                "fitted_to": (
+                    "raw depth of the session named in reused_from"
+                    if reused is not None
+                    else "raw depth"
+                ),
+                "reused_from": reused,
                 "session_was_imported": imported,
                 "source_pose_consistency": pose_deviation,
-                "initial_translation_m": list(arguments.initial_translation),
+                "initial_translation_m": (
+                    None
+                    if reused is not None
+                    else list(arguments.initial_translation)
+                ),
                 "fit_frame_stride": stride,
-                "fit_frames": len(fit_frames),
+                "fit_frames": 0 if reused is not None else len(fit_frames),
                 "pixel_step": arguments.pixel_step,
-                "fit_samples": len(fit_points),
+                "fit_samples": fit_samples,
                 "stages": [
                     {
                         "limit_m": stage.limit_m,
@@ -878,7 +1032,7 @@ def main(argv: list[str] | None = None) -> int:
                         "last_step_m": stage.last_step_m,
                         "last_step_rad": stage.last_step_rad,
                     }
-                    for stage in (coarse, fine)
+                    for stage in stages
                 ],
                 "model_from_source": [
                     float(value) for value in transform.ravel()

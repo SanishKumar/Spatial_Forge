@@ -56,6 +56,7 @@ from tools.surface_accuracy_report import (
     read_surface_model,
     register_point_to_plane,
     session_from_source,
+    source_trajectory_digest,
     summarise,
 )
 
@@ -529,8 +530,11 @@ def report_arguments(
         str(values["volume"]),
         str(values["mesh"]),
         str(values["model"]),
-        "--initial-translation",
-        *translation,
+        *(
+            []
+            if translation is None
+            else ["--initial-translation", *translation]
+        ),
         "--fit-frame-stride",
         "2",
         "--pixel-step",
@@ -714,6 +718,188 @@ class RoomReportTests(unittest.TestCase):
             first["evaluation"]["point_to_plane"]["median_mm"],
             places=3,
         )
+
+
+class ReusedAlignmentTests(unittest.TestCase):
+    """Judging a scan in the frame an earlier report fitted."""
+
+    def reuse(self, name: str, alignment: Path, **replaced) -> dict:
+        return run_report(
+            name,
+            "--alignment",
+            str(alignment),
+            translation=None,
+            **replaced,
+        )
+
+    def edited_baseline(self, name: str, edit) -> Path:
+        baseline()
+        manifest = json.loads((ROOM.root / "baseline.json").read_bytes())
+        edit(manifest)
+        path = ROOM.root / f"{name}.json"
+        path.write_bytes(json.dumps(manifest).encode("utf-8"))
+        return path
+
+    def assert_refused(self, message: str, alignment: Path, **replaced) -> None:
+        with (
+            self.assertRaises(SystemExit) as raised,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
+            main(
+                [
+                    *report_arguments(translation=None, **replaced),
+                    "--alignment",
+                    str(alignment),
+                ]
+            )
+        self.assertIn(message, str(raised.exception))
+
+    def test_the_trajectory_is_recorded_by_digest(self) -> None:
+        digest = baseline()["inputs"]["source_trajectory_sha256"]
+        self.assertEqual(len(digest), 64)
+        replay = replay_session(load_scan_session(ROOM.session))
+        self.assertEqual(
+            digest, source_trajectory_digest(replay.observations)
+        )
+        # A different trajectory, a different digest; a frame with no pose
+        # is not part of either.
+        self.assertNotEqual(
+            digest, source_trajectory_digest(replay.observations[1:])
+        )
+        self.assertEqual(
+            source_trajectory_digest(
+                [*replay.observations, SimpleNamespace(pose=None)]
+            ),
+            digest,
+        )
+
+    def test_a_reused_frame_gives_the_numbers_of_the_run_that_fitted_it(
+        self,
+    ) -> None:
+        fitted = baseline()
+        # Reuse must not fit anything: registration is made to fail if it
+        # is so much as called.
+        with patch(
+            "tools.surface_accuracy_report.register_point_to_plane",
+            side_effect=AssertionError("fitted again"),
+        ):
+            reused = self.reuse("reused", ROOM.root / "baseline.json")
+
+        registration = reused["registration"]
+        self.assertEqual(registration["method"], "reused from an earlier report")
+        self.assertEqual(
+            registration["model_from_source"],
+            fitted["registration"]["model_from_source"],
+        )
+        self.assertEqual(registration["stages"], [])
+        self.assertEqual(registration["fit_frames"], 0)
+        self.assertIsNone(registration["initial_translation_m"])
+        self.assertEqual(
+            registration["reused_from"]["sha256"],
+            hashlib.sha256(
+                (ROOM.root / "baseline.json").read_bytes()
+            ).hexdigest(),
+        )
+        self.assertEqual(
+            registration["reused_from"]["replay_digest_sha256"],
+            fitted["inputs"]["replay_digest_sha256"],
+        )
+        self.assertEqual(reused["evaluation"], fitted["evaluation"])
+        self.assertEqual(reused["depth_reference"], fitted["depth_reference"])
+        self.assertIsNone(fitted["registration"]["reused_from"])
+
+    def test_an_alignment_is_only_reused_where_it_applies(self) -> None:
+        other_trajectory = self.edited_baseline(
+            "other-trajectory",
+            lambda m: m["inputs"].__setitem__(
+                "source_trajectory_sha256", "0" * 64
+            ),
+        )
+        self.assert_refused("different source trajectory", other_trajectory)
+
+        points, normals = room_model()
+        moved = ROOM.root / "other-model.ply"
+        write_model(
+            moved,
+            apply(MODEL_FROM_SESSION, points) + 0.5,
+            normals @ MODEL_FROM_SESSION[:3, :3].T,
+        )
+        self.assert_refused(
+            "different ground-truth model",
+            ROOM.root / "baseline.json",
+            model=moved,
+        )
+
+        def skew(manifest: dict) -> None:
+            manifest["registration"]["model_from_source"][0] = 1.5
+
+        self.assert_refused(
+            "is not rigid", self.edited_baseline("skewed", skew)
+        )
+
+        def mirror(manifest: dict) -> None:
+            values = manifest["registration"]["model_from_source"]
+            for index in (0, 4, 8):
+                values[index] = -values[index]
+
+        self.assert_refused(
+            "is not rigid", self.edited_baseline("mirrored", mirror)
+        )
+        for name, edit in (
+            ("no-digest", lambda m: m["inputs"].pop("source_trajectory_sha256")),
+            ("no-transform", lambda m: m["registration"].pop("model_from_source")),
+            ("short", lambda m: m["registration"]["model_from_source"].pop()),
+            ("held-out", lambda m: m.__setitem__("measurement", "held-out-tsdf-residual")),
+        ):
+            with self.subTest(name=name):
+                self.assert_refused(
+                    "not a surface-accuracy manifest",
+                    self.edited_baseline(name, edit),
+                )
+        garbage = ROOM.root / "garbage.json"
+        garbage.write_bytes(b"not json")
+        self.assert_refused("not a surface-accuracy manifest", garbage)
+
+    def test_a_starting_guess_and_a_reused_alignment_are_exclusive(
+        self,
+    ) -> None:
+        baseline()
+        with (
+            self.assertRaises(SystemExit) as raised,
+            redirect_stderr(io.StringIO()),
+        ):
+            main(
+                [
+                    *report_arguments(),
+                    "--alignment",
+                    str(ROOM.root / "baseline.json"),
+                ]
+            )
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_the_reused_manifest_is_an_input_and_is_not_written_over(
+        self,
+    ) -> None:
+        baseline()
+        source = ROOM.root / "baseline.json"
+        before = source.read_bytes()
+        with (
+            source_state("a" * 40, True),
+            self.assertRaises(SystemExit) as raised,
+            redirect_stdout(io.StringIO()),
+        ):
+            main(
+                [
+                    *report_arguments(translation=None),
+                    "--alignment",
+                    str(source),
+                    "--manifest-out",
+                    str(source),
+                ]
+            )
+        self.assertIn("write over an input", str(raised.exception))
+        self.assertEqual(source.read_bytes(), before)
 
 
 class RoomRefusalTests(unittest.TestCase):
