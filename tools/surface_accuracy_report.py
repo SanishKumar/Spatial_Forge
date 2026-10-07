@@ -434,9 +434,18 @@ def load_alignment(
             "tolerance_m": TRAJECTORY_TOLERANCE_M,
             "tolerance_rad": TRAJECTORY_TOLERANCE_RAD,
         }
+    recorded_facing = manifest.get("depth_reference", {}).get(
+        "model_normals_facing_camera_fraction"
+    )
     return transform, {
         "path": path.as_posix(),
         "sha256": hashlib.sha256(encoded).hexdigest(),
+        "model_normals_facing_camera_fraction": (
+            float(recorded_facing)
+            if isinstance(recorded_facing, (int, float))
+            and not isinstance(recorded_facing, bool)
+            else None
+        ),
         "session_id": manifest["inputs"].get("session_id"),
         "replay_digest_sha256": manifest["inputs"].get(
             "replay_digest_sha256"
@@ -1032,7 +1041,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         / max(len(to_camera), 1)
     )
-    oriented = facing >= ORIENTED_FRACTION
+    # Which way the model's normals point is a fact about the model.
+    # A reused alignment comes with the answer the better data gave,
+    # and noisy depth, matched to the wrong neighbour more often, is
+    # not asked again.
+    orientation_evidence = facing
+    orientation_source = "this session's depth"
+    if (
+        reused is not None
+        and reused["model_normals_facing_camera_fraction"] is not None
+    ):
+        orientation_evidence = reused[
+            "model_normals_facing_camera_fraction"
+        ]
+        orientation_source = "the report the alignment came from"
+    oriented = orientation_evidence >= ORIENTED_FRACTION
     depth_summary = summarise(
         depth_distances, limit_m=arguments.limit_m, signed=oriented
     )
@@ -1059,7 +1082,8 @@ def main(argv: list[str] | None = None) -> int:
     if not oriented:
         print(
             "\nmodel normals face the camera for only "
-            f"{100 * facing:.1f}% of depth samples; signed figures omitted"
+            f"{100 * orientation_evidence:.1f}% of depth samples in "
+            f"{orientation_source}; signed figures omitted"
         )
 
     vertex_errors: dict[str, object] | None = None
@@ -1170,6 +1194,8 @@ def main(argv: list[str] | None = None) -> int:
             "depth_reference": {
                 "frames": len(check_frames),
                 "model_normals_facing_camera_fraction": facing,
+                "normals_trusted_from": orientation_source,
+                "normals_trusted_at_fraction": orientation_evidence,
                 **depth_summary,
             },
             "evaluation": mesh_summary,

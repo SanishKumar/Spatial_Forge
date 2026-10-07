@@ -809,8 +809,88 @@ class ReusedAlignmentTests(unittest.TestCase):
             fitted["inputs"]["replay_digest_sha256"],
         )
         self.assertEqual(reused["evaluation"], fitted["evaluation"])
-        self.assertEqual(reused["depth_reference"], fitted["depth_reference"])
+
+        def measured(reference: dict) -> dict:
+            return {
+                key: value
+                for key, value in reference.items()
+                if not key.startswith("normals_trusted")
+            }
+
+        self.assertEqual(
+            measured(reused["depth_reference"]),
+            measured(fitted["depth_reference"]),
+        )
         self.assertIsNone(fitted["registration"]["reused_from"])
+
+    def test_which_way_normals_face_comes_with_the_reused_alignment(
+        self,
+    ) -> None:
+        fitted = baseline()
+        own = fitted["depth_reference"]["model_normals_facing_camera_fraction"]
+        self.assertEqual(
+            fitted["depth_reference"]["normals_trusted_from"],
+            "this session's depth",
+        )
+        self.assertEqual(
+            fitted["depth_reference"]["normals_trusted_at_fraction"], own
+        )
+
+        def facing(value):
+            def edit(manifest: dict) -> None:
+                manifest["depth_reference"][
+                    "model_normals_facing_camera_fraction"
+                ] = value
+
+            return edit
+
+        # A bar this session's own depth would not clear, and an earlier
+        # report that does: the earlier report decides, so signed figures
+        # are stated.
+        self.assertLess(own, 0.9995)
+        with patch("tools.surface_accuracy_report.ORIENTED_FRACTION", 0.9995):
+            trusted = self.reuse(
+                "trusted", self.edited_baseline("faces", facing(1.0))
+            )
+            alone = run_report("alone")
+        self.assertIsNone(
+            alone["evaluation"]["point_to_plane"]["mean_signed_mm"]
+        )
+        self.assertEqual(
+            trusted["evaluation"]["point_to_plane"]["mean_signed_mm"],
+            fitted["evaluation"]["point_to_plane"]["mean_signed_mm"],
+        )
+        reference = trusted["depth_reference"]
+        self.assertEqual(
+            reference["normals_trusted_from"],
+            "the report the alignment came from",
+        )
+        self.assertEqual(reference["normals_trusted_at_fraction"], 1.0)
+        # This session's own figure is still measured and still recorded.
+        self.assertEqual(reference["model_normals_facing_camera_fraction"], own)
+
+        # An earlier report that did not trust them is not overruled.
+        doubted = self.reuse(
+            "doubted", self.edited_baseline("faces-away", facing(0.5))
+        )
+        self.assertIsNone(
+            doubted["evaluation"]["point_to_plane"]["mean_signed_mm"]
+        )
+        self.assertIsNone(
+            doubted["depth_reference"]["point_to_plane"]["mean_signed_mm"]
+        )
+
+        # One that never recorded the figure leaves it to this session.
+        silent = self.reuse(
+            "silent", self.edited_baseline("no-facing", facing(None))
+        )
+        self.assertEqual(
+            silent["depth_reference"]["normals_trusted_from"],
+            "this session's depth",
+        )
+        self.assertIsNotNone(
+            silent["evaluation"]["point_to_plane"]["mean_signed_mm"]
+        )
 
     def test_an_alignment_is_only_reused_where_it_applies(self) -> None:
         other_trajectory = self.edited_baseline(
