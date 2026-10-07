@@ -38,13 +38,18 @@ Usage:
 
     python tools/surface_accuracy_report.py SESSION VOLUME.sftvol MESH.ply
         MODEL.ply [--initial-translation X Y Z] [--fit-frame-stride N]
-        [--pixel-step N] [--limit-m L] [--manifest-out RESULT.json]
-        [--allow-dirty]
+        [--pixel-step N] [--limit-m L] [--errors-out ERRORS.npy]
+        [--manifest-out RESULT.json] [--allow-dirty]
 
 ``--initial-translation`` is a rough position of the trajectory's origin in
 the model's frame, in metres. The fit only needs it to within a few
 centimetres. It is expressed in the frame of the trajectory the session was
 imported from or, for a session that was not imported, the session's own.
+
+``--errors-out`` writes each vertex's distance to the model's tangent
+plane, in metres and in the mesh's vertex order, for
+``render_mesh.py --vertex-errors`` to draw: where the error is, not
+only how much of it there is.
 """
 
 from __future__ import annotations
@@ -551,6 +556,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pixel-step", type=positive_int, default=12)
     parser.add_argument("--limit-m", type=float, default=0.16)
     parser.add_argument(
+        "--errors-out",
+        type=Path,
+        default=None,
+        help=(
+            "Write per-vertex distance to the model's tangent plane, in "
+            "metres, as a float32 .npy; NaN where no model point was "
+            "within the limit."
+        ),
+    )
+    parser.add_argument(
         "--manifest-out",
         type=Path,
         default=None,
@@ -575,6 +590,17 @@ def main(argv: list[str] | None = None) -> int:
             "are left to check the fit against"
         )
 
+    inputs = [
+        arguments.session,
+        arguments.volume,
+        arguments.mesh,
+        arguments.model,
+    ]
+    errors_path = (
+        None
+        if arguments.errors_out is None
+        else reserve_output(arguments.errors_out, ".npy", protected=inputs)
+    )
     manifest_path: Path | None = None
     source_commit: str | None = None
     worktree_clean: bool | None = None
@@ -582,12 +608,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path = reserve_output(
             arguments.manifest_out,
             ".json",
-            protected=[
-                arguments.session,
-                arguments.volume,
-                arguments.mesh,
-                arguments.model,
-            ],
+            protected=inputs,
         )
         source_commit, worktree_clean = source_state()
         if worktree_clean is False and not arguments.allow_dirty:
@@ -772,6 +793,22 @@ def main(argv: list[str] | None = None) -> int:
             f"{100 * facing:.1f}% of depth samples; signed figures omitted"
         )
 
+    vertex_errors: dict[str, object] | None = None
+    if errors_path is not None:
+        errors = np.full(mesh_distances.total, np.nan, dtype=np.float32)
+        errors[mesh_distances.matched] = np.abs(
+            mesh_distances.signed_plane_m
+        )
+        with publishing(errors_path, ".npy") as temporary:
+            with temporary.open("wb") as handle:
+                np.save(handle, errors)
+        vertex_errors = {
+            "path": arguments.errors_out.as_posix(),
+            "sha256": _sha256(errors_path),
+            "quantity": "absolute distance to model tangent plane, m",
+        }
+        print(f"\nwrote vertex errors {errors_path}")
+
     if manifest_path is not None:
         manifest = {
             "schema": RESULT_MANIFEST_SCHEMA,
@@ -854,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
                 **depth_summary,
             },
             "evaluation": mesh_summary,
+            "vertex_errors": vertex_errors,
             "timings_seconds": {
                 "model_load": round(load_seconds, 3),
                 "registration": round(registration_seconds, 3),

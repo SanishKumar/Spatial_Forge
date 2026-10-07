@@ -28,8 +28,14 @@ from spatialforge.tsdf_block_mesh import extract_tsdf_block_mesh
 from spatialforge.tsdf_block_plan import plan_tsdf_blocks
 
 from tools.render_mesh import (
+    BACK_CULLED,
+    BACK_PLAIN,
+    BACK_TINTED,
     _BACK_TINT,
+    _ERROR_RAMP,
     _UNSEEN,
+    draw_error_legend,
+    error_colours,
     animation_azimuths,
     main as render_main,
     rasterise,
@@ -150,6 +156,271 @@ class RasteriserTests(unittest.TestCase):
             resolution=200,
         )
         self.assertEqual(int(covered(canvas).sum()), 200 * 201 // 2)
+
+
+class BackFaceModeTests(unittest.TestCase):
+    FRONT = RasteriserTests.FRONT
+    BACK = [FRONT[0], FRONT[2], FRONT[1]]
+
+    def draw(self, screen, depth, faces, colours, back) -> np.ndarray:
+        return rasterise(
+            np.array(screen, dtype=np.float64),
+            np.array(depth, dtype=np.float64),
+            np.array(faces, dtype=np.int64),
+            np.array(colours, dtype=np.float64),
+            12,
+            back,
+        )
+
+    def test_a_culled_reverse_side_is_not_drawn(self) -> None:
+        canvas = self.draw(
+            self.BACK, [1.0] * 3, [[0, 1, 2]], [RED] * 3, BACK_CULLED
+        )
+        self.assertFalse(bool(covered(canvas).any()))
+        front = self.draw(
+            self.FRONT, [1.0] * 3, [[0, 1, 2]], [RED] * 3, BACK_CULLED
+        )
+        self.assertEqual(int(covered(front).sum()), 45)
+        self.assertTrue(bool(np.all(front[covered(front)] == RED)))
+
+    def test_a_culled_reverse_side_does_not_hide_what_is_behind_it(
+        self,
+    ) -> None:
+        # Looking into a room: the near wall is seen from behind and must
+        # not win the depth test against the far wall it would occlude.
+        screen = self.BACK + self.FRONT
+        depth = [1.0] * 3 + [2.0] * 3
+        colours = [RED] * 3 + [GREEN] * 3
+        faces = [[0, 1, 2], [3, 4, 5]]
+        culled = self.draw(screen, depth, faces, colours, BACK_CULLED)
+        tinted = self.draw(screen, depth, faces, colours, BACK_TINTED)
+
+        self.assertTrue(bool(np.all(culled[covered(culled)] == GREEN)))
+        np.testing.assert_allclose(
+            tinted[covered(tinted)][0], RED * _BACK_TINT
+        )
+
+    def test_a_plain_reverse_side_ignores_the_vertex_colour(self) -> None:
+        canvas = self.draw(
+            self.BACK, [1.0] * 3, [[0, 1, 2]], [RED, GREEN, RED], BACK_PLAIN
+        )
+        mask = covered(canvas)
+        self.assertEqual(int(mask.sum()), 45)
+        self.assertTrue(bool(np.all(canvas[mask] == _UNSEEN * _BACK_TINT)))
+        # The measured side is untouched by the mode.
+        front = self.draw(
+            self.FRONT, [1.0] * 3, [[0, 1, 2]], [RED] * 3, BACK_PLAIN
+        )
+        self.assertTrue(bool(np.all(front[covered(front)] == RED)))
+
+    def test_an_unknown_mode_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown back-face mode"):
+            self.draw(self.FRONT, [1.0] * 3, [[0, 1, 2]], [RED] * 3, "x")
+
+
+class ErrorColourTests(unittest.TestCase):
+    def test_the_ramp_runs_from_zero_to_the_scale_and_saturates(self) -> None:
+        colours = error_colours(
+            np.array([0.0, 0.0025, 0.005, 0.0075, 0.01, 0.5]), 0.01
+        )
+        np.testing.assert_allclose(colours[:5], _ERROR_RAMP)
+        np.testing.assert_allclose(colours[5], _ERROR_RAMP[-1])
+        between = error_colours(np.array([0.00125]), 0.01)[0]
+        np.testing.assert_allclose(
+            between, (_ERROR_RAMP[0] + _ERROR_RAMP[1]) / 2.0
+        )
+
+    def test_an_unmeasured_vertex_is_grey_not_zero_error(self) -> None:
+        colours = error_colours(np.array([np.nan, 0.0]), 0.01)
+        np.testing.assert_allclose(colours[0], _UNSEEN)
+        self.assertFalse(bool(np.allclose(colours[0], colours[1])))
+
+    def test_the_legend_shows_both_ends_of_the_scale(self) -> None:
+        blank = Image.new("RGB", (200, 200), (14, 16, 22))
+        drawn = np.asarray(draw_error_legend(blank, 5.0), dtype=np.float64)
+        # margin 7, bar 68 by 4, against the bottom-left corner.
+        np.testing.assert_allclose(drawn[190, 7], np.round(_ERROR_RAMP[0]))
+        np.testing.assert_allclose(drawn[190, 74], np.round(_ERROR_RAMP[-1]))
+        np.testing.assert_allclose(drawn[190, 75], (14, 16, 22))
+        # Labels were written above it.
+        self.assertTrue(bool(np.any(drawn[170:188, 7:75] != (14, 16, 22))))
+        self.assertEqual(blank.getpixel((7, 190)), (14, 16, 22))
+
+
+class ErrorMapCommandTests(unittest.TestCase):
+    def test_it_draws_measured_error_with_its_scale(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            mesh_path = fixture_mesh(temporary_root)
+            errors = np.linspace(0.0, 0.02, 225, dtype=np.float32)
+            errors[17] = np.nan
+            errors_path = temporary_root / "errors.npy"
+            np.save(errors_path, errors)
+            original = errors_path.read_bytes()
+            outputs = []
+            for name in ("first", "second"):
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    exit_code = render_main(
+                        [
+                            str(mesh_path),
+                            str(temporary_root / name),
+                            "--vertex-errors",
+                            str(errors_path),
+                            "--error-scale-mm",
+                            "10",
+                            "--size",
+                            "72",
+                            "--frames",
+                            "2",
+                            "--sweep",
+                            "20",
+                        ]
+                    )
+                self.assertEqual(exit_code, 0)
+                outputs.append(
+                    (
+                        (temporary_root / f"{name}.png").read_bytes(),
+                        (temporary_root / f"{name}.gif").read_bytes(),
+                    )
+                )
+            with Image.open(temporary_root / "first.png") as still:
+                pixels = np.asarray(still.convert("RGB"), dtype=np.float64)
+            self.assertEqual(errors_path.read_bytes(), original)
+
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn(
+            "colour: distance to ground truth, 0 to 10 mm, 224 of 225 "
+            "vertices measured",
+            stdout.getvalue(),
+        )
+        # At 72 pixels the scale bar is 24 by 2, three pixels in from the
+        # bottom-left corner.
+        np.testing.assert_allclose(pixels[67, 3], np.round(_ERROR_RAMP[0]))
+        np.testing.assert_allclose(pixels[67, 26], np.round(_ERROR_RAMP[-1]))
+
+    def test_errors_that_do_not_belong_to_the_mesh_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            mesh_path = fixture_mesh(temporary_root)
+            good = np.zeros(225, dtype=np.float32)
+            negative = good.copy()
+            negative[3] = -0.001
+            infinite = good.copy()
+            infinite[3] = np.inf
+            cases = {
+                "short": (np.zeros(224, dtype=np.float32), "not measured on"),
+                "grid": (np.zeros((225, 1), dtype=np.float32), "one-dimens"),
+                "integer": (np.zeros(225, dtype=np.int32), "floating-point"),
+                "negative": (negative, "non-negative"),
+                "infinite": (infinite, "non-negative"),
+            }
+            for name, (array, message) in cases.items():
+                with self.subTest(name=name):
+                    path = temporary_root / f"{name}.npy"
+                    np.save(path, array)
+                    with (
+                        self.assertRaises(SystemExit) as raised,
+                        redirect_stdout(io.StringIO()),
+                    ):
+                        render_main(
+                            [
+                                str(mesh_path),
+                                str(temporary_root / f"out-{name}"),
+                                "--vertex-errors",
+                                str(path),
+                            ]
+                        )
+                    self.assertIn(message, str(raised.exception))
+                    self.assertFalse(
+                        (temporary_root / f"out-{name}.png").exists()
+                    )
+            garbage = temporary_root / "garbage.npy"
+            garbage.write_bytes(b"not an array")
+            with (
+                self.assertRaisesRegex(SystemExit, "not a readable"),
+                redirect_stdout(io.StringIO()),
+            ):
+                render_main(
+                    [
+                        str(mesh_path),
+                        str(temporary_root / "out-garbage"),
+                        "--vertex-errors",
+                        str(garbage),
+                    ]
+                )
+            np.save(temporary_root / "good.npy", good)
+            with self.assertRaisesRegex(SystemExit, "both set the colour"):
+                render_main(
+                    [
+                        str(mesh_path),
+                        str(temporary_root / "out-both"),
+                        "--vertex-errors",
+                        str(temporary_root / "good.npy"),
+                        "--session",
+                        str(FIXTURE),
+                    ]
+                )
+            for scale in ("0", "-1", "nan", "inf"):
+                with self.assertRaisesRegex(SystemExit, "error-scale-mm"):
+                    render_main(
+                        [
+                            str(mesh_path),
+                            str(temporary_root / "out-scale"),
+                            "--vertex-errors",
+                            str(temporary_root / "good.npy"),
+                            f"--error-scale-mm={scale}",
+                        ]
+                    )
+
+    def test_culling_is_available_from_the_command_line(self) -> None:
+        # The fixture mesh is one flat wall. From one side culling changes
+        # nothing; from the other it removes the whole picture.
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            temporary_root = Path(temporary_dir)
+            mesh_path = fixture_mesh(temporary_root)
+            counts = {}
+            for azimuth in (35, 215):
+                for mode, extra in (
+                    ("tinted", []),
+                    ("culled", ["--cull-back-faces"]),
+                ):
+                    name = f"{mode}-{azimuth}"
+                    with redirect_stdout(io.StringIO()):
+                        render_main(
+                            [
+                                str(mesh_path),
+                                str(temporary_root / name),
+                                "--size",
+                                "72",
+                                "--frames",
+                                "1",
+                                "--azimuth",
+                                str(azimuth),
+                                *extra,
+                            ]
+                        )
+                    with Image.open(temporary_root / f"{name}.png") as still:
+                        counts[(mode, azimuth)] = int(
+                            covered(
+                                np.asarray(
+                                    still.convert("RGB"), dtype=np.float64
+                                )
+                            ).sum()
+                        )
+
+        self.assertGreater(counts[("tinted", 35)], 0)
+        self.assertGreater(counts[("tinted", 215)], 0)
+        self.assertEqual(
+            sorted(
+                counts[("culled", azimuth)] == counts[("tinted", azimuth)]
+                for azimuth in (35, 215)
+            ),
+            [False, True],
+        )
+        self.assertEqual(
+            min(counts[("culled", 35)], counts[("culled", 215)]), 0
+        )
 
 
 class MeshInputTests(unittest.TestCase):

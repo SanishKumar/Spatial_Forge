@@ -13,10 +13,24 @@ and at the depth the frame measured there. That is a visualisation of the
 geometry, not part of it: the mesh file carries no colour, and nothing here
 feeds back into the reconstruction.
 
+With ``--vertex-errors`` the colour is a measurement instead: each vertex's
+distance to a ground-truth surface, as written by
+``surface_accuracy_report.py --errors-out``, on a scale drawn into the
+image. Shading is kept light in that mode so that a colour still reads as
+the value it stands for, and the reverse of a surface is drawn plain grey:
+it was not measured, and tinting it would turn it into a colour on the
+scale.
+
+``--cull-back-faces`` leaves the reverse sides out altogether, which is how
+to look into a room from outside it: the walls nearest the viewer are seen
+from behind and disappear.
+
 Usage:
 
     python tools/render_mesh.py MESH.ply OUTPUT_PREFIX
         [--session SCAN.vgsession] [--colour-stride N]
+        [--vertex-errors ERRORS.npy] [--error-scale-mm MM]
+        [--cull-back-faces]
         [--size N] [--frames N] [--sweep DEG] [--azimuth DEG]
         [--elevation DEG]
 
@@ -30,7 +44,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 if __package__ in (None, ""):  # run as a script rather than imported
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -53,6 +67,23 @@ _CLAY = np.array((205.0, 208.0, 214.0))
 _UNSEEN = np.array((120.0, 124.0, 132.0))
 _BACK_TINT = np.array((0.34, 0.38, 0.50))
 _AMBIENT = 0.30
+# Error maps are lit more evenly: the colour is the data.
+_ERROR_AMBIENT = 0.62
+# Zero error to the top of the scale and beyond.
+_ERROR_RAMP = np.array(
+    (
+        (52.0, 66.0, 148.0),
+        (44.0, 146.0, 196.0),
+        (96.0, 192.0, 120.0),
+        (238.0, 202.0, 72.0),
+        (214.0, 58.0, 44.0),
+    )
+)
+_LEGEND_INK = (214, 218, 226)
+# How the reverse side of a triangle is drawn.
+BACK_TINTED = "tinted"
+BACK_PLAIN = "plain"
+BACK_CULLED = "culled"
 # Triangles are rasterised in groups by the side of their pixel bounding
 # box, so that a few large triangles do not set the cost for all the rest.
 _BUCKET_SIDES = (2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096)
@@ -258,13 +289,19 @@ def rasterise(
     faces: np.ndarray,
     colours: np.ndarray,
     resolution: int,
+    back: str = BACK_TINTED,
 ) -> np.ndarray:
     """Z-buffered, smoothly interpolated triangles on a square canvas.
 
-    Back faces are drawn, tinted, rather than culled: a scan is an open
-    surface, and seeing the reverse of a wall is more honest than seeing
-    through it.
+    By default back faces are drawn, tinted, rather than culled: a scan
+    is an open surface, and seeing the reverse of a wall is more honest
+    than seeing through it. ``BACK_PLAIN`` draws them one flat grey, for
+    when vertex colour is a measurement the reverse side does not have;
+    ``BACK_CULLED`` leaves them out.
     """
+
+    if back not in (BACK_TINTED, BACK_PLAIN, BACK_CULLED):
+        raise ValueError(f"unknown back-face mode: {back!r}")
 
     canvas = np.repeat(
         _BACKGROUND[None, :],
@@ -302,6 +339,9 @@ def rasterise(
     # downwards, that makes a triangle seen from its free side negative.
     front = area < 0.0
     side = np.maximum(right - left, bottom - top) + 1
+    if back == BACK_CULLED:
+        # Never enters a bucket, so never reaches the depth buffer.
+        side = np.where(front, side, 0)
 
     previous = 0
     for limit in _BUCKET_SIDES:
@@ -371,10 +411,92 @@ def rasterise(
                     weights[chosen],
                     colours[faces[triangle]],
                 )
-                shade[~front[triangle]] *= _BACK_TINT
+                if back == BACK_PLAIN:
+                    shade[~front[triangle]] = _UNSEEN * _BACK_TINT
+                else:
+                    shade[~front[triangle]] *= _BACK_TINT
                 z_buffer[pixel] = sample_depth[chosen]
                 canvas[pixel] = shade
     return canvas.reshape((resolution, resolution, 3))
+
+
+def error_colours(errors_m: np.ndarray, scale_m: float) -> np.ndarray:
+    """Map distances onto the ramp; anything past the scale saturates.
+
+    A vertex with no measurement (NaN) is drawn in the same grey as a
+    vertex no frame observed, not as zero error.
+    """
+
+    measured = np.isfinite(errors_m)
+    position = np.clip(
+        np.where(measured, errors_m, 0.0) / scale_m, 0.0, 1.0
+    ) * (len(_ERROR_RAMP) - 1)
+    lower = np.minimum(position.astype(np.int64), len(_ERROR_RAMP) - 2)
+    fraction = (position - lower)[:, None]
+    colours = (
+        _ERROR_RAMP[lower] * (1.0 - fraction)
+        + _ERROR_RAMP[lower + 1] * fraction
+    )
+    colours[~measured] = _UNSEEN
+    return colours
+
+
+def read_vertex_errors(path: Path, vertex_count: int) -> np.ndarray:
+    try:
+        errors = np.load(path, allow_pickle=False)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"{path}: not a readable .npy array: {error}")
+    if errors.ndim != 1 or errors.dtype.kind != "f":
+        raise SystemExit(
+            f"{path}: expected a one-dimensional floating-point array"
+        )
+    if len(errors) != vertex_count:
+        raise SystemExit(
+            f"{path}: holds {len(errors)} values for a mesh of "
+            f"{vertex_count} vertices; these errors were not measured on "
+            "this mesh"
+        )
+    errors = errors.astype(np.float64)
+    if np.any(np.isinf(errors)) or np.any(errors[np.isfinite(errors)] < 0):
+        raise SystemExit(
+            f"{path}: errors must be non-negative distances, or NaN"
+        )
+    return errors
+
+
+def draw_error_legend(image: Image.Image, scale_mm: float) -> Image.Image:
+    """Put the colour scale, with its two ends labelled, in a corner."""
+
+    image = image.copy()
+    size = image.size[0]
+    margin = max(2, round(size * 0.035))
+    length = max(8, round(size * 0.34))
+    thickness = max(2, round(size * 0.022))
+    top = size - margin - thickness
+    positions = np.linspace(0.0, 1.0, length) * scale_mm / 1000.0
+    strip = error_colours(positions, scale_mm / 1000.0)
+    bar = np.repeat(strip[None, :, :], thickness, axis=0)
+    image.paste(
+        Image.fromarray(np.round(bar).astype(np.uint8), mode="RGB"),
+        (margin, top),
+    )
+    height = max(8, round(size * 0.03))
+    try:
+        font = ImageFont.load_default(size=height)
+    except (TypeError, OSError):  # a Pillow without scalable default
+        font = ImageFont.load_default()
+    draw = ImageDraw.Draw(image)
+    baseline = top - round(height * 1.35)
+    draw.text((margin, baseline), "0", fill=_LEGEND_INK, font=font)
+    label = f"{scale_mm:g} mm+"
+    width = draw.textlength(label, font=font)
+    draw.text(
+        (margin + length - width, baseline),
+        label,
+        fill=_LEGEND_INK,
+        font=font,
+    )
+    return image
 
 
 def render(
@@ -386,6 +508,8 @@ def render(
     elevation_degrees: float,
     size: int,
     focal: float,
+    ambient: float = _AMBIENT,
+    back: str = BACK_TINTED,
 ) -> Image.Image:
     """One shaded frame from one camera position."""
 
@@ -410,13 +534,14 @@ def render(
     # are bright and curvature still reads; lit from both sides.
     light = -forward + 0.35 * right + 0.45 * up
     light /= np.linalg.norm(light)
-    intensity = _AMBIENT + (1.0 - _AMBIENT) * np.abs(normals @ light)
+    intensity = ambient + (1.0 - ambient) * np.abs(normals @ light)
     canvas = rasterise(
         screen,
         camera_z,
         faces,
         base_colours * intensity[:, None],
         resolution,
+        back,
     )
     image = Image.fromarray(
         np.clip(canvas, 0.0, 255.0).astype(np.uint8),
@@ -477,6 +602,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output_prefix", type=Path)
     parser.add_argument("--session", type=Path, default=None)
     parser.add_argument("--colour-stride", type=positive_int, default=8)
+    parser.add_argument("--vertex-errors", type=Path, default=None)
+    parser.add_argument("--error-scale-mm", type=float, default=10.0)
+    parser.add_argument("--cull-back-faces", action="store_true")
     parser.add_argument("--size", type=positive_int, default=720)
     parser.add_argument("--frames", type=positive_int, default=36)
     parser.add_argument("--azimuth", type=float, default=35.0)
@@ -492,10 +620,21 @@ def main(argv: list[str] | None = None) -> int:
         )
     if arguments.sweep is not None and not 0.0 < arguments.sweep <= 180.0:
         raise SystemExit("--sweep must be within (0, 180] degrees")
+    if arguments.session is not None and arguments.vertex_errors is not None:
+        raise SystemExit(
+            "--session and --vertex-errors both set the colour; give one"
+        )
+    if not (
+        np.isfinite(arguments.error_scale_mm)
+        and arguments.error_scale_mm > 0.0
+    ):
+        raise SystemExit("--error-scale-mm must be finite and positive")
 
     protected = [arguments.input]
     if arguments.session is not None:
         protected.append(arguments.session)
+    if arguments.vertex_errors is not None:
+        protected.append(arguments.vertex_errors)
     still_path = reserve_output(
         arguments.output_prefix.with_suffix(".png"),
         ".png",
@@ -514,7 +653,21 @@ def main(argv: list[str] | None = None) -> int:
         f"{extent[0]:.2f} x {extent[1]:.2f} x {extent[2]:.2f} m"
     )
     normals = vertex_normals(vertices, faces)
-    if arguments.session is None:
+    ambient = _AMBIENT
+    back = BACK_CULLED if arguments.cull_back_faces else BACK_TINTED
+    if arguments.vertex_errors is not None:
+        if not arguments.cull_back_faces:
+            back = BACK_PLAIN
+        errors = read_vertex_errors(arguments.vertex_errors, len(vertices))
+        colours = error_colours(errors, arguments.error_scale_mm / 1000.0)
+        ambient = _ERROR_AMBIENT
+        print(
+            f"colour: distance to ground truth, 0 to "
+            f"{arguments.error_scale_mm:g} mm, "
+            f"{int(np.count_nonzero(np.isfinite(errors)))} of "
+            f"{len(vertices)} vertices measured"
+        )
+    elif arguments.session is None:
         colours = np.repeat(_CLAY[None, :], len(vertices), axis=0)
         print("colour: uniform")
     else:
@@ -552,14 +705,25 @@ def main(argv: list[str] | None = None) -> int:
             arguments.elevation,
             arguments.size,
             focal,
+            ambient,
+            back,
         )
 
-    still = crop_to_content([frame(arguments.azimuth)])[0]
+    def finish(images: list[Image.Image]) -> list[Image.Image]:
+        images = crop_to_content(images)
+        if arguments.vertex_errors is None:
+            return images
+        return [
+            draw_error_legend(image, arguments.error_scale_mm)
+            for image in images
+        ]
+
+    still = finish([frame(arguments.azimuth)])[0]
     with publishing(still_path, ".png") as temporary:
         still.save(temporary, format="PNG")
     print(f"wrote {still_path}")
 
-    animation = crop_to_content([frame(azimuth) for azimuth in azimuths])
+    animation = finish([frame(azimuth) for azimuth in azimuths])
     with publishing(gif_path, ".gif") as temporary:
         encode_gif(animation, temporary)
     print(f"wrote {gif_path} ({len(animation)} frames)")

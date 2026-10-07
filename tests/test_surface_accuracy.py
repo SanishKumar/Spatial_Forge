@@ -14,6 +14,7 @@ itself to the model would hide exactly that.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import math
@@ -537,7 +538,7 @@ def report_arguments(
     ]
 
 
-def run_report(name: str, **arguments) -> dict:
+def run_report(name: str, *extra: str, **arguments) -> dict:
     manifest = ROOM.root / f"{name}.json"
     with source_state("a" * 40, True), redirect_stdout(io.StringIO()):
         exit_code = main(
@@ -545,6 +546,7 @@ def run_report(name: str, **arguments) -> dict:
                 *report_arguments(**arguments),
                 "--manifest-out",
                 str(manifest),
+                *extra,
             ]
         )
     assert exit_code == 0
@@ -562,7 +564,11 @@ def baseline() -> dict:
 
     global _BASELINE
     if _BASELINE is None:
-        _BASELINE = run_report("baseline")
+        _BASELINE = run_report(
+            "baseline",
+            "--errors-out",
+            str(ROOM.root / "baseline-errors.npy"),
+        )
     return _BASELINE
 
 
@@ -624,6 +630,43 @@ class RoomReportTests(unittest.TestCase):
         self.assertEqual(len(inputs["model_sha256"]), 64)
         self.assertEqual(
             inputs["model_points"], len(room_model()[0])
+        )
+
+    def test_per_vertex_errors_are_the_ones_that_were_summarised(
+        self,
+    ) -> None:
+        manifest = baseline()
+        path = ROOM.root / "baseline-errors.npy"
+        errors = np.load(path, allow_pickle=False)
+        evaluation = manifest["evaluation"]
+
+        self.assertEqual(errors.dtype, np.float32)
+        self.assertEqual(errors.shape, (manifest["mesh"]["vertices"],))
+        self.assertEqual(
+            int(np.count_nonzero(np.isnan(errors))),
+            evaluation["beyond_limit"],
+        )
+        measured = np.sort(errors[np.isfinite(errors)].astype(np.float64))
+        self.assertTrue(bool(np.all(measured >= 0.0)))
+        # The same nearest-rank median the summary states, to the
+        # precision float32 keeps.
+        median = measured[math.ceil(0.5 * len(errors)) - 1]
+        self.assertAlmostEqual(
+            1000 * median,
+            evaluation["point_to_plane"]["median_mm"],
+            places=3,
+        )
+        self.assertAlmostEqual(
+            1000 * float(measured.mean()),
+            evaluation["point_to_plane"]["mean_mm"],
+            places=3,
+        )
+        recorded = manifest["vertex_errors"]
+        self.assertEqual(
+            recorded["sha256"], hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+        self.assertIsNone(
+            run_report("no_errors_requested")["vertex_errors"]
         )
 
     def test_a_rigidly_displaced_mesh_scores_worse(self) -> None:
@@ -733,6 +776,17 @@ class RoomRefusalTests(unittest.TestCase):
             self.assert_refused(
                 "already exists",
                 [*self.arguments(), "--manifest-out", str(existing)],
+            )
+            taken = ROOM.root / "taken.npy"
+            taken.write_bytes(b"keep")
+            self.assert_refused(
+                "already exists",
+                [*self.arguments(), "--errors-out", str(taken)],
+            )
+            self.assertEqual(taken.read_bytes(), b"keep")
+            self.assert_refused(
+                "must end in .npy",
+                [*self.arguments(), "--errors-out", str(target)],
             )
             self.assert_refused(
                 "must end in .json",
