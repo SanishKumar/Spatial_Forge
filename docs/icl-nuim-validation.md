@@ -45,8 +45,10 @@ refuses a negative focal length outright, so the shortcut is not available
 by accident.
 
 **What the files mean.** Depth is planar z, not distance along the ray, and
-pose `k` belongs to image `k`, which leaves frame 0 without a pose. Neither
-is written down with the data, so both were decided against the model:
+pose `k` belongs to image `k`, which leaves frame 0 without a pose. The
+first is not written down with the data, and the second has to be taken
+on trust from a trajectory with one row fewer than there are images. So
+both were decided against the model:
 
 | Reading of the files | Raw depth within 2 cm of the model | Median distance to its surface |
 |---|---|---|
@@ -134,17 +136,17 @@ the worst is 75 mm at 20 mm voxels and 35 mm at 10 mm.
 Three readings.
 
 **The median is the floor.** Half the surface is within 0.45 mm of the
-model's planes, and raw depth, which is the model's own rendering, scores
+model's planes, and raw depth, rendered from the same scene, scores
 0.43 mm. At the median there is nothing left to measure: the reconstruction
 is as close as this model and this alignment can tell.
 
 **The mean is the tail.** As the voxel halves, RMS falls from 4.2 mm to
-1.7 mm and p99 from 22.5 mm to 6.5 mm, while the median does not move. The
-error is not spread over the surface. It is concentrated, and the picture at the top of
-this page shows where: along silhouette edges, where a thin structure or an
-occlusion boundary is narrower than the truncation band, and the surface
-either rounds off or carries a fringe past the edge. Walls, floor and table
-tops are uniformly dark.
+1.7 mm and p99 from 22.5 mm to 6.5 mm, while the median barely moves. The
+error is not spread over the surface. It is concentrated, and the picture
+at the top of this page shows where: along silhouette edges, where a thin
+structure or an occlusion boundary is narrower than the truncation band,
+and the surface either rounds off or carries a fringe past the edge.
+Walls, floor and table tops stay at the low end of the scale.
 
 **There is a small bias towards the camera.** The mean signed distance is
 +0.33 mm at 10 mm, with the model's normals pointing into free space. Raw
@@ -197,7 +199,7 @@ for 15 mm and 20 mm.
 
 ```text
 source                 881 RGB-D frames, 880 poses
-imported               880 frames, all with poses (frame 0 has none)
+imported               880 frames, all with poses (frame 0, which has none, is left out)
 camera                 640 x 480, fx = 481.2, fy = 480.0
 selected / fused       440 / 440   (frame_stride 2)
 
