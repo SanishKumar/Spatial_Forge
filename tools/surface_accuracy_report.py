@@ -38,7 +38,8 @@ Usage:
 
     python tools/surface_accuracy_report.py SESSION VOLUME.sftvol MESH.ply
         MODEL.ply [--initial-translation X Y Z] [--fit-frame-stride N]
-        [--alignment EARLIER.json] [--pixel-step N] [--limit-m L]
+        [--alignment EARLIER.json [--alignment-session SESSION]]
+        [--pixel-step N] [--limit-m L]
         [--errors-out ERRORS.npy] [--manifest-out RESULT.json]
         [--allow-dirty]
 
@@ -54,6 +55,13 @@ single frame chosen from the better data. It is refused unless the model
 and the source trajectory are, by digest, the ones the earlier report
 used: an alignment says where one trajectory's frame sits in one model,
 and nothing about any other.
+
+A dataset can publish one motion twice with different rounding, and then
+the digests differ although the trajectory does not. ``--alignment-session``
+names the session the earlier report was computed on; the two trajectories
+are then compared pose by pose, and the alignment is reused only if they
+agree to within a tenth of a millimetre and a ten-thousandth of a radian.
+The largest disagreement found is recorded.
 
 ``--errors-out`` writes each vertex's distance to the model's tangent
 plane, in metres and in the mesh's vertex order, for
@@ -116,6 +124,10 @@ FINE_ITERATIONS = 6
 CONVERGED_STEP = 1e-5
 # Source and session poses must describe one rigid re-anchoring.
 POSE_CONSISTENCY_TOLERANCE = 1e-9
+# Two trajectories are the same motion, written twice, if every pair of
+# poses agrees this closely. Far below anything the measurement resolves.
+TRAJECTORY_TOLERANCE_M = 1e-4
+TRAJECTORY_TOLERANCE_RAD = 1e-4
 # Model normals are only trusted for a signed figure if the cameras that
 # rendered the depth are in front of nearly all of them.
 ORIENTED_FRACTION = 0.99
@@ -257,13 +269,12 @@ def session_from_source(observations) -> tuple[np.ndarray, float, bool]:
     return implied[0], deviation, True
 
 
-def source_trajectory_digest(observations) -> str:
-    """One digest for the poses that define the source frame.
+def source_trajectory(observations) -> list[list[float]]:
+    """The poses that define the source frame, one row each.
 
-    The source pose where the importer kept one, the session pose where
-    it did not, for every posed observation in order. Two sessions with
-    the same digest were placed by the same trajectory, whatever their
-    images are.
+    The source pose where the importer kept one (translation, then
+    quaternion), the session pose where it did not, for every posed
+    observation in order.
     """
 
     rows = []
@@ -282,17 +293,70 @@ def source_trajectory_digest(observations) -> str:
         else:
             values = list(data["T_world_camera"])
         rows.append([float(value) for value in values])
-    encoded = json.dumps(rows, separators=(",", ":")).encode("ascii")
+    return rows
+
+
+def source_trajectory_digest(observations) -> str:
+    """One digest for the poses that define the source frame.
+
+    Two sessions with the same digest were placed by the same trajectory,
+    whatever their images are.
+    """
+
+    encoded = json.dumps(
+        source_trajectory(observations), separators=(",", ":")
+    ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _row_pose(row: list[float]) -> tuple[np.ndarray, np.ndarray]:
+    if len(row) == 7:
+        return quaternion_matrix(row[3:]), np.array(row[:3])
+    matrix = np.array(row).reshape((4, 4))
+    return matrix[:3, :3], matrix[:3, 3]
+
+
+def trajectory_difference(
+    first: list[list[float]],
+    second: list[list[float]],
+) -> tuple[float, float] | None:
+    """Largest translation (m) and rotation (rad) between paired poses.
+
+    ``None`` if the two cannot be paired at all: different lengths, or
+    poses of different kinds.
+    """
+
+    if len(first) != len(second) or not first:
+        return None
+    worst_m = worst_rad = 0.0
+    for a, b in zip(first, second):
+        if len(a) != len(b):
+            return None
+        rotation_a, translation_a = _row_pose(a)
+        rotation_b, translation_b = _row_pose(b)
+        worst_m = max(
+            worst_m, float(np.linalg.norm(translation_a - translation_b))
+        )
+        cosine = (float(np.trace(rotation_a.T @ rotation_b)) - 1.0) / 2.0
+        worst_rad = max(
+            worst_rad, math.acos(max(-1.0, min(1.0, cosine)))
+        )
+    return worst_m, worst_rad
 
 
 def load_alignment(
     path: Path,
     *,
     model_sha256: str,
-    trajectory_sha256: str,
+    trajectory: list[list[float]],
+    reference_trajectory: list[list[float]] | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
-    """The transform an earlier report fitted, if it applies here."""
+    """The transform an earlier report fitted, if it applies here.
+
+    It applies when the model is the same by digest and the source
+    trajectory is the same: by digest, or, given the trajectory of the
+    session the earlier report used, pose for pose within tolerance.
+    """
 
     encoded = path.read_bytes()
     try:
@@ -325,11 +389,51 @@ def load_alignment(
             f"{path}: that alignment was fitted to a different "
             "ground-truth model"
         )
-    if recorded_trajectory != trajectory_sha256:
-        raise SystemExit(
-            f"{path}: that alignment belongs to a different source "
-            "trajectory, so it does not say where this session is"
-        )
+
+    def digest(rows: list[list[float]]) -> str:
+        return hashlib.sha256(
+            json.dumps(rows, separators=(",", ":")).encode("ascii")
+        ).hexdigest()
+
+    match: dict[str, object] = {"by": "digest"}
+    if recorded_trajectory != digest(trajectory):
+        if reference_trajectory is None:
+            raise SystemExit(
+                f"{path}: that alignment belongs to a different source "
+                "trajectory, so it does not say where this session is. If "
+                "this is the same motion written with different rounding, "
+                "name the earlier session with --alignment-session"
+            )
+        if recorded_trajectory != digest(reference_trajectory):
+            raise SystemExit(
+                f"{path}: the session given with --alignment-session is "
+                "not the one that report was computed on"
+            )
+        difference = trajectory_difference(reference_trajectory, trajectory)
+        if difference is None:
+            raise SystemExit(
+                f"{path}: that alignment belongs to a different source "
+                "trajectory: the two sessions do not have the same poses "
+                "to compare"
+            )
+        worst_m, worst_rad = difference
+        if (
+            worst_m > TRAJECTORY_TOLERANCE_M
+            or worst_rad > TRAJECTORY_TOLERANCE_RAD
+        ):
+            raise SystemExit(
+                f"{path}: that alignment belongs to a different source "
+                f"trajectory: poses differ by up to {worst_m:.3g} m and "
+                f"{worst_rad:.3g} rad"
+            )
+        match = {
+            "by": "poses",
+            "poses": len(trajectory),
+            "largest_translation_difference_m": worst_m,
+            "largest_rotation_difference_rad": worst_rad,
+            "tolerance_m": TRAJECTORY_TOLERANCE_M,
+            "tolerance_rad": TRAJECTORY_TOLERANCE_RAD,
+        }
     return transform, {
         "path": path.as_posix(),
         "sha256": hashlib.sha256(encoded).hexdigest(),
@@ -337,6 +441,7 @@ def load_alignment(
         "replay_digest_sha256": manifest["inputs"].get(
             "replay_digest_sha256"
         ),
+        "trajectory_match": match,
     }
 
 
@@ -654,6 +759,16 @@ def main(argv: list[str] | None = None) -> int:
             "trajectory only."
         ),
     )
+    parser.add_argument(
+        "--alignment-session",
+        type=Path,
+        default=None,
+        help=(
+            "The session the --alignment report was computed on, for when "
+            "this session's trajectory is the same motion written with "
+            "different rounding and so has a different digest."
+        ),
+    )
     parser.add_argument("--fit-frame-stride", type=positive_int, default=20)
     parser.add_argument("--pixel-step", type=positive_int, default=12)
     parser.add_argument("--limit-m", type=float, default=0.16)
@@ -690,6 +805,8 @@ def main(argv: list[str] | None = None) -> int:
                 "--alignment reuses a fitted alignment; an "
                 "--initial-translation would have nothing to start"
             )
+    elif arguments.alignment_session is not None:
+        parser.error("--alignment-session needs --alignment")
     elif arguments.initial_translation is None:
         arguments.initial_translation = (0.0, 0.0, 0.0)
     if arguments.initial_translation is not None and not all(
@@ -710,6 +827,8 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if arguments.alignment is not None:
         inputs.append(arguments.alignment)
+    if arguments.alignment_session is not None:
+        inputs.append(arguments.alignment_session)
     errors_path = (
         None
         if arguments.errors_out is None
@@ -762,7 +881,15 @@ def main(argv: list[str] | None = None) -> int:
             "the model cannot be placed in the session's frame"
         )
     source_from_session = _invert_rigid(to_session)
+    trajectory = source_trajectory(replay.observations)
     trajectory_digest = source_trajectory_digest(replay.observations)
+    reference_trajectory = None
+    if arguments.alignment_session is not None:
+        reference_trajectory = source_trajectory(
+            replay_session(
+                load_scan_session(arguments.alignment_session)
+            ).observations
+        )
 
     posed = [
         observation
@@ -804,7 +931,8 @@ def main(argv: list[str] | None = None) -> int:
         transform, reused = load_alignment(
             arguments.alignment,
             model_sha256=model_digest,
-            trajectory_sha256=trajectory_digest,
+            trajectory=trajectory,
+            reference_trajectory=reference_trajectory,
         )
         index = NearestPointIndex(model_points, cell_m=FINE_LIMIT_M)
     else:

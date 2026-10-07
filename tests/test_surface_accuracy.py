@@ -55,9 +55,12 @@ from tools.surface_accuracy_report import (
     measure,
     read_surface_model,
     register_point_to_plane,
+    load_alignment,
     session_from_source,
+    source_trajectory,
     source_trajectory_digest,
     summarise,
+    trajectory_difference,
 )
 
 TEST_ROOT = Path(__file__).resolve().parent
@@ -861,6 +864,112 @@ class ReusedAlignmentTests(unittest.TestCase):
         garbage.write_bytes(b"not json")
         self.assert_refused("not a surface-accuracy manifest", garbage)
 
+    def test_the_same_motion_rounded_differently_is_matched_pose_by_pose(
+        self,
+    ) -> None:
+        fitted = baseline()
+        manifest = ROOM.root / "baseline.json"
+        model = fitted["inputs"]["model_sha256"]
+        reference = source_trajectory(
+            replay_session(load_scan_session(ROOM.session)).observations
+        )
+        # The room's poses are 4x4 matrices, row-major: index 3 is x.
+        self.assertEqual(len(reference[0]), 16)
+
+        def moved(by_m: float) -> list[list[float]]:
+            rows = [list(row) for row in reference]
+            for row in rows:
+                row[3] += by_m
+            return rows
+
+        # Five micrometres is another digest and the same trajectory.
+        rounded = moved(5e-6)
+        with self.assertRaisesRegex(SystemExit, "--alignment-session"):
+            load_alignment(manifest, model_sha256=model, trajectory=rounded)
+        transform, used = load_alignment(
+            manifest,
+            model_sha256=model,
+            trajectory=rounded,
+            reference_trajectory=reference,
+        )
+        np.testing.assert_array_equal(
+            transform.ravel(), fitted["registration"]["model_from_source"]
+        )
+        match = used["trajectory_match"]
+        self.assertEqual(match["by"], "poses")
+        self.assertEqual(match["poses"], len(reference))
+        self.assertAlmostEqual(
+            match["largest_translation_difference_m"], 5e-6, places=12
+        )
+        self.assertLess(match["largest_rotation_difference_rad"], 1e-7)
+
+        # The same trajectory exactly needs no reference at all.
+        _, exact = load_alignment(
+            manifest, model_sha256=model, trajectory=reference
+        )
+        self.assertEqual(exact["trajectory_match"], {"by": "digest"})
+
+        # A millimetre is a different trajectory, with or without one.
+        with self.assertRaisesRegex(SystemExit, "poses differ by up to"):
+            load_alignment(
+                manifest,
+                model_sha256=model,
+                trajectory=moved(1e-3),
+                reference_trajectory=reference,
+            )
+        turned = [list(row) for row in reference]
+        cosine, sine = math.cos(1e-3), math.sin(1e-3)
+        first = np.array(turned[4]).reshape((4, 4))
+        first[:3, :3] = first[:3, :3] @ np.array(
+            [[cosine, -sine, 0.0], [sine, cosine, 0.0], [0.0, 0.0, 1.0]]
+        )
+        turned[4] = [float(value) for value in first.ravel()]
+        with self.assertRaisesRegex(SystemExit, "poses differ by up to"):
+            load_alignment(
+                manifest,
+                model_sha256=model,
+                trajectory=turned,
+                reference_trajectory=reference,
+            )
+        # A frame fewer cannot be paired.
+        with self.assertRaisesRegex(SystemExit, "same poses to compare"):
+            load_alignment(
+                manifest,
+                model_sha256=model,
+                trajectory=reference[:-1],
+                reference_trajectory=reference,
+            )
+        # And the reference has to be the session the report was made on.
+        with self.assertRaisesRegex(SystemExit, "not the one that report"):
+            load_alignment(
+                manifest,
+                model_sha256=model,
+                trajectory=rounded,
+                reference_trajectory=moved(2e-6),
+            )
+
+    def test_pose_differences_are_measured_for_both_kinds_of_pose(
+        self,
+    ) -> None:
+        half = math.sin(1e-5)
+        quaternion = [
+            [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0],
+            [1.5, 2.0, 3.0, 0.0, 0.0, 1.0, 0.0],
+        ]
+        nudged = [
+            [1.0, 2.0, 3.00003, 0.0, 0.0, half, math.cos(1e-5)],
+            # The same rotation with every sign flipped is the same pose.
+            [1.5, 2.0, 3.0, 0.0, 0.0, -1.0, 0.0],
+        ]
+        worst_m, worst_rad = trajectory_difference(quaternion, nudged)
+        self.assertAlmostEqual(worst_m, 3e-5, places=12)
+        self.assertAlmostEqual(worst_rad, 2e-5, places=9)
+        self.assertEqual(trajectory_difference(quaternion, quaternion), (0.0, 0.0))
+        matrix = [[float(v) for v in np.eye(4).ravel()]] * 2
+        self.assertIsNone(trajectory_difference(quaternion, matrix))
+        self.assertIsNone(trajectory_difference(quaternion, quaternion[:1]))
+        self.assertIsNone(trajectory_difference([], []))
+
     def test_a_starting_guess_and_a_reused_alignment_are_exclusive(
         self,
     ) -> None:
@@ -1010,6 +1119,7 @@ class RoomRefusalTests(unittest.TestCase):
             ["--limit-m", "0"],
             ["--limit-m", "nan"],
             ["--initial-translation", "nan", "0", "0"],
+            ["--alignment-session", str(FIXTURE)],
         ):
             with self.subTest(extra=extra):
                 with (
