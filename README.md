@@ -8,15 +8,24 @@ metric TSDF volume and a triangle mesh — reproducibly, bit for bit, with every
 fast path proven identical to a slower one that is easier to trust.
 
 <p align="center">
-  <img src="docs/assets/tum-mesh.gif" width="560" alt="A desk scene reconstructed from the TUM RGB-D freiburg1_xyz sequence, rotating slightly">
+  <img src="docs/assets/icl-room-and-error.gif" width="100%" alt="Two views of a reconstructed living room turning slowly together. On the left it is coloured from the scan: a sofa, a coffee table, pictures on the walls, a lamp. On the right the same mesh is coloured by its distance to the ground-truth surface: blue almost everywhere, with thin red lines along the edges of the furniture.">
 </p>
 
 <p align="center">
-  <em>The TUM RGB-D <code>freiburg1_xyz</code> desk, reconstructed at 15 mm
-  from 395 frames of a real<br>depth camera: 535,486 triangles. This is the
-  measured volume — the numbers below<br>and this mesh come from the same
-  file, tied together by digest.</em>
+  <em>A living room reconstructed at 10 mm from 440 depth frames: 7.2
+  million triangles. Left, coloured from the scan.<br>Right, the same mesh
+  coloured by its measured distance from the ground-truth surface, on a
+  scale that stops at 5 mm.<br>Half of it is within 0.45 mm. The scene is
+  ICL-NUIM's, synthetic and with exact poses; a real sensor is further
+  down.</em>
 </p>
+
+| | |
+|---|---|
+| Against a known surface | **0.45 mm** median, 0.77 mm mean distance to ground truth at 10 mm voxels ([ICL-NUIM](#against-a-known-surface), synthetic depth, exact poses) |
+| On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels ([TUM RGB-D](#results-on-real-data)) |
+| Reproducible | the committed scan reconstructs to the same bytes on Linux, macOS and Windows, under Python 3.11 and 3.14, checked on every push |
+| Cost | one CPU core and NumPy: 6.3 billion voxel-observations fused in 211 s |
 
 ---
 
@@ -71,14 +80,16 @@ uses ground-truth poses throughout, so it says nothing about pose estimation.
 It bounds disagreement between views, not absolute correctness.
 
 <p align="center">
-  <img src="docs/assets/tum-mesh-geometry.png" width="49%" alt="The reconstructed mesh shaded without colour">
-  <img src="docs/assets/tum-mesh.png" width="49%" alt="The same mesh coloured from the scan's RGB frames">
+  <img src="docs/assets/tum-mesh.gif" width="49%" alt="A desk reconstructed from the TUM RGB-D freiburg1_xyz sequence, coloured from the scan and rotating slightly">
+  <img src="docs/assets/tum-mesh-geometry.png" width="49%" alt="The same mesh shaded without colour">
 </p>
 
 <p align="center">
-  <em>Left: the geometry alone. Right: the same mesh, each vertex coloured
-  only by RGB frames that<br>actually see it. Colour is a way of looking at
-  the geometry; the mesh file carries none.</em>
+  <em>The desk at 15 mm, 535,486 triangles, from 395 frames of a real
+  depth camera. Left: each vertex coloured<br>only by RGB frames that
+  actually see it. Right: the geometry alone. This is the measured
+  volume: the numbers<br>above and this mesh come from the same file,
+  tied together by digest.</em>
 </p>
 
 On one laptop CPU core, with NumPy and no GPU:
@@ -105,14 +116,15 @@ surface is from the truth, because TUM does not publish the truth.
 synthetic living room, rendered from a model that ships with the dataset.
 
 <p align="center">
-  <img src="docs/assets/icl-room.png" width="49%" alt="The ICL-NUIM living room reconstructed at 10 mm and coloured from the scan, seen from above with the near walls removed">
-  <img src="docs/assets/icl-room-error.png" width="49%" alt="The same mesh coloured by distance to the ground-truth model: blue almost everywhere, with thin red lines along the edges of furniture, picture frames and the door">
+  <img src="docs/assets/icl-room-geometry.png" width="49%" alt="The ICL-NUIM living room reconstructed at 10 mm, shaded without colour and seen from above with the near walls removed: sofa cushions, picture frames and a door panel are all resolved">
+  <img src="docs/assets/icl-room-error.png" width="49%" alt="The same mesh coloured by distance to the ground-truth model: blue almost everywhere, finely speckled with lighter points, and thin red lines along the edges of furniture, picture frames and the door">
 </p>
 
 <p align="center">
-  <em>Left: the room at 10 mm voxels, 7.2 million triangles. Right: the same
-  mesh coloured by its distance<br>to the ground-truth surface. The scale
-  saturates at 5 mm; 95% of the surface is under 2.4 mm.</em>
+  <em>Left: the geometry alone at 10 mm voxels, 7.2 million triangles.
+  Right: the same mesh coloured by its<br>distance to the ground-truth
+  surface. The scale saturates at 5 mm; 95% of the surface is under
+  2.4 mm.</em>
 </p>
 
 Distance from every mesh vertex to the true surface, sequence `lr kt2`, 440

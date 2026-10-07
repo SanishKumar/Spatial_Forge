@@ -11,7 +11,7 @@ dataset. This page measures the reconstructed mesh against that model.
 
 <p align="center">
   <img src="assets/icl-room.png" width="49%" alt="The ICL-NUIM living room reconstructed at 10 mm and coloured from the scan, seen from above with the near walls removed">
-  <img src="assets/icl-room-error.png" width="49%" alt="The same mesh coloured by distance to the ground-truth model: blue almost everywhere, with thin red lines along the edges of furniture, picture frames and the door">
+  <img src="assets/icl-room-error.png" width="49%" alt="The same mesh coloured by distance to the ground-truth model: blue almost everywhere, finely speckled with lighter points, and thin red lines along the edges of furniture, picture frames and the door">
 </p>
 
 <p align="center">
@@ -146,7 +146,9 @@ error is not spread over the surface. It is concentrated, and the picture
 at the top of this page shows where: along silhouette edges, where a thin
 structure or an occlusion boundary is narrower than the truncation band,
 and the surface either rounds off or carries a fringe past the edge.
-Walls, floor and table tops stay at the low end of the scale.
+Walls, floor and table tops stay at the low end of the scale. The floor is the more speckled:
+at 10 mm its median is 0.53 mm against 0.47 mm for vertical surfaces,
+but 28% of it is over a millimetre where 15% of the walls are.
 
 **There is a small bias towards the camera.** The mean signed distance is
 +0.33 mm at 10 mm, with the model's normals pointing into free space. Raw
@@ -283,6 +285,15 @@ python tools/surface_accuracy_report.py \
 python tools/render_mesh.py datasets/icl-kt2-10mm.ply datasets/icl-error \
   --vertex-errors datasets/icl-kt2-10mm-errors.npy --error-scale-mm 5 \
   --cull-back-faces --azimuth 200 --elevation 35
+```
+
+```bash
+# 6. Or the scan's colour and the error side by side, one camera for both
+python tools/render_mesh.py datasets/icl-kt2-10mm.ply datasets/icl-both \
+  --session datasets/icl-kt2.vgsession \
+  --vertex-errors datasets/icl-kt2-10mm-errors.npy --error-scale-mm 5 \
+  --cull-back-faces --azimuth 200 --elevation 35 \
+  --size 560 --frames 24 --sweep 24
 ```
 
 The initial translation is where the trajectory's origin sits in the
