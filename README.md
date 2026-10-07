@@ -86,7 +86,7 @@ On one laptop CPU core, with NumPy and no GPU:
 | Stage | Time |
 |---|---|
 | Plan sparse blocks (396 frames) | 44 s |
-| Fuse 1.1 billion voxel-observations | 106 s |
+| Fuse 1.1 billion voxel-observations | 79 s |
 | Extract the mesh | 2.5 s |
 | Score against 395 held-out frames | 12 s |
 
@@ -96,6 +96,65 @@ the scan, plan, volume and mesh digests, the commit that produced them, and
 whether the working tree was clean. The method, the earlier 30 mm run it
 supersedes, and everything this does not prove are in
 [`docs/tum-validation.md`](docs/tum-validation.md).
+
+## Against a known surface
+
+The TUM number is agreement between views. It cannot say how far the
+surface is from the truth, because TUM does not publish the truth.
+[ICL-NUIM](https://www.doc.ic.ac.uk/~ahanda/VaFRIC/iclnuim.html) does: a
+synthetic living room, rendered from a model that ships with the dataset.
+
+<p align="center">
+  <img src="docs/assets/icl-room.png" width="49%" alt="The ICL-NUIM living room reconstructed at 10 mm and coloured from the scan, seen from above with the near walls removed">
+  <img src="docs/assets/icl-room-error.png" width="49%" alt="The same mesh coloured by distance to the ground-truth model: blue almost everywhere, with thin red lines along the edges of furniture, picture frames and the door">
+</p>
+
+<p align="center">
+  <em>Left: the room at 10 mm voxels, 7.2 million triangles. Right: the same
+  mesh coloured by its distance<br>to the ground-truth surface. The scale
+  saturates at 5 mm; 95% of the surface is under 2.4 mm.</em>
+</p>
+
+Distance from every mesh vertex to the true surface, sequence `lr kt2`, 440
+frames fused:
+
+| Voxel | Median | Mean | RMS | p95 | Within 10 mm |
+|---|---|---|---|---|---|
+| 20 mm | 0.48 mm | 1.37 mm | 4.15 mm | 4.45 mm | 97.2% |
+| 15 mm | 0.45 mm | 1.02 mm | 2.87 mm | 3.20 mm | 98.3% |
+| 10 mm | **0.45 mm** | **0.77 mm** | **1.69 mm** | 2.34 mm | 99.2% |
+| raw depth, the floor | 0.43 mm | 0.57 mm | 0.83 mm | 1.56 mm | 99.9% |
+
+The last row is the dataset's own depth images measured the same way: what
+a perfect reconstruction would score. At the median the mesh is already
+there. What separates them is the tail, and the picture shows where the
+tail lives: on silhouette edges narrower than the truncation band, not on
+walls.
+
+**Read this one carefully too.** Poses are the dataset's and the depth has
+no sensor noise, so this is the error the engine adds to perfect input: a
+floor under any real result, not a forecast of one. It is not comparable
+with numbers published for SLAM systems on this dataset, which include
+tracking drift.
+
+Three things make the figure worth having:
+
+- **The alignment is not fitted to the answer.** The dataset publishes its
+  trajectory and its model in different frames. Its own tool aligns the
+  reconstruction to the model with ICP, which lets the alignment absorb
+  error. Here one rigid motion is fitted to the raw depth images, and the
+  mesh is judged in a frame it had no part in choosing. A test moves a mesh
+  25 mm and requires the score to get worse.
+- **The handedness is converted, not ignored.** ICL-NUIM publishes
+  `fy = -480`. Dropping the sign reconstructs a mirror-image room without a
+  single error. The importer refuses it; a converter rewrites the poses.
+- **It checks the other number.** On this dataset the held-out residual and
+  the true error exist for the same volume: 1.50 mm against 1.69 mm RMS at
+  10 mm, 3.63 against 4.15 at 20 mm. The cross-view figure TUM is limited to
+  runs at 87 to 89% of the real one here.
+
+Method, the three undocumented conventions of the dataset, and everything
+this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
 
 ## The same bytes everywhere
 
@@ -204,6 +263,7 @@ flowchart LR
     E --> F["triangle mesh<br/>.ply"]
     E --> G["held-out<br/>residual"]
     F --> H["render"]
+    F --> I["distance to<br/>ground truth"]
 ```
 
 **Session and replay.** A `.vgsession` is a folder of RGB, depth, IMU and pose
@@ -261,7 +321,7 @@ frames in the outer loop instead of blocks changes *which voxel is visited
 when*, never *the order in which one voxel receives its contributions* — and
 that order is the only thing that fixes the last bits. So the streaming path
 is byte-identical to the block-by-block one by construction, and all 790
-posed frames now fuse in about a minute at 30 mm.
+posed frames now fuse in 42 s at 30 mm.
 
 ### Meshing data that is not tidy
 
@@ -289,11 +349,14 @@ Stated plainly, because the gaps matter more than the features:
 - **No relocalization.** It builds maps; it does not position anyone inside
   one.
 - **No semantics.** It produces geometry, not rooms, doors or accessibility.
-- **No absolute accuracy figure.** The residual above is agreement between
-  views. A reconstruction that was wrong the same way from every viewpoint
-  would still score well. That needs a dataset with a ground-truth surface.
-- **Not real time.** About ten million voxel-observations per second on one
-  CPU core. A GPU system does this live; this one takes minutes.
+- **No absolute accuracy on a real sensor.** The ground-truth comparison is
+  on synthetic, noise-free depth. On real data there is only the held-out
+  residual, which is agreement between views: a reconstruction wrong the
+  same way from every viewpoint would still score well. Closing that needs a
+  surveyed real scene.
+- **Not real time.** Fourteen to thirty million voxel-observations per
+  second on one CPU core, depending on how much of the scene each frame
+  can see. A GPU system does this live; this one takes minutes.
 - **A storage ceiling.** Accumulators are capped at 256 MiB, or 43,690
   blocks. A plan that needs more is refused with a message saying so.
 - **Fusion does not resume across runs.** A volume is written once, complete.
@@ -338,7 +401,7 @@ spatialforge/     library and CLI
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            45 test modules
+tests/            49 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -356,6 +419,6 @@ reached.
 ## Status
 
 A research-grade known-pose reconstruction pipeline, complete from scan to
-mesh and validated on real sensor data. Pose estimation, localization and
-semantic mapping are outside it. Built as the reconstruction backend for an
-indoor navigation project.
+mesh, validated on real sensor data and measured against a ground-truth
+surface. Pose estimation, localization and semantic mapping are outside it.
+Built as the reconstruction backend for an indoor navigation project.

@@ -88,11 +88,22 @@ them such as [LingBot-Map](https://github.com/Robbyant/lingbot-map). Those
 take ordinary video, with no depth sensor and no known trajectory, which
 this cannot.
 
-**Absolute accuracy.** The validation here measures agreement between
-viewpoints. The standard benchmark for surface accuracy is
+**Absolute accuracy on a real sensor.** The standard benchmark for surface
+accuracy is
 [ICL-NUIM](https://www.doc.ic.ac.uk/~ahanda/VaFRIC/iclnuim.html), a
-synthetic scene with a ground-truth model, where published systems report
-mean distances of roughly a centimetre with *estimated* poses. Running it is
-the obvious next piece of evidence and has not been done.
+synthetic scene with a ground-truth model. It has been run: at 10 mm voxels
+the mesh is a median 0.45 mm and a mean 0.77 mm from the model
+([`icl-nuim-validation.md`](icl-nuim-validation.md)). That is with the
+dataset's own poses and noise-free depth, so it is the error of the fusion
+and meshing alone. Published systems report mean distances of roughly a
+centimetre on the same scene with *estimated* poses and simulated sensor
+noise, which is a different and much harder experiment, and the two figures
+should not be set side by side.
+
+The dataset's evaluation tool aligns the reconstruction to the model with
+ICP before measuring. The report here fits the alignment to the raw depth
+instead, so that it cannot absorb part of the error it is there to expose.
+What is still missing is the real-sensor equivalent: a scanned scene with a
+surveyed surface.
 
 **Relocalization, semantics, real time.** None of them.

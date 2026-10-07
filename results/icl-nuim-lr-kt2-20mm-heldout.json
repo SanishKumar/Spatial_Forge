@@ -1,0 +1,72 @@
+{
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "evaluation": {
+    "coverage_fraction": 0.9995546772534215,
+    "depth_samples": 8317563,
+    "held_out_frames": 440,
+    "held_out_offset": 1,
+    "nearest_voxel": {
+      "mean_signed_mm": 0.8316438154673895,
+      "median_absolute_mm": 6.568057910422181,
+      "p95_absolute_mm": 17.754950735977687,
+      "rms_mm": 9.7463248876369,
+      "samples": 8313859,
+      "within_one_voxel_fraction": 0.9629907122552837
+    },
+    "pixel_step": 4,
+    "samples_in_observed_voxels": 8313859,
+    "trilinear": {
+      "mean_signed_mm": 0.5050318360146918,
+      "median_absolute_mm": 0.4044334382468957,
+      "p95_absolute_mm": 5.680492505152181,
+      "rms_mm": 3.633126461203496,
+      "samples": 8236769,
+      "within_one_voxel_fraction": 0.992117904484149
+    }
+  },
+  "inputs": {
+    "plan_sha256": "82e3ae769348561f6789d6c51c8967351239e29c99114ce318b77770c9ab4516",
+    "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
+    "session": "datasets/icl-kt2.vgsession",
+    "session_id": "tum-icl-nuim-living-room-kt2",
+    "volume": "datasets/icl-kt2-20mm.sftvol",
+    "volume_sha256": "f93e362a7c765a6aa556f7f4a9b241bac46be192d5104597df9487cd68018078"
+  },
+  "measurement": "held-out-tsdf-residual",
+  "measures": "agreement between the fused volume and depth measured by frames it never saw, using ground-truth camera poses. This is a cross-view consistency residual, not distance to a surveyed surface.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/icl-kt2-20mm.ply",
+    "sha256": "f88764c48dca565df004f02474a291cbeb3f19808677f1f523de615da0915bbb",
+    "source_volume_sha256": "f93e362a7c765a6aa556f7f4a9b241bac46be192d5104597df9487cd68018078",
+    "triangles": 1796756,
+    "vertices": 911173
+  },
+  "reconstruction": {
+    "active_blocks": 7655,
+    "contributions_applied": 188387632,
+    "contributions_evaluated": 1724518400,
+    "frame_stride": 2,
+    "fused_frames": 440,
+    "maximum_weight": 220,
+    "observed_voxel_slots": 2520109,
+    "path": "sparse-block-streaming-fusion",
+    "persisted": true,
+    "planned_voxel_slots": 3919360,
+    "truncation_m": 0.06,
+    "voxel_size_m": 0.02
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.2.0",
+  "source_commit": "8e7773ff5ada72cde8503b77d13270c935661e83",
+  "source_worktree_clean": true,
+  "timings_seconds": {
+    "evaluation": 18.532
+  }
+}

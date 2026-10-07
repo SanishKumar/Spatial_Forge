@@ -2,7 +2,9 @@
 
 Everything else in the test suite runs on data SpatialForge generated itself:
 clean noise, exact poses, nothing missing. This page records what happens on
-a real depth camera, and it is the only result here that should be quoted.
+a real depth camera. Its companion,
+[`icl-nuim-validation.md`](icl-nuim-validation.md), measures the same engine
+against a surface that is known.
 
 The sequence is `rgbd_dataset_freiburg1_xyz` from the
 [TUM RGB-D benchmark](https://cvg.cit.tum.de/data/datasets/rgbd-dataset): a
@@ -87,13 +89,39 @@ voxels, is about what this sensor's noise supports at desk range.
 
 The **+3.3 mm signed bias** is small and systematic: held-out surfaces read
 slightly positive, so the fused surface sits marginally further from the
-camera than a held-out frame measures it. That is consistent with projective
-distance being averaged along the viewing ray, and it has barely moved with
-voxel size, which suggests it is a property of the rule rather than of the
-grid. It is recorded, not corrected.
+camera than a held-out frame measures it. It does not move with voxel size.
+An earlier version of this page took that to mean it was a property of the
+fusion rule. ICL-NUIM says otherwise: the same rule on noise-free depth
+leaves a bias of 0.2 to 0.5 mm, a tenth of this. So most of it arrives with
+the data, in the sensor's noise or its calibration, and it is recorded, not
+corrected.
 
 **99.95% coverage** says block planning is not missing surfaces: almost every
 held-out surface point falls inside a voxel that fusion actually observed.
+
+### At 10 mm
+
+The first version of this page had to say that 10 mm was refused: the scene
+needs 12,503 blocks and accumulator storage stopped at 10,922. The ceiling
+is now 43,690, and the result is
+[`../results/tum-freiburg1-xyz-10mm.json`](../results/tum-freiburg1-xyz-10mm.json):
+
+| | 15 mm | 10 mm |
+|---|---|---|
+| planned blocks | 5,401 | 12,503 |
+| observed voxels | 1,492,894 | 3,869,699 |
+| mesh triangles | 535,486 | 1,269,564 |
+| median residual | 7.5 mm | 6.6 mm |
+| rms | 13.4 mm | 10.7 mm |
+| p95 | 28.8 mm | 22.1 mm |
+| mean signed | +3.3 mm | +3.3 mm |
+| held-out depth inside observed voxels | 99.95% | 99.93% |
+
+Two and a half times the voxels buy an eighth off the median. A finer grid
+stops helping once what is left is not the grid's, and that is where this
+is: on noise-free depth with exact poses the same engine's held-out median
+is 0.4 mm ([ICL-NUIM](icl-nuim-validation.md)). Nearly all of these 6.6 mm
+come with the data: a real sensor, its calibration, and measured poses.
 
 ### The earlier 30 mm run, reproduced
 
@@ -123,14 +151,20 @@ One laptop CPU core, NumPy, no GPU:
 ```text
 import                          4 s
 plan     396 frames            44 s
-fuse     1.1e9 voxel-obs      106 s     (about 10 million per second)
+fuse     1.1e9 voxel-obs       79 s     (about 14 million per second)
 mesh     535,486 triangles    2.5 s
 score    395 held-out frames   12 s
 render   36 frames, coloured   37 s
 ```
 
 Peak retained depth during fusion is 2.5 MB — one frame — however long the
-sequence is. Fusing all 790 posed frames at 30 mm takes 65 s.
+sequence is. Fusing all 790 posed frames at 30 mm takes 42 s.
+
+Fusion was 106 s when this page was first written. It now skips
+blocks a frame cannot see, a whole block at a time, and produces the
+same volume, digest for digest. At 10 mm the same steps take 147 s to
+fuse 2.5 billion voxel-observations and 5 s to mesh 1.3 million
+triangles.
 
 ## What the first run broke, and what became of each
 
@@ -153,12 +187,11 @@ now a file, and the mesh and the render come from it.
 ## What still does not hold
 
 - **Nothing about pose estimation.** The engine has none.
-- **No absolute accuracy.** That needs a dataset with a ground-truth surface.
+- **No absolute accuracy on this sensor.** That needs a surveyed real scene.
+  The engine's own error against a known surface is measured on synthetic
+  depth in [`icl-nuim-validation.md`](icl-nuim-validation.md).
 - **One sequence, one kind of scene.** A well-lit, textured desk at close
   range. Not a corridor, a glass door, a dark room or a building.
-- **10 mm is not published here.** At 10 mm this scene needs 12,503 blocks.
-  That was refused while accumulator storage was capped at 10,922; the cap
-  is now 43,690, so it fits, but no manifest for it has been produced.
 - **Half the frames, by design.** Stride 2 is what leaves frames to hold out.
   A volume fused from every frame cannot be scored this way at all.
 - **The free-space path was not run.** Coverage, cross-view resolution and

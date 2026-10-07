@@ -100,7 +100,8 @@ A focal length that is zero, negative or not finite is refused. A negative
 one is not a typo to be corrected by taking its absolute value: it is how
 some renderers describe a left-handed camera, and flipping the sign of one
 number without converting the poses would import a mirrored room. ICL-NUIM
-is published that way.
+is published that way; [`icl-nuim-validation.md`](icl-nuim-validation.md)
+describes the conversion.
 
 ## Pose conversion
 
