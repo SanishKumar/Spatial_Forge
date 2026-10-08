@@ -383,6 +383,130 @@ declined to measure in a frame that had not settled.
 
 The manifests are `../results/icl-nuim-lr-kt2n-*`.
 
+## How much of what was seen is there
+
+Everything above is accuracy: whether the surface that was built is in the
+right place. A mesh of one square metre of wall, perfectly placed, would
+score as well. The other question is how much of the surface the cameras
+saw ended up in the mesh, and
+[`tools/surface_completeness_report.py`](../tools/surface_completeness_report.py)
+asks it from the model's side: for each point of the ground truth, is there
+mesh nearby?
+
+Two definitions carry the answer, so both are stated.
+
+**Seen.** A model point is seen by a frame if it projects inside the image,
+in front of the camera, on the side of the surface that faces it, and the
+depth the frame measured at that pixel is the point's own depth to within
+20 mm. The last condition separates sight from line of sight: a point
+behind the sofa projects into the image too, and the depth there is the
+sofa's. A point is observable if at least three fused frames saw it, which
+is what the mesh asks of a voxel.
+
+**Recovered.** The distance from the point to the mesh, measured exactly to
+its triangles and not to their vertices, is within a threshold.
+
+The model is placed by the alignment the accuracy report fitted, so the two
+are readings in one frame. One model point in four is tested: 2,495,574
+points, of which 515,430 (20.7%) are observable. The model is the whole
+room, and the other 79% of its points are surface this trajectory did not
+see three times; nothing is claimed about them. For the noisy sequences
+sight is decided on the exact depth, so all eight meshes are held to the
+same 515,430 points.
+
+Of those, the share with mesh within each distance, and the share with none
+within 30 mm:
+
+| Depth | Voxel | 5 mm | 10 mm | 20 mm | None within 30 mm |
+|---|---|---|---|---|---|
+| exact | 20 mm | 89.7% | 92.8% | 97.2% | 2.0% |
+| exact | 15 mm | 90.5% | 92.8% | 96.8% | 2.5% |
+| exact | 10 mm | **93.3%** | 94.8% | **98.4%** | **1.1%** |
+| simulated noise | 20 mm | 88.1% | 92.4% | 97.2% | 1.8% |
+| simulated noise | 15 mm | 89.7% | 93.4% | 97.5% | 1.7% |
+| simulated noise | 10 mm | 91.4% | 94.9% | 98.6% | 0.9% |
+| the dataset's noisy files | 20 mm | 22.0% | 47.4% | 77.8% | 7.0% |
+| the dataset's noisy files | 15 mm | 21.8% | 50.7% | 80.0% | 6.4% |
+
+**Noise costs almost no coverage.** At 10 mm the mesh from simulated noise
+has 91.4% of the seen surface within 5 mm where exact depth has 93.3%, and
+as much of it within 20 mm.
+
+**An offset reads as missing surface.** The dataset's noisy files put the
+surface 10 mm on the camera's side of the truth, so only 22% of the true
+surface has mesh within 5 mm. At a tight threshold completeness is accuracy
+again, and the two should be read together.
+
+### What is missing is what was only glanced at
+
+On exact depth the 15 mm mesh lacks more of the seen surface than the 20 mm
+one, which is not what a finer grid should do. So the report also records,
+for each observable point, its most head-on view: the angle between the
+surface normal and the direction to the camera, in the squarest frame that
+saw it. The share with no mesh within 30 mm, on exact depth:
+
+| Most head-on view | Points | 20 mm | 15 mm | 10 mm |
+|---|---|---|---|---|
+| within 60° of the normal | 334,139 | 0.3% | 0.1% | 0.1% |
+| 60° to 70° | 124,157 | 0.5% | 0.1% | 0.0% |
+| 70° to 75° | 22,081 | 3.1% | 1.5% | 0.6% |
+| 75° to 80° | 13,491 | 7.0% | 10.2% | 1.1% |
+| 80° to 85° | 13,195 | 36.0% | 49.2% | 17.4% |
+| 85° to 90° | 8,367 | 26.0% | 51.9% | 32.8% |
+
+Surface that some frame saw reasonably squarely is in the mesh. Surface
+that every frame only glanced along is lost in bulk, at every voxel size.
+
+The fusion rule says where that should begin. Signed distance here is a
+difference in depth, the usual projective distance. Behind a surface met at
+an angle θ from its normal, a truncation band therefore reaches only
+`truncation × |r| × cos θ`, where `|r|` is the length of the
+ray scaled to unit depth: 1 at the principal point and 1.30 in the corners
+of this camera's image. When that is less than one voxel, the surface can
+lie between voxel centres with none of them inside the band behind it. No
+voxel records the negative side, and there is no sign change for a mesh to
+be extracted from. The band is three voxels in every run here, so the angle
+is 70.5° at the principal point and 75.1° in the corners. The loss in
+the table begins in the 70° to 75° row.
+
+Splitting the observable points at 70.5°:
+
+| | Points | 5 mm | 20 mm | None within 30 mm |
+|---|---|---|---|---|
+| some frame saw it within 70.5°, 20 mm voxels | 461,665 | 92.2% | 98.9% | 0.40% |
+| the same, 15 mm | 461,665 | 94.0% | 99.5% | 0.09% |
+| the same, 10 mm | 461,665 | **95.3%** | **99.7%** | **0.05%** |
+| every frame saw it more obliquely, 20 mm | 53,765 | 68.1% | 81.8% | 15.8% |
+| the same, 15 mm | 53,765 | 60.3% | 73.4% | 23.3% |
+| the same, 10 mm | 53,765 | 76.8% | 87.4% | 9.9% |
+
+A tenth of the observable surface was only ever glanced at, and it holds
+82% of what the 20 mm mesh is missing, 97% at 15 mm and 96% at 10 mm. Of
+everything else, the 10 mm mesh lacks one point in two thousand.
+
+It also accounts for the 15 mm row. Whether a glanced plane survives
+depends on where it falls between voxel centres, and that changes with the
+voxel size in no particular direction. This room's happen to sit worse in
+the 15 mm grid than in the 20 mm one. (Looked at once and not in the
+manifests: 69% of the points missing at 20 mm and 85% at 15 mm face
+upwards, against 24% of all observable points, and they lie between the
+floor and the camera, which was carried about a metre above it. Seats,
+table tops and the tops of furniture, which a camera at that height can
+only skim.)
+
+The dataset's noisy files show the same loss and a second one. Of surface
+seen within 60° of head-on, 5.5% has no mesh within 30 mm at 15 mm
+voxels, where the other meshes lack 0.1 to 0.4%. That fits far wall being
+in the mesh and more than 30 mm from where it belongs, as the error map
+above shows, rather than not being there.
+
+None of this is particular to this engine. It is the known weakness of a
+projective signed distance, and the usual remedies are a distance measured
+along the surface normal or a weight that falls with the viewing angle.
+Neither is implemented here.
+
+The manifests are `../results/icl-nuim-lr-*-completeness.json`.
+
 ## One chain per volume
 
 Each volume is planned, fused, written, meshed and scored, and each step
@@ -399,8 +523,8 @@ records the digest of what it was given. For the 10 mm reconstruction:
 The full values, the fitted transform, the commit and the state of the
 working tree are in
 [`../results/icl-nuim-lr-kt2-10mm-surface.json`](../results/icl-nuim-lr-kt2-10mm-surface.json),
-with the held-out report for the same volume beside it and the same pair
-for 15 mm and 20 mm.
+with the held-out report and the completeness report for the same volume
+beside it, and the same three for 15 mm and 20 mm.
 
 ## What was run
 
@@ -429,6 +553,7 @@ fuse      6.3e9 voxel-observations       211 s
 mesh      7,237,866 triangles             42 s
 align     93,574 depth samples            46 s
 measure   3,656,989 vertices              67 s
+complete  515,430 model points           298 s
 ```
 
 Of those 6.3 billion voxel-observations, 81% are of a voxel behind the
@@ -520,6 +645,17 @@ python tools/surface_accuracy_report.py \
 ```
 
 ```bash
+# 4d. How much of what was seen is in the mesh, in the frame step 4
+#     fitted. For a noisy sequence add
+#     --visibility-session datasets/icl-kt2.vgsession, so that what
+#     was seen is decided on the exact depth
+python tools/surface_completeness_report.py \
+  datasets/icl-kt2.vgsession datasets/icl-kt2-10mm.sftvol \
+  datasets/icl-kt2-10mm.ply datasets/icl/model/living-room.ply \
+  --alignment results/icl-nuim-lr-kt2-10mm-surface.json
+```
+
+```bash
 # 5. Draw where the error is
 python tools/render_mesh.py datasets/icl-kt2-10mm.ply datasets/icl-error \
   --vertex-errors datasets/icl-kt2-10mm-errors.npy --error-scale-mm 5 \
@@ -550,10 +686,12 @@ digits and the same statistics.
   calibration error. The dataset's own noisy sequence adds an offset and
   outliers, and is still a simulation.
 - **Pose error.** Poses are ground truth. The engine has no tracker.
-- **Completeness.** This is accuracy: how close the reconstructed surface
-  is to the true one. It says nothing about surface that was never
-  reconstructed, and this trajectory leaves holes: the black patches in
-  the pictures above are floor and furniture no frame looked at.
+- **Surface no frame saw.** Completeness is of what at least three fused
+  frames saw. The other 79% of the model's points are outside it, and
+  this trajectory leaves holes: the black patches in the pictures above
+  are floor and furniture no frame looked at.
+- **What counts as seen is a definition.** Three views and a 20 mm depth
+  tolerance decide it. Other choices give another denominator.
 - **Comparison with published numbers.** Figures quoted for SLAM systems on
   ICL-NUIM include tracking drift and are usually on the noisy sequences
   after aligning the reconstruction to the model. These are not the same

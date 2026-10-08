@@ -1,0 +1,216 @@
+{
+  "alignment": {
+    "model_from_source": [
+      0.999789494576059,
+      -0.00021254018821276964,
+      -0.02051636814878936,
+      -0.7453879939365118,
+      0.00020594027793598214,
+      0.9999999263703494,
+      -0.00032380225022556053,
+      1.2997775529750817,
+      0.020516435459167554,
+      0.00031950894153713995,
+      0.9997894647324935,
+      -0.7878792937695777,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "reused_from": {
+      "model_normals_facing_camera_fraction": 0.9924210841377246,
+      "path": "results/icl-nuim-lr-kt2-10mm-surface.json",
+      "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
+      "session_id": "tum-icl-nuim-living-room-kt2",
+      "sha256": "848cc822d93dced895fe5068997ccc26bf70e3b5b93ddb60b9277ce553ae5c63",
+      "trajectory_match": {
+        "by": "poses",
+        "largest_rotation_difference_rad": 7.258043423697274e-06,
+        "largest_translation_difference_m": 1.0246950766034854e-05,
+        "poses": 880,
+        "tolerance_m": 0.0001,
+        "tolerance_rad": 0.0001
+      }
+    }
+  },
+  "completeness": {
+    "beyond_reach": 36162,
+    "beyond_reach_fraction": 0.07015889645538677,
+    "distance_to_mesh": {
+      "median_mm": 10.376336515114627,
+      "p90_mm": 24.988122662209566,
+      "p95_mm": null,
+      "p99_mm": null
+    },
+    "observable_points": 515430,
+    "reach_m": 0.03,
+    "within_fraction": {
+      "10mm": 0.4740391517761869,
+      "20mm": 0.7776167471819646,
+      "5mm": 0.22040626273208777,
+      "one_voxel": 0.7776167471819646
+    }
+  },
+  "completeness_by_viewing_angle": {
+    "angle": "between the surface normal and the direction to the camera, in the most head-on frame that saw the point",
+    "bands": [
+      {
+        "beyond_reach_fraction": 0.06423973256638704,
+        "from_deg": 0,
+        "points": 334139,
+        "to_deg": 60,
+        "within_fraction": {
+          "10mm": 0.40451129619709164,
+          "20mm": 0.719149814897393,
+          "5mm": 0.17203020299935057,
+          "one_voxel": 0.719149814897393
+        }
+      },
+      {
+        "beyond_reach_fraction": 0.012822474769847854,
+        "from_deg": 60,
+        "points": 124157,
+        "to_deg": 70,
+        "within_fraction": {
+          "10mm": 0.6243304847894199,
+          "20mm": 0.9670981096514897,
+          "5mm": 0.24493182019539778,
+          "one_voxel": 0.9670981096514897
+        }
+      },
+      {
+        "beyond_reach_fraction": 0.08088401793397038,
+        "from_deg": 70,
+        "points": 22081,
+        "to_deg": 75,
+        "within_fraction": {
+          "10mm": 0.6867442597708437,
+          "20mm": 0.8724242561478194,
+          "5mm": 0.6024636565372945,
+          "one_voxel": 0.8724242561478194
+        }
+      },
+      {
+        "beyond_reach_fraction": 0.0800533689126084,
+        "from_deg": 75,
+        "points": 13491,
+        "to_deg": 80,
+        "within_fraction": {
+          "10mm": 0.7393818100956193,
+          "20mm": 0.861537321177081,
+          "5mm": 0.6060336520643392,
+          "one_voxel": 0.861537321177081
+        }
+      },
+      {
+        "beyond_reach_fraction": 0.3778704054566124,
+        "from_deg": 80,
+        "points": 13195,
+        "to_deg": 85,
+        "within_fraction": {
+          "10mm": 0.40818491852974614,
+          "20mm": 0.5531640773020083,
+          "5mm": 0.2728306176582039,
+          "one_voxel": 0.5531640773020083
+        }
+      },
+      {
+        "beyond_reach_fraction": 0.6278235926855503,
+        "from_deg": 85,
+        "points": 8367,
+        "to_deg": 90,
+        "within_fraction": {
+          "10mm": 0.13517389745428468,
+          "20mm": 0.26927214055216925,
+          "5mm": 0.07565435640014342,
+          "one_voxel": 0.26927214055216925
+        }
+      }
+    ],
+    "seen_only_beyond_split": {
+      "beyond_reach_fraction": 0.2401562354691714,
+      "points": 53765,
+      "within_fraction": {
+        "10mm": 0.5591555844880498,
+        "20mm": 0.6977029666139682,
+        "5mm": 0.45431042499767504,
+        "one_voxel": 0.6977029666139682
+      }
+    },
+    "seen_within_split": {
+      "beyond_reach_fraction": 0.05036119263968462,
+      "points": 461665,
+      "within_fraction": {
+        "10mm": 0.46412658529453177,
+        "20mm": 0.7869234184960957,
+        "5mm": 0.19316604031061485,
+        "one_voxel": 0.7869234184960957
+      }
+    },
+    "split_deg": 70.52877936550931,
+    "truncation_band_under_one_voxel_beyond": {
+      "at_farthest_corner_deg": 75.14197573099736,
+      "at_principal_point_deg": 70.52877936550931
+    }
+  },
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "inputs": {
+    "model": "datasets/icl/model/living-room.ply",
+    "model_points": 9982296,
+    "model_sha256": "414c05790dac39abe97aaa298939ead6855cdc72d24d35442ce84db22be4279c",
+    "plan_sha256": "dbdc812f0d77b9c042b8a26411eb654f17ccdb9e14a37f4d585eca9d00e0c46e",
+    "replay_digest_sha256": "f354133bb61c4149dc86175fa2b6a6829d59e0c6149190556b20e9f82a43f3d0",
+    "session": "datasets/icl-kt2n.vgsession",
+    "session_id": "tum-icl-nuim-living-room-kt2n",
+    "volume": "datasets/icl-kt2n-20mm.sftvol",
+    "volume_sha256": "2dfec9a1ed85504fcb3e8ddbdb37763f0693bbde429d71aad8544424b600c427"
+  },
+  "measurement": "surface-completeness-against-ground-truth-model",
+  "measures": "of the ground-truth model's points that enough fused frames saw, the share lying within a threshold of the reconstructed mesh, measured exactly to its triangles. Seen means inside the image, in front of the camera, facing it, and at the depth the frame measured. The model is placed by an alignment taken from an accuracy report, not fitted here.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/icl-kt2n-20mm.ply",
+    "sha256": "c6ec474c9bc398c3fa7a5b53e192d24f14c4de57f788073898c7a7d60137ff84",
+    "source_volume_sha256": "2dfec9a1ed85504fcb3e8ddbdb37763f0693bbde429d71aad8544424b600c427",
+    "triangles": 1780390,
+    "vertices": 902899
+  },
+  "reconstruction": {
+    "frame_stride": 2,
+    "fused_frames": 440,
+    "truncation_m": 0.06,
+    "voxel_size_m": 0.02
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.2.0",
+  "source_commit": "2e2be9b15508d7c263712a937dd27fc969d8a6db",
+  "source_worktree_clean": true,
+  "timings_seconds": {
+    "distance": 73.411,
+    "visibility": 59.873
+  },
+  "visibility": {
+    "decided_on": {
+      "largest_rotation_difference_rad": 7.258043423697274e-06,
+      "largest_translation_difference_m": 1.0246950766034854e-05,
+      "replay_digest_sha256": "c52207e9cbd5b238dd968184fa84324934b024d1c1bb815d38e899d786574593",
+      "session": "datasets/icl-kt2.vgsession",
+      "session_id": "tum-icl-nuim-living-room-kt2"
+    },
+    "depth_tolerance_m": 0.02,
+    "facing_test": true,
+    "frames": 440,
+    "minimum_views": 3,
+    "model_stride": 4,
+    "observable_fraction": 0.2065376542631074,
+    "points_considered": 2495574,
+    "seen_by_no_frame": 1974233
+  }
+}

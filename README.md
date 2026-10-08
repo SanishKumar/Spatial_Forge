@@ -24,6 +24,7 @@ fast path proven identical to a slower one that is easier to trust.
 |---|---|
 | Against a known surface | **0.45 mm** median, 0.77 mm mean distance to ground truth at 10 mm voxels ([ICL-NUIM](#against-a-known-surface), synthetic depth, exact poses) |
 | With a Kinect's noise simulated | **0.86 mm** median to ground truth at 10 mm voxels, from depth frames a median 3.2 mm off |
+| How much of what was seen | **98.4%** of the observed ground-truth surface has mesh within 20 mm, 93.3% within 5 mm; 96% of what is missing was only ever seen at a glancing angle |
 | On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels ([TUM RGB-D](#results-on-real-data)) |
 | Reproducible | the committed scan reconstructs to the same bytes on Linux, macOS and Windows, under Python 3.11 and 3.14, checked on every push |
 | Cost | one CPU core and NumPy: 6.3 billion voxel-observations fused in 211 s |
@@ -211,6 +212,29 @@ the held-out residual does not notice: frames that are all wrong the same
 way agree with each other. Between them the three cases put the residual at
 0.8, 6 and 0.8 times the true error, so nothing converts one into the
 other.
+
+### How much of it is there
+
+Accuracy says the surface that was built is in the right place. It would
+say the same of one well-placed square metre of wall. So the model is asked
+the other way round: of the true surface that at least three fused frames
+saw, how much has mesh nearby?
+
+| Seen surface, 10 mm voxels | Within 5 mm | Within 20 mm | None within 30 mm |
+|---|---|---|---|
+| exact depth | 93.3% | 98.4% | 1.1% |
+| simulated Kinect noise | 91.4% | 98.6% | 0.9% |
+| exact depth, where some frame looked within 70.5° of head-on | **95.3%** | **99.7%** | **0.05%** |
+| exact depth, where every frame only glanced along it | 76.8% | 87.4% | 9.9% |
+
+Noise costs almost no coverage. What is missing is one kind of surface: a
+tenth of what was seen was never viewed within 70.5° of head-on, and it
+holds 96% of what the mesh lacks. The fusion rule predicts the angle. A
+projective distance reaches about `truncation × cos θ` behind a surface
+seen at θ from its normal, and with a band of three voxels that drops
+under one voxel at 70.5°. Past it a plane can fall between voxel centres
+and leave no sign change to mesh. The loss in the measurements starts
+between 70° and 75°.
 
 Method, the three undocumented conventions of the dataset, and everything
 this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
@@ -413,6 +437,12 @@ Stated plainly, because the gaps matter more than the features:
   only the held-out residual, which is agreement between views: a
   reconstruction wrong the same way from every viewpoint would still score
   well. Closing that needs a surveyed real scene.
+- **Surface only glanced at is lost.** Signed distance is projective and
+  every observation weighs the same. A surface no frame saw within about
+  70° of head-on can fall between voxel centres, such as a table top seen
+  from across a room: between 7% and 23% of such surface is missing from
+  the ICL-NUIM meshes. A point-to-plane distance or an angle weight would
+  help. Neither is here.
 - **Not real time.** Fourteen to thirty million voxel-observations per
   second on one CPU core, depending on how much of the scene each frame
   can see. A GPU system does this live; this one takes minutes.
@@ -461,7 +491,7 @@ spatialforge/     library and CLI
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            49 test modules
+tests/            53 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -480,5 +510,6 @@ reached.
 
 A research-grade known-pose reconstruction pipeline, complete from scan to
 mesh, validated on real sensor data and measured against a ground-truth
-surface. Pose estimation, localization and semantic mapping are outside it.
+surface for accuracy and for completeness. Pose estimation, localization
+and semantic mapping are outside it.
 Built as the reconstruction backend for an indoor navigation project.
