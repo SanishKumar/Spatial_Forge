@@ -32,6 +32,14 @@ status every one of them would have received, and nothing is added to its
 accumulators, which is what the evaluation would have added: ``+0.0`` and
 zero weight. The fused bytes and the receipt are therefore unchanged, and
 the tests hold the block verdict to the per-voxel one directly.
+
+A pass can also be taken in stages. Frames are consumed in order and a
+voxel's sum is the same additions whichever stage makes them, so stopping
+after any frame and continuing later arrives at the same bytes. What has
+to be carried between stages is small: how many of the selected
+observations are behind it, the counts they produced, and the digests of
+the accumulators those counts describe. ``TsdfStreamFusionProgress`` is
+that record, and a stage refuses storage it does not describe.
 """
 
 from __future__ import annotations
@@ -256,11 +264,204 @@ class TsdfStreamFusionReceipt:
         return self.voxel_slots - self.observed_voxel_count
 
 
+@dataclass(frozen=True, slots=True)
+class TsdfStreamFusionProgress:
+    """How far a staged fusion has got, bound to the bytes it has produced.
+
+    ``processed_observations`` is a prefix of the plan's selection: that
+    many observations, in order, have been fused or skipped for a missing
+    input. The two payload digests are those of the storage at that point.
+    """
+
+    session_id: str
+    source_plan_digest_sha256: str
+    replay_digest_sha256: str
+    frame_stride: int
+    total_observations: int
+    selected_observations: int
+    processed_observations: int
+    fused_observations: int
+    skipped_missing_depth: int
+    skipped_missing_pose: int
+    block_count: int
+    voxel_slots: int
+    status_counts: tuple[tuple[TsdfContributionStatus, int], ...]
+    valid_depth_samples: int
+    invalid_depth_samples: int
+    tsdf_sums_sha256: str
+    weights_sha256: str
+
+    def __post_init__(self) -> None:
+        for digest, label in (
+            (self.source_plan_digest_sha256, "source plan digest"),
+            (self.replay_digest_sha256, "replay digest"),
+            (self.tsdf_sums_sha256, "sum payload digest"),
+            (self.weights_sha256, "weight payload digest"),
+        ):
+            if not _is_sha256(digest):
+                raise TsdfError(
+                    f"TSDF stream fusion progress {label} is invalid"
+                )
+        if not isinstance(self.session_id, str) or not self.session_id:
+            raise TsdfError("TSDF stream fusion progress session is invalid")
+        for value, label, minimum in (
+            (self.frame_stride, "frame stride", 1),
+            (self.total_observations, "total observations", 1),
+            (self.selected_observations, "selected observations", 1),
+            (self.block_count, "block count", 1),
+            (self.voxel_slots, "voxel slots", 1),
+            (self.processed_observations, "processed observations", 0),
+            (self.fused_observations, "fused observations", 0),
+            (self.skipped_missing_depth, "missing-depth count", 0),
+            (self.skipped_missing_pose, "missing-pose count", 0),
+            (self.valid_depth_samples, "valid depth samples", 0),
+            (self.invalid_depth_samples, "invalid depth samples", 0),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < minimum
+            ):
+                raise TsdfError(
+                    f"TSDF stream fusion progress {label} must be an "
+                    f"integer of at least {minimum}"
+                )
+        if self.voxel_slots != self.block_count * TSDF_BLOCK_VOXELS:
+            raise TsdfError(
+                "TSDF stream fusion progress voxel slots do not match its "
+                "blocks"
+            )
+        expected_selected = (
+            (self.total_observations - 1) // self.frame_stride
+        ) + 1
+        if self.selected_observations != expected_selected:
+            raise TsdfError(
+                "TSDF stream fusion progress selection does not match its "
+                "stride"
+            )
+        if not (
+            self.fused_observations
+            <= self.processed_observations
+            <= self.selected_observations
+        ):
+            raise TsdfError(
+                "TSDF stream fusion progress has processed more "
+                "observations than it selected, or fused more than it "
+                "processed"
+            )
+        skipped = self.processed_observations - self.fused_observations
+        if not (
+            max(self.skipped_missing_depth, self.skipped_missing_pose)
+            <= skipped
+            <= self.skipped_missing_depth + self.skipped_missing_pose
+        ):
+            raise TsdfError(
+                "TSDF stream fusion progress skipped-frame counts are "
+                "inconsistent"
+            )
+        if not isinstance(self.status_counts, tuple) or any(
+            not isinstance(entry, tuple)
+            or len(entry) != 2
+            or not isinstance(entry[0], TsdfContributionStatus)
+            or isinstance(entry[1], bool)
+            or not isinstance(entry[1], int)
+            or entry[1] < 1
+            for entry in self.status_counts
+        ):
+            raise TsdfError(
+                "TSDF stream fusion progress status counts are invalid"
+            )
+        order = [_STATUS_CODE[status] for status, _ in self.status_counts]
+        if order != sorted(set(order)):
+            raise TsdfError(
+                "TSDF stream fusion progress status counts are not in "
+                "canonical order"
+            )
+        if self.evaluated_count != (
+            self.voxel_slots * self.processed_observations
+        ):
+            raise TsdfError(
+                "TSDF stream fusion progress status counts do not cover "
+                "every voxel-observation processed"
+            )
+        if self.fused_observations == 0 and (
+            self.applied_count
+            or self.valid_depth_samples
+            or self.invalid_depth_samples
+        ):
+            raise TsdfError(
+                "TSDF stream fusion progress reports depth from frames it "
+                "did not fuse"
+            )
+
+    @property
+    def evaluated_count(self) -> int:
+        return sum(count for _, count in self.status_counts)
+
+    @property
+    def applied_count(self) -> int:
+        return sum(
+            count
+            for status, count in self.status_counts
+            if status is TsdfContributionStatus.CONTRIBUTES
+        )
+
+    @property
+    def remaining_observations(self) -> int:
+        return self.selected_observations - self.processed_observations
+
+    @property
+    def is_complete(self) -> bool:
+        return self.remaining_observations == 0
+
+
 def fuse_tsdf_plan_streaming(
     storage: TsdfBlockStorage,
     session: ScanSession,
 ) -> TsdfStreamFusionReceipt:
     """Fuse every selected observation into empty planned storage."""
+
+    _, receipt = _fuse_stage(storage, session, None, None)
+    if receipt is None:
+        raise TsdfError("TSDF stream fusion did not reach its last frame")
+    return receipt
+
+
+def advance_tsdf_plan_streaming(
+    storage: TsdfBlockStorage,
+    session: ScanSession,
+    progress: TsdfStreamFusionProgress | None = None,
+    *,
+    observations: int | None = None,
+) -> TsdfStreamFusionProgress:
+    """Fuse the next selected observations and say how far that got.
+
+    ``progress`` is what an earlier stage returned for this storage, or
+    ``None`` for storage that is still empty. ``observations`` limits the
+    stage to that many of the plan's selected observations, counted whether
+    a frame is fused or skipped for a missing input; ``None`` runs to the
+    end.
+
+    Stages add up to a single pass exactly. Each voxel still receives its
+    contributions in observation order, one addition per observation, so
+    where a pass is cut changes nothing about the sums.
+
+    A stage that fails leaves the storage cleared. Its earlier state cannot
+    be restored from here, and cleared storage is at least unmistakable:
+    the progress that described it no longer matches, so nothing can
+    continue from a half-applied frame.
+    """
+
+    advanced, _ = _fuse_stage(storage, session, progress, observations)
+    return advanced
+
+
+def finish_tsdf_plan_streaming(
+    storage: TsdfBlockStorage,
+    session: ScanSession,
+    progress: TsdfStreamFusionProgress,
+) -> TsdfStreamFusionReceipt:
+    """The receipt of a single pass, for stages that have reached the end."""
 
     if not isinstance(storage, TsdfBlockStorage):
         raise TsdfError(
@@ -268,6 +469,132 @@ def fuse_tsdf_plan_streaming(
         )
     if not isinstance(session, ScanSession):
         raise TsdfError("TSDF stream fusion requires a loaded ScanSession")
+    if not isinstance(progress, TsdfStreamFusionProgress):
+        raise TsdfError(
+            "TSDF stream fusion requires a TsdfStreamFusionProgress"
+        )
+    _validate_update_storage(storage)
+    plan = storage.source_plan
+    if plan.session_id != session.session_id:
+        raise TsdfError(
+            "TSDF block plan session_id does not match the loaded session"
+        )
+    _require_progress_describes(progress, storage)
+    if not progress.is_complete:
+        raise TsdfError(
+            "TSDF stream fusion is not complete: "
+            f"{progress.processed_observations} of "
+            f"{progress.selected_observations} selected observations "
+            "processed"
+        )
+    try:
+        camera, _ = _validate_reconstruction_contract(session)
+    except PointCloudError as error:
+        raise TsdfError(str(error)) from error
+    if replay_session(session).digest_sha256 != plan.replay_digest_sha256:
+        raise TsdfError(
+            "TSDF block plan replay digest does not match current session "
+            "inputs; regenerate the plan"
+        )
+    if (
+        progress.valid_depth_samples != plan.valid_depth_points
+        or progress.invalid_depth_samples != plan.invalid_depth_samples
+    ):
+        raise TsdfError(
+            "TSDF stream fusion depth sample counts do not match the plan"
+        )
+    return _receipt_for(progress, storage, camera)
+
+
+def _require_progress_describes(
+    progress: TsdfStreamFusionProgress,
+    storage: TsdfBlockStorage,
+) -> None:
+    """Refuse progress that belongs to another plan or to other bytes."""
+
+    plan = storage.source_plan
+    if (
+        progress.session_id != plan.session_id
+        or progress.source_plan_digest_sha256 != plan.artifact_digest_sha256
+        or progress.replay_digest_sha256 != plan.replay_digest_sha256
+        or progress.frame_stride != plan.frame_stride
+        or progress.total_observations != plan.total_observations
+        or progress.selected_observations != plan.selected_observations
+        or progress.block_count != storage.block_count
+        or progress.voxel_slots != storage.voxel_slots
+    ):
+        raise TsdfError(
+            "TSDF stream fusion progress does not describe this plan"
+        )
+    if (
+        storage_payload_sha256(storage.tsdf_sums) != progress.tsdf_sums_sha256
+        or storage_payload_sha256(storage.weights) != progress.weights_sha256
+    ):
+        raise TsdfError(
+            "TSDF block storage does not hold the bytes this progress "
+            "describes"
+        )
+
+
+def _receipt_for(
+    progress: TsdfStreamFusionProgress,
+    storage: TsdfBlockStorage,
+    camera,
+) -> TsdfStreamFusionReceipt:
+    frame_bytes = camera.width * camera.height * np.dtype(np.float64).itemsize
+    return TsdfStreamFusionReceipt(
+        session_id=progress.session_id,
+        source_plan_digest_sha256=progress.source_plan_digest_sha256,
+        replay_digest_sha256=progress.replay_digest_sha256,
+        frame_stride=progress.frame_stride,
+        total_observations=progress.total_observations,
+        selected_observations=progress.selected_observations,
+        fused_observations=progress.fused_observations,
+        skipped_missing_depth=progress.skipped_missing_depth,
+        skipped_missing_pose=progress.skipped_missing_pose,
+        block_count=progress.block_count,
+        voxel_slots=progress.voxel_slots,
+        status_counts=progress.status_counts,
+        observed_voxel_count=int(np.count_nonzero(storage.weights)),
+        maximum_weight=int(storage.weights.max()),
+        valid_depth_samples=progress.valid_depth_samples,
+        invalid_depth_samples=progress.invalid_depth_samples,
+        peak_retained_depth_bytes=(
+            frame_bytes if progress.fused_observations else 0
+        ),
+        tsdf_sums_sha256=progress.tsdf_sums_sha256,
+        weights_sha256=progress.weights_sha256,
+    )
+
+
+def _fuse_stage(
+    storage: TsdfBlockStorage,
+    session: ScanSession,
+    progress: TsdfStreamFusionProgress | None,
+    observations: int | None,
+) -> tuple[TsdfStreamFusionProgress, TsdfStreamFusionReceipt | None]:
+    """One stage of a pass; the receipt comes with the stage that ends it."""
+
+    if not isinstance(storage, TsdfBlockStorage):
+        raise TsdfError(
+            "TSDF stream fusion requires allocated TsdfBlockStorage"
+        )
+    if not isinstance(session, ScanSession):
+        raise TsdfError("TSDF stream fusion requires a loaded ScanSession")
+    if progress is not None and not isinstance(
+        progress, TsdfStreamFusionProgress
+    ):
+        raise TsdfError(
+            "TSDF stream fusion requires a TsdfStreamFusionProgress"
+        )
+    if observations is not None and (
+        isinstance(observations, bool)
+        or not isinstance(observations, int)
+        or observations < 1
+    ):
+        raise TsdfError(
+            "TSDF stream fusion stage length must be a positive integer"
+        )
     _validate_update_storage(storage)
     plan = storage.source_plan
     _validate_contribution_plan(plan)
@@ -286,14 +613,39 @@ def fuse_tsdf_plan_streaming(
         raise TsdfError(str(error)) from error
     _validate_context_camera(camera)
 
-    if (
-        np.count_nonzero(storage.weights)
-        or np.count_nonzero(storage.tsdf_sums)
-        or bool(np.signbit(storage.tsdf_sums).any())
-    ):
-        raise TsdfError(
-            "TSDF stream fusion requires canonical empty planned storage"
-        )
+    status_totals = np.zeros(
+        len(TSDF_CONTRIBUTION_STATUS_ORDER),
+        dtype=np.int64,
+    )
+    if progress is None:
+        if (
+            np.count_nonzero(storage.weights)
+            or np.count_nonzero(storage.tsdf_sums)
+            or bool(np.signbit(storage.tsdf_sums).any())
+        ):
+            raise TsdfError(
+                "TSDF stream fusion requires canonical empty planned storage"
+            )
+        first_position = 0
+        fused_observations = 0
+        skipped_missing_depth = 0
+        skipped_missing_pose = 0
+        valid_depth_samples = 0
+        invalid_depth_samples = 0
+    else:
+        _require_progress_describes(progress, storage)
+        if progress.is_complete:
+            raise TsdfError(
+                "TSDF stream fusion has no observation left to fuse"
+            )
+        first_position = progress.processed_observations
+        fused_observations = progress.fused_observations
+        skipped_missing_depth = progress.skipped_missing_depth
+        skipped_missing_pose = progress.skipped_missing_pose
+        valid_depth_samples = progress.valid_depth_samples
+        invalid_depth_samples = progress.invalid_depth_samples
+        for status, count in progress.status_counts:
+            status_totals[_STATUS_CODE[status]] = count
 
     starting_replay = replay_session(session)
     if starting_replay.digest_sha256 != plan.replay_digest_sha256:
@@ -317,6 +669,11 @@ def fuse_tsdf_plan_streaming(
         for sequence in selected_sequences
     )
     _validate_plan_associations(plan, selected, camera)
+    stop_position = (
+        len(selected)
+        if observations is None
+        else min(len(selected), first_position + observations)
+    )
 
     blocks = np.asarray(storage.block_indices, dtype=np.int64)
     # Checked for the whole plan before anything is accumulated, so an
@@ -343,19 +700,8 @@ def fuse_tsdf_plan_streaming(
             "TSDF stream fusion could not address storage in place"
         )
 
-    status_totals = np.zeros(
-        len(TSDF_CONTRIBUTION_STATUS_ORDER),
-        dtype=np.int64,
-    )
-    fused_observations = 0
-    skipped_missing_depth = 0
-    skipped_missing_pose = 0
-    valid_depth_samples = 0
-    invalid_depth_samples = 0
-    frame_bytes = camera.width * camera.height * np.dtype(np.float64).itemsize
-
     try:
-        for observation in selected:
+        for observation in selected[first_position:stop_position]:
             status = _classify_observation(observation)
             if status is not TsdfReplayDepthStatus.READY:
                 skipped_missing_depth += int(observation.depth is None)
@@ -432,7 +778,8 @@ def fuse_tsdf_plan_streaming(
                 )
             fused_observations += 1
 
-        if (
+        complete = stop_position == len(selected)
+        if complete and (
             valid_depth_samples != plan.valid_depth_points
             or invalid_depth_samples != plan.invalid_depth_samples
         ):
@@ -455,13 +802,14 @@ def fuse_tsdf_plan_streaming(
                 "TSDF stream fusion sum exceeds its weight envelope"
             )
 
-        receipt = TsdfStreamFusionReceipt(
+        advanced = TsdfStreamFusionProgress(
             session_id=session.session_id,
             source_plan_digest_sha256=plan.artifact_digest_sha256,
             replay_digest_sha256=plan.replay_digest_sha256,
             frame_stride=plan.frame_stride,
             total_observations=plan.total_observations,
             selected_observations=plan.selected_observations,
+            processed_observations=stop_position,
             fused_observations=fused_observations,
             skipped_missing_depth=skipped_missing_depth,
             skipped_missing_pose=skipped_missing_pose,
@@ -472,19 +820,19 @@ def fuse_tsdf_plan_streaming(
                 for index, status in enumerate(TSDF_CONTRIBUTION_STATUS_ORDER)
                 if status_totals[index]
             ),
-            observed_voxel_count=int(np.count_nonzero(weights)),
-            maximum_weight=int(weights.max()),
             valid_depth_samples=valid_depth_samples,
             invalid_depth_samples=invalid_depth_samples,
-            peak_retained_depth_bytes=(
-                frame_bytes if fused_observations else 0
-            ),
             tsdf_sums_sha256=storage_payload_sha256(storage.tsdf_sums),
             weights_sha256=storage_payload_sha256(storage.weights),
         )
+        receipt = (
+            _receipt_for(advanced, storage, camera) if complete else None
+        )
     except Exception as error:
-        # Storage was required to be canonically empty, so restoring it is
-        # exact: there is no earlier state a partial pass could have lost.
+        # From empty storage this restores it exactly. From an earlier
+        # stage it does not, and cannot: that state is gone. Cleared
+        # storage no longer matches the progress that described it, so
+        # nothing can continue from a frame that was half applied.
         storage.tsdf_sums.fill(0.0)
         storage.weights.fill(0)
         if isinstance(error, (TsdfError, SessionReplayError)):
@@ -494,7 +842,7 @@ def fuse_tsdf_plan_streaming(
         raise TsdfError(
             f"cannot complete TSDF stream fusion: {error}"
         ) from error
-    return receipt
+    return advanced, receipt
 
 
 def storage_payload_sha256(array: np.ndarray) -> str:

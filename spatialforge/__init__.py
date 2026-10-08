@@ -38,7 +38,10 @@ from .tsdf_block_volume import (
     write_tsdf_block_volume,
 )
 from .tsdf_stream_fusion import (
+    TsdfStreamFusionProgress,
     TsdfStreamFusionReceipt,
+    advance_tsdf_plan_streaming,
+    finish_tsdf_plan_streaming,
     fuse_tsdf_plan_streaming,
 )
 from .tsdf_plan_traversal import (
@@ -174,6 +177,7 @@ __all__ = [
     "TsdfExpandedPlanReport",
     "TsdfFusionLedger",
     "TsdfPlanFusionReceipt",
+    "TsdfStreamFusionProgress",
     "TsdfStreamFusionReceipt",
     "TsdfCoverageDomainCrossViewReceipt",
     "TsdfObservationBlockRayReceipt",
@@ -219,6 +223,8 @@ __all__ = [
     "extract_surface_points",
     "extract_triangle_mesh",
     "fuse_tsdf_block_from_vector_fields",
+    "advance_tsdf_plan_streaming",
+    "finish_tsdf_plan_streaming",
     "fuse_tsdf_plan_streaming",
     "fuse_tsdf_plan_blocks_from_context",
     "fuse_tsdf_plan_observations_from_context",
