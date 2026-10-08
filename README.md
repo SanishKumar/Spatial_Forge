@@ -236,6 +236,13 @@ under one voxel at 70.5°. Past it a plane can fall between voxel centres
 and leave no sign change to mesh. The loss in the measurements starts
 between 70° and 75°.
 
+Widening the band tests that, and it holds: the loss moves out to the
+angle each width predicts. At 10 mm, six voxels of truncation in place of
+three cut the missing surface from 1.1% to 0.2%, and raise the RMS error
+from 1.7 mm to 4.5 mm while the median barely moves, 0.45 mm to 0.46 mm.
+Three voxels, used for every figure above, is a choice that favours
+accuracy.
+
 Method, the three undocumented conventions of the dataset, and everything
 this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
 
@@ -452,8 +459,9 @@ Stated plainly, because the gaps matter more than the features:
   every observation weighs the same. A surface no frame saw within about
   70° of head-on can fall between voxel centres, such as a table top seen
   from across a room: between 7% and 23% of such surface is missing from
-  the ICL-NUIM meshes. A point-to-plane distance or an angle weight would
-  help. Neither is here.
+  the ICL-NUIM meshes. A wider truncation band brings most of it back and
+  costs accuracy at edges; a distance measured along the surface normal
+  would avoid that trade and is not implemented.
 - **Not real time.** Fourteen to thirty million voxel-observations per
   second on one CPU core, depending on how much of the scene each frame
   can see. A GPU system does this live; this one takes minutes.

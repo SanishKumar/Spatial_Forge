@@ -501,11 +501,74 @@ in the mesh and more than 30 mm from where it belongs, as the error map
 above shows, rather than not being there.
 
 None of this is particular to this engine. It is the known weakness of a
-projective signed distance, and the usual remedies are a distance measured
-along the surface normal or a weight that falls with the viewing angle.
-Neither is implemented here.
+projective signed distance. Widening the band trades it against accuracy,
+as the next section measures. The remedy that avoids the trade is a
+distance measured along the surface normal instead of along the ray, and
+it is not implemented here.
+
+An earlier version of this page also named a weight that falls with the
+viewing angle. That was wrong. A weight changes how much an observation
+counts, not whether a voxel behind the surface receives one, so it would
+not bring this surface back.
 
 The manifests are `../results/icl-nuim-lr-*-completeness.json`.
+
+### Testing it: a wider band
+
+If the band is what decides, widening it should move the loss to steeper
+angles and leave everything else alone. The planner takes the truncation as
+a parameter, so the room was reconstructed again, on exact depth, with bands
+of four, six and eight voxels in place of three. The onset column is where
+`acos(voxel / truncation)` puts it.
+
+| Voxel | Band | Truncation | Onset | None within 30 mm | 75° to 80° | 80° to 85° | 85° to 90° |
+|---|---|---|---|---|---|---|---|
+| 20 mm | 3 voxels | 60 mm | 70.5° | 2.01% | 7.0% | 36.0% | 26.0% |
+| 20 mm | 4 | 80 mm | 75.5° | 1.23% | 3.2% | 13.7% | 19.8% |
+| 20 mm | 6 | 120 mm | 80.4° | 0.93% | 2.7% | 4.4% | 14.1% |
+| 20 mm | 8 | 160 mm | 82.8° | 0.85% | 2.7% | 1.3% | 13.1% |
+| 10 mm | 3 | 30 mm | 70.5° | 1.07% | 1.1% | 17.4% | 32.8% |
+| 10 mm | 4 | 40 mm | 75.5° | 0.74% | 0.7% | 10.2% | 25.2% |
+| 10 mm | 6 | 60 mm | 80.4° | **0.23%** | 0.5% | 1.6% | 8.0% |
+
+**The loss moves where the band says.** At 20 mm, surface seen between 75°
+and 80° loses 7.0% with the onset at 70.5° and 3.2% once it has passed
+75.5°. Between 80° and 85° it loses 36%, then 13.7%, then 4.4% once the
+onset has passed 80.4°, and 1.3% at 82.8°. Surface seen more squarely than
+70° barely changes at any width.
+
+It is paid for in accuracy, and in one place:
+
+| Voxel | Band | Truncation | Median | Mean | RMS | p95 | p99 |
+|---|---|---|---|---|---|---|---|
+| 20 mm | 3 voxels | 60 mm | 0.48 mm | 1.37 mm | 4.15 mm | 4.45 mm | 22.5 mm |
+| 20 mm | 4 | 80 mm | 0.49 mm | 1.88 mm | 6.29 mm | 6.67 mm | 34.8 mm |
+| 20 mm | 6 | 120 mm | 0.50 mm | 3.20 mm | 11.43 mm | 15.63 mm | 63.7 mm |
+| 20 mm | 8 | 160 mm | 0.52 mm | 4.64 mm | 16.31 mm | 28.03 mm | 91.9 mm |
+| 10 mm | 3 | 30 mm | 0.45 mm | 0.77 mm | 1.69 mm | 2.34 mm | 6.5 mm |
+| 10 mm | 4 | 40 mm | 0.45 mm | 0.92 mm | 2.50 mm | 2.68 mm | 12.1 mm |
+| 10 mm | 6 | 60 mm | 0.46 mm | 1.38 mm | 4.54 mm | 3.94 mm | 26.3 mm |
+
+**The median does not move and the tail grows with the truncation.** Half
+the surface stays within half a millimetre at every width. RMS goes from
+4.2 mm to 16.3 mm as the truncation goes from 60 mm to 160 mm, and p99 from
+22 mm to 92 mm. The error maps above put the tail on silhouette edges, and a
+wider band presumably reaches further past each one; that part was not
+examined.
+
+**The two follow different units.** The tail follows the truncation in
+millimetres: 10 mm voxels with a six-voxel band and 20 mm voxels with a
+three-voxel band share a 60 mm truncation and have nearly the same tail,
+4.54 mm and 4.15 mm RMS. The loss follows the band in voxels: those same
+two lose 0.23% and 2.01% of the seen surface.
+
+So three voxels, which every other result on this page uses, is a choice
+that favours accuracy, and it is not the only defensible one. A map that
+must not lose table tops can have them for a wider band and a heavier
+tail, or for smaller voxels at the same truncation and about six times the
+blocks: 44,341 against 7,655.
+
+The manifests are `../results/icl-nuim-lr-kt2-*-band*-*.json`.
 
 ## One chain per volume
 
