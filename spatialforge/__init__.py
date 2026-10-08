@@ -44,6 +44,9 @@ from .tsdf_fusion_checkpoint import (
     restore_tsdf_fusion_checkpoint,
     write_tsdf_fusion_checkpoint,
 )
+from .tsdf_stream_expansion import (
+    propose_tsdf_plan_expansion_streaming,
+)
 from .tsdf_stream_fusion import (
     TsdfStreamFusionProgress,
     TsdfStreamFusionReceipt,
@@ -259,6 +262,7 @@ __all__ = [
     "MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES",
     "plan_tsdf_blocks",
     "propose_tsdf_plan_expansion_from_domain",
+    "propose_tsdf_plan_expansion_streaming",
     "reconstruct_point_cloud",
     "replay_session",
     "survey_tsdf_observation_pixel_footprints_from_context",

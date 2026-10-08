@@ -13,6 +13,7 @@ from .tsdf_block_plan import (
     TSDF_BLOCK_PLAN_SCHEMA,
     TSDF_BLOCK_RESOLUTION,
     TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_EXPANSION_APPROVAL_RULES,
     TSDF_FREE_SPACE_RULE_FOOTPRINT,
     _clean_float,
     _validate_tsdf_block_plan_output,
@@ -23,7 +24,9 @@ from .tsdf_plan_expansion import TsdfPlanExpansionProposal
 
 _Index3 = tuple[int, int, int]
 
-EXPANSION_APPROVAL_RULE = "covered-block-with-at-least-one-observed-voxel"
+EXPANSION_APPROVAL_RULE = TSDF_EXPANSION_APPROVAL_RULES[
+    TSDF_FREE_SPACE_RULE_FOOTPRINT
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +130,7 @@ def write_tsdf_expanded_block_plan(
             "endpoint_rounding": (
                 "floor-ceil-with-multiply-back-outward-correction"
             ),
-            "free_space_rule": TSDF_FREE_SPACE_RULE_FOOTPRINT,
+            "free_space_rule": proposal.free_space_rule,
         },
         "planning": {
             "frame_stride": plan.frame_stride,
@@ -151,7 +154,9 @@ def write_tsdf_expanded_block_plan(
         "active_blocks": [list(index) for index in active_blocks],
         "expansion": {
             "source_plan_sha256": plan.artifact_digest_sha256,
-            "approval_rule": EXPANSION_APPROVAL_RULE,
+            "approval_rule": TSDF_EXPANSION_APPROVAL_RULES[
+                proposal.free_space_rule
+            ],
             "added_blocks": proposal.added_block_count,
         },
     }
@@ -186,6 +191,6 @@ def write_tsdf_expanded_block_plan(
         expanded_voxel_slots=len(active_blocks) * TSDF_BLOCK_RESOLUTION**3,
         min_block_index=minimum,  # type: ignore[arg-type]
         max_block_index=maximum,  # type: ignore[arg-type]
-        free_space_rule=TSDF_FREE_SPACE_RULE_FOOTPRINT,
+        free_space_rule=proposal.free_space_rule,
         output_digest_sha256=sha256(encoded).hexdigest(),
     )

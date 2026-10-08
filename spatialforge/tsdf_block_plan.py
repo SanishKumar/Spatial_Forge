@@ -38,14 +38,31 @@ TSDF_BLOCK_PLAN_SCHEMA_VERSIONS = (
 )
 
 # A surface/truncation plan makes no free-space claim. An expanded plan adds
-# blocks approved from conservative nearest-pixel footprint coverage, so it
-# must say so rather than inheriting the original's silence.
+# blocks, and must say by which rule rather than inheriting the original's
+# silence. There are two, and they are not the same set of blocks.
+#
+# The footprint rule covers each pixel's wedge from the camera to the
+# measured surface and approves the covered blocks that hold an observed
+# voxel. The observed rule approves every block that holds one, wherever it
+# is, which also takes in voxels a truncation behind the surface that the
+# wedge stops short of.
 TSDF_FREE_SPACE_RULE_NOT_PLANNED = "not-planned"
 TSDF_FREE_SPACE_RULE_FOOTPRINT = "conservative-nearest-pixel-footprint"
+TSDF_FREE_SPACE_RULE_OBSERVED = "every-block-with-an-observed-voxel"
 TSDF_FREE_SPACE_RULES = (
     TSDF_FREE_SPACE_RULE_NOT_PLANNED,
     TSDF_FREE_SPACE_RULE_FOOTPRINT,
+    TSDF_FREE_SPACE_RULE_OBSERVED,
 )
+# Each expansion rule is recorded with the approval rule that goes with it.
+TSDF_EXPANSION_APPROVAL_RULES = {
+    TSDF_FREE_SPACE_RULE_FOOTPRINT: (
+        "covered-block-with-at-least-one-observed-voxel"
+    ),
+    TSDF_FREE_SPACE_RULE_OBSERVED: (
+        "block-with-at-least-one-observed-voxel"
+    ),
+}
 TSDF_BLOCK_RESOLUTION = 8
 MAX_PLANNED_BLOCKS = 100_000
 # Widest per-sample block span the vectorised planner expands itself. A

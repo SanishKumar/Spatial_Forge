@@ -20,8 +20,10 @@ from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import (
     TSDF_BLOCK_PLAN_SCHEMA_VERSION,
     TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
+    TSDF_EXPANSION_APPROVAL_RULES,
     TSDF_FREE_SPACE_RULE_FOOTPRINT,
     TSDF_FREE_SPACE_RULE_NOT_PLANNED,
+    TSDF_FREE_SPACE_RULE_OBSERVED,
 )
 from spatialforge.tsdf_expanded_plan import (
     TsdfExpandedPlanReport,
@@ -294,11 +296,13 @@ class TsdfExpandedPlanCliTests(unittest.TestCase):
         output_text = stdout.getvalue()
         for expected in (
             "TSDF BLOCK PLAN EXPAND scan-synthetic-0001\n",
-            "approval_rule: covered-block-with-at-least-one-observed-voxel\n",
-            "coverage_domain: blocks=52 approved=40 rejected=12\n",
+            "approval_rule: block-with-at-least-one-observed-voxel\n",
+            # The box around the cameras and the plan, not the
+            # reference path's surveyed cover; the 40 are the same.
+            "candidate_box: blocks=1728 approved=40 rejected=1688\n",
             "source_plan: blocks=32 surface=4\n",
             "expanded_plan: blocks=40 added=8 voxel_slots=20480\n",
-            "free_space_rule: conservative-nearest-pixel-footprint\n",
+            "free_space_rule: every-block-with-an-observed-voxel\n",
             "surface_blocks_retained: yes\n",
             "source_plan_mutated: no\n",
             "source_plan_overwritten: no\n",
@@ -468,6 +472,10 @@ class TsdfPlanKindTests(unittest.TestCase):
                 document["expansion"] = expanded()["expansion"]
                 return document
 
+            def with_approval(document: dict, rule: str) -> dict:
+                document["expansion"]["approval_rule"] = rule
+                return document
+
             def with_added(document: dict, added: int) -> dict:
                 document["expansion"]["added_blocks"] = added
                 return document
@@ -513,6 +521,21 @@ class TsdfPlanKindTests(unittest.TestCase):
                     "a-version-nobody-wrote",
                     with_version(expanded(), "0.3.0"),
                     "schema_version: expected one of",
+                ),
+                (
+                    "one-rule-approved-by-the-other",
+                    with_rule(expanded(), TSDF_FREE_SPACE_RULE_OBSERVED),
+                    "approval_rule: free-space rule",
+                ),
+                (
+                    "the-other-rule-approved-by-this-one",
+                    with_approval(
+                        expanded(),
+                        TSDF_EXPANSION_APPROVAL_RULES[
+                            TSDF_FREE_SPACE_RULE_OBSERVED
+                        ],
+                    ),
+                    "approval_rule: free-space rule",
                 ),
             )
             for name, document, message in cases:

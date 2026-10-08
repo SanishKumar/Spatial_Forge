@@ -8,6 +8,8 @@ from .errors import TsdfError
 from .tsdf_block_plan import (
     MAX_PLANNED_BLOCKS,
     TSDF_BLOCK_RESOLUTION,
+    TSDF_EXPANSION_APPROVAL_RULES,
+    TSDF_FREE_SPACE_RULE_FOOTPRINT,
     _ordered_blocks,
 )
 from .tsdf_block_plan_loader import TsdfBlockPlan
@@ -36,8 +38,16 @@ class TsdfPlanExpansionProposal:
     approved_block_indices: tuple[_Index3, ...]
     rejected_block_indices: tuple[_Index3, ...]
     expanded_block_indices: tuple[_Index3, ...]
+    # Which rule approved the blocks. The footprint rule is the
+    # reference path's, and the default.
+    free_space_rule: str = TSDF_FREE_SPACE_RULE_FOOTPRINT
 
     def __post_init__(self) -> None:
+        if self.free_space_rule not in TSDF_EXPANSION_APPROVAL_RULES:
+            raise TsdfError(
+                "TSDF plan expansion free-space rule is not one an "
+                "expansion can use"
+            )
         if not _is_sha256(self.source_plan_digest_sha256):
             raise TsdfError(
                 "TSDF plan expansion source plan digest is invalid"

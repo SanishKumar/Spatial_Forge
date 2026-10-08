@@ -97,7 +97,11 @@ from .tsdf_domain_cross_view import (
 from .tsdf_plan_expansion import (
     propose_tsdf_plan_expansion_from_domain,
 )
+from .tsdf_block_plan import TSDF_EXPANSION_APPROVAL_RULES
 from .tsdf_expanded_plan import write_tsdf_expanded_block_plan
+from .tsdf_stream_expansion import (
+    propose_tsdf_plan_expansion_streaming,
+)
 from .tsdf_plan_fusion import (
     begin_tsdf_fusion_ledger,
     fuse_tsdf_plan_blocks_from_context,
@@ -1508,13 +1512,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "tsdf-block-plan-expand",
         help="Write the approved expanded block set as a new .sftplan.",
         description=(
-            "Strictly load a replay-matched block plan, resolve its "
-            "conservative coverage domain, approve the evidence-bearing "
-            "blocks, and write the merged block set as a new .sftplan. The "
-            "source plan is never modified and the output must not already "
-            "exist. The written plan records that free space came from "
-            "conservative nearest-pixel footprint coverage, together with "
-            "the source plan digest and the approval rule."
+            "Strictly load a replay-matched block plan and add every block "
+            "that holds a voxel some selected frame observed: the space "
+            "between the cameras and the surfaces, which a surface plan "
+            "leaves out. Frames are read one at a time, so the scan can be "
+            "any length. The source plan is never modified and the output "
+            "must not already exist. The written plan records the rule "
+            "that approved its blocks and the digest of the plan it grew "
+            "from."
         ),
     )
     block_plan_expand.add_argument(
@@ -1525,7 +1530,7 @@ def _build_parser() -> argparse.ArgumentParser:
     block_plan_expand.add_argument(
         "session",
         type=Path,
-        help="Current .vgsession directory used to prepare the context.",
+        help="The .vgsession directory the plan was built from.",
     )
     block_plan_expand.add_argument(
         "output",
@@ -5267,17 +5272,7 @@ def _run_tsdf_block_plan_expand(
         _validate_tsdf_block_plan_output(output)
         plan = load_tsdf_block_plan(plan_path)
         session = load_scan_session(session_path)
-        context = build_tsdf_replay_depth_context(plan, session)
-        coverage = survey_tsdf_plan_pixel_footprints_from_context(
-            plan,
-            context,
-        )
-        domain = sweep_tsdf_coverage_domain_cross_view_from_context(
-            plan,
-            context,
-            coverage,
-        )
-        proposal = propose_tsdf_plan_expansion_from_domain(plan, domain)
+        proposal = propose_tsdf_plan_expansion_streaming(plan, session)
         report = write_tsdf_expanded_block_plan(plan, proposal, output)
     except SessionValidationError as error:
         print(
@@ -5302,11 +5297,12 @@ def _run_tsdf_block_plan_expand(
     print("source_artifact: valid", file=sys.stdout)
     print("session_replay: matched", file=sys.stdout)
     print(
-        "approval_rule: covered-block-with-at-least-one-observed-voxel",
+        "approval_rule: "
+        + TSDF_EXPANSION_APPROVAL_RULES[proposal.free_space_rule],
         file=sys.stdout,
     )
     print(
-        "coverage_domain: "
+        "candidate_box: "
         f"blocks={proposal.domain_block_count} "
         f"approved={proposal.approved_block_count} "
         f"rejected={proposal.rejected_block_count}",

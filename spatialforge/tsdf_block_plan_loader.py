@@ -21,7 +21,7 @@ from .tsdf_block_plan import (
     TSDF_BLOCK_PLAN_SCHEMA,
     TSDF_BLOCK_PLAN_SCHEMA_VERSIONS,
     TSDF_EXPANDED_BLOCK_PLAN_SCHEMA_VERSION,
-    TSDF_FREE_SPACE_RULE_FOOTPRINT,
+    TSDF_EXPANSION_APPROVAL_RULES,
     TSDF_FREE_SPACE_RULE_NOT_PLANNED,
     TSDF_FREE_SPACE_RULES,
     TSDF_BLOCK_RESOLUTION,
@@ -42,9 +42,6 @@ _BLOCK_BOUNDS = "lower-inclusive-upper-exclusive"
 _COORDINATE_ROUNDING = "floor-with-multiply-back-boundary-correction"
 _ACTIVATION_RULE = "outward-conservative-half-open-l-infinity-cover"
 _ENDPOINT_ROUNDING = "floor-ceil-with-multiply-back-outward-correction"
-_EXPANSION_APPROVAL_RULE = (
-    "covered-block-with-at-least-one-observed-voxel"
-)
 
 _BlockIndex = tuple[int, int, int]
 
@@ -683,8 +680,10 @@ def _require_enum_string(
     return result
 
 
-def _load_expansion(root: dict[str, Any]) -> tuple[str, int] | None:
-    """Load expansion provenance: the source digest and the blocks added."""
+def _load_expansion(
+    root: dict[str, Any],
+) -> tuple[str, int, str] | None:
+    """Load expansion provenance: source digest, blocks added, rule."""
 
     if "expansion" not in root:
         return None
@@ -707,10 +706,10 @@ def _load_expansion(root: dict[str, Any]) -> tuple[str, int] | None:
             "block_plan.expansion.source_plan_sha256: expected 64 lowercase "
             "hexadecimal characters"
         )
-    _require_exact_string(
+    approval_rule = _require_enum_string(
         expansion,
         "approval_rule",
-        _EXPANSION_APPROVAL_RULE,
+        tuple(TSDF_EXPANSION_APPROVAL_RULES.values()),
         "block_plan.expansion",
     )
     added = _require_field(expansion, "added_blocks", "block_plan.expansion")
@@ -719,13 +718,13 @@ def _load_expansion(root: dict[str, Any]) -> tuple[str, int] | None:
             "block_plan.expansion.added_blocks: expected a nonnegative "
             "integer"
         )
-    return source_digest, added
+    return source_digest, added, approval_rule
 
 
 def _validate_plan_kind(
     schema_version: str,
     free_space_rule: str,
-    expansion: tuple[str, int] | None,
+    expansion: tuple[str, int, str] | None,
     planning: dict[str, Any],
 ) -> None:
     """Refuse a plan whose version, free-space rule and provenance disagree.
@@ -741,12 +740,22 @@ def _validate_plan_kind(
                 "block_plan.expansion: required by schema version "
                 f"{schema_version!r}, which is an expanded plan"
             )
-        if free_space_rule != TSDF_FREE_SPACE_RULE_FOOTPRINT:
+        if free_space_rule not in TSDF_EXPANSION_APPROVAL_RULES:
             raise TsdfError(
                 "block_plan.activation.free_space_rule: schema version "
                 f"{schema_version!r} is an expanded plan and requires "
-                f"{TSDF_FREE_SPACE_RULE_FOOTPRINT!r}, received "
-                f"{free_space_rule!r}"
+                "one of "
+                + ", ".join(
+                    repr(rule) for rule in TSDF_EXPANSION_APPROVAL_RULES
+                )
+                + f", received {free_space_rule!r}"
+            )
+        expected_approval = TSDF_EXPANSION_APPROVAL_RULES[free_space_rule]
+        if expansion[2] != expected_approval:
+            raise TsdfError(
+                "block_plan.expansion.approval_rule: free-space rule "
+                f"{free_space_rule!r} approves by "
+                f"{expected_approval!r}, received {expansion[2]!r}"
             )
         added_blocks = expansion[1]
         if added_blocks > planning["halo_blocks"]:
