@@ -184,7 +184,7 @@ def propose_tsdf_plan_expansion_streaming(
                 )
             ready.append((observation, transform))
 
-        candidates = _candidate_blocks(
+        candidates, low, shape = _candidate_blocks(
             plan,
             camera,
             [
@@ -194,7 +194,15 @@ def propose_tsdf_plan_expansion_streaming(
             extra_margin_blocks,
         )
         observed = np.zeros(len(candidates), dtype=bool)
-        for observation, transform in ready:
+        # Where each planned block sits in the box, so that blocks the
+        # plan already has are not counted as additions.
+        planned = np.asarray(plan.active_blocks, dtype=np.int64) - low
+        in_plan = np.zeros(len(candidates), dtype=bool)
+        in_plan[
+            (planned[:, 2] * shape[1] + planned[:, 1]) * shape[0]
+            + planned[:, 0]
+        ] = True
+        for position, (observation, transform) in enumerate(ready):
             depth_m = _decode_metric_depth(
                 session,
                 observation,
@@ -224,6 +232,19 @@ def propose_tsdf_plan_expansion_streaming(
                 observed[rows] |= weight_deltas.reshape(
                     (len(rows), TSDF_BLOCK_VOXELS)
                 ).any(axis=1)
+            # The count only grows, so once it is over there is no point
+            # in reading the rest of the scan to find out by how much.
+            if (
+                len(plan.active_blocks)
+                + int(np.count_nonzero(observed & ~in_plan))
+                > MAX_PLANNED_BLOCKS
+            ):
+                raise TsdfError(
+                    "TSDF plan expansion holds more than "
+                    f"{MAX_PLANNED_BLOCKS} blocks after {position + 1} of "
+                    f"{len(ready)} frames; that is the maximum. Use a "
+                    "coarser voxel size"
+                )
 
         if replay_session(session).digest_sha256 != (
             starting_replay.digest_sha256
@@ -240,12 +261,6 @@ def propose_tsdf_plan_expansion_streaming(
             (int(x), int(y), int(z)) for x, y, z in candidates[~observed]
         }
         expanded = _ordered_blocks(set(plan.active_blocks) | approved)
-        if len(expanded) > MAX_PLANNED_BLOCKS:
-            raise TsdfError(
-                "TSDF plan expansion would hold "
-                f"{len(expanded)} blocks; the maximum is "
-                f"{MAX_PLANNED_BLOCKS}. Use a coarser voxel size"
-            )
         return TsdfPlanExpansionProposal(
             source_plan_digest_sha256=plan.artifact_digest_sha256,
             replay_digest_sha256=plan.replay_digest_sha256,
@@ -274,8 +289,12 @@ def _candidate_blocks(
     camera,
     camera_centres_m: list[tuple[float, float, float]],
     extra_margin_blocks: int,
-) -> np.ndarray:
-    """Every block of the box that must contain all observed voxels."""
+) -> tuple[np.ndarray, np.ndarray, list[int]]:
+    """Every block of the box that must contain all observed voxels.
+
+    Returned in canonical order, with the box's lowest block and its
+    extent in blocks on each axis.
+    """
 
     block_extent_m = plan.voxel_size_m * TSDF_BLOCK_RESOLUTION
     planned = np.asarray(plan.active_blocks, dtype=np.int64)
@@ -328,4 +347,4 @@ def _candidate_blocks(
         np.arange(low[0], high[0] + 1),
         indexing="ij",
     )
-    return np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1)
+    return np.stack([x.ravel(), y.ravel(), z.ravel()], axis=1), low, shape

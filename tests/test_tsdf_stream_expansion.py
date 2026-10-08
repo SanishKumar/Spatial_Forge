@@ -433,8 +433,13 @@ class GuardTests(unittest.TestCase):
         ):
             with self.assertRaises(TsdfError) as caught:
                 propose_tsdf_plan_expansion_streaming(room.plan, room.session)
-        self.assertIn("would hold 524 blocks", str(caught.exception))
-        self.assertIn("coarser voxel size", str(caught.exception))
+        # Refused as soon as the count passes the ceiling, not after the
+        # whole scan has been read: the room has twenty frames.
+        message = str(caught.exception)
+        self.assertIn("holds more than 400 blocks after ", message)
+        self.assertIn(" of 20 frames", message)
+        self.assertNotIn("after 20 of 20", message)
+        self.assertIn("coarser voxel size", message)
 
     def test_a_box_too_large_to_consider_is_refused(self) -> None:
         room = shared_room_case()
