@@ -3,6 +3,61 @@
 What changed between tagged versions. Numbers quoted here are the ones in
 `results/`; each manifest there records the commit it was produced from.
 
+## 0.5.0 (2026-10-08)
+
+Three things 0.4 listed as not done: the glancing-angle loss is tested
+instead of only predicted, an interrupted fusion can be continued, and
+free space is planned at the scale of a real scan.
+
+Measured
+
+- **The glancing-angle prediction, tested.** The room reconstructed again
+  with truncation bands of four, six and eight voxels. The loss moves to
+  the angle each width predicts: between 80° and 85° the 20 mm mesh loses
+  36% of the seen surface with a band of three voxels and 1.3% with eight.
+  It is paid for in the tail of the accuracy figures: RMS error goes from
+  4.2 mm to 16.3 mm while the median stays at half a millimetre. The tail
+  follows the truncation in millimetres; the loss follows the band in
+  voxels.
+- **Free space on the living room.** The 20 mm plan expanded from 7,655
+  blocks to 17,394. The mesh from the expanded volume is the surface
+  plan's mesh byte for byte. Between 0.28 m and 0.86 m above the floor the
+  expanded volume holds 14.33 m² as observed free where the surface plan's
+  holds 2.05 m², and the voxel at each of the 880 camera positions is one
+  other frames looked through.
+- **An interrupted fusion, continued.** The room's 20 mm fusion was killed
+  80 frames in and the command run again. The volume it wrote has the
+  digest of the published one.
+
+Added
+
+- `reconstruct tsdf-block-volume --checkpoint PATH`: progress is saved as
+  fusion goes, and running the same command after an interruption
+  continues from the last save to the same bytes. `--checkpoint-every` and
+  `--stop-after` control it.
+- `.sftckpt`, a fusion saved part way, and the staged fusion it rests on:
+  `advance_tsdf_plan_streaming`, `finish_tsdf_plan_streaming`,
+  `TsdfStreamFusionProgress`.
+- `propose_tsdf_plan_expansion_streaming`: every block holding a voxel some
+  frame observed, found by running the fusion evaluator over a box of
+  candidate blocks whose size is derived.
+- `tools/free_space_map.py`: free, occupied and unknown for every floor
+  column of a volume over a height band, with the camera path.
+
+Changed
+
+- `reconstruct tsdf-block-plan-expand` uses the new path and writes plans
+  whose `free_space_rule` is `every-block-with-an-observed-voxel`. The
+  earlier rule is still read, and remains as a fixture-scale reference.
+  The two are not the same set of blocks, and a plan records which made
+  it.
+
+Corrected
+
+- The README and the ICL-NUIM page said a weight that falls with the
+  viewing angle would bring back surface lost at glancing angles. It would
+  not. Both now say what does: a wider band, at a measured cost.
+
 ## 0.4.1 (2026-10-08)
 
 0.4.0, with a test that passes on every platform.
