@@ -323,6 +323,10 @@ def summarise_by_viewing_angle(
     camera, in the most head-on frame that saw the point. ``split_deg``
     divides the points into those some frame saw at least that squarely
     and those every frame saw more obliquely.
+
+    The angle comes from an arccosine, which is not rounded the same way
+    everywhere. A point within rounding of a band edge can fall on either
+    side of it from one platform to the next.
     """
 
     angles = np.degrees(np.arccos(np.clip(squarest_cosine, 0.0, 1.0)))
@@ -346,21 +350,15 @@ def summarise_by_viewing_angle(
         }
 
     bands = []
-    for lower, upper in zip(VIEWING_ANGLE_BANDS_DEG, VIEWING_ANGLE_BANDS_DEG[1:]):
-        # The last band keeps its upper edge, so a point seen exactly
-        # edge-on is in a band like every other.
-        below = (
-            angles <= upper
-            if upper == VIEWING_ANGLE_BANDS_DEG[-1]
-            else angles < upper
-        )
-        bands.append(
-            {
-                "from_deg": lower,
-                "to_deg": upper,
-                **part((angles >= lower) & below),
-            }
-        )
+    edges = VIEWING_ANGLE_BANDS_DEG
+    for lower, upper in zip(edges, edges[1:]):
+        # The last band is open above. No angle here exceeds 90 degrees,
+        # and rounding must not be able to leave a point seen exactly
+        # edge-on outside every band.
+        chosen = angles >= lower
+        if upper != edges[-1]:
+            chosen &= angles < upper
+        bands.append({"from_deg": lower, "to_deg": upper, **part(chosen)})
     return {
         "angle": (
             "between the surface normal and the direction to the camera, "

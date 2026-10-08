@@ -428,13 +428,16 @@ class SummaryTests(unittest.TestCase):
     def test_the_split_by_viewing_angle_is_the_one_computed_by_hand(
         self,
     ) -> None:
-        # Six points, by the angle of their most head-on view: 0, 60, 65,
+        # Six points, by the angle of their most head-on view: 0, 61, 65,
         # 72, 83 and exactly 90 degrees. The two at 72 and 90 are missing.
-        angles = np.array([0.0, 60.0, 65.0, 72.0, 83.0, 90.0])
+        # None sits on an edge between bands: an arccosine is rounded
+        # differently from one platform to the next, so which side such a
+        # point falls is not something to assert. Head-on and edge-on are
+        # exact, a cosine of 1 and of 0, and both must be in a band.
+        angles = np.array([0.0, 61.0, 65.0, 72.0, 83.0, 90.0])
         cosines = np.cos(np.radians(angles))
+        cosines[0] = 1.0
         cosines[-1] = 0.0
-        # 60 degrees is where a band changes; put the point exactly on it.
-        cosines[1] = 0.5
         distances = np.array([0.001, 0.004, 0.012, np.inf, 0.006, np.inf])
         result = summarise_by_viewing_angle(
             distances,

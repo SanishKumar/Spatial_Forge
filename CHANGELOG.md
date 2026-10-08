@@ -3,6 +3,18 @@
 What changed between tagged versions. Numbers quoted here are the ones in
 `results/`; each manifest there records the commit it was produced from.
 
+## 0.4.1 (2026-10-08)
+
+0.4.0, with a test that passes on every platform.
+
+- A new test put a point exactly on the edge between two viewing-angle
+  bands. Which side it falls depends on how the platform rounds an
+  arccosine, and three of the six CI jobs disagreed with the other three.
+  The test no longer asserts it, and the report says so about its bands.
+- The last viewing-angle band is open above, so rounding cannot leave a
+  point seen exactly edge-on outside every band.
+- No published number changes.
+
 ## 0.4.0 (2026-10-08)
 
 Sensor noise and completeness: the two things the 0.3.0 accuracy figure
