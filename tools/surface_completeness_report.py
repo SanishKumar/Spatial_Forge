@@ -32,6 +32,11 @@ the observable set for a reason that has nothing to do with the scene. The
 exact sequence decides instead, and the noisy mesh is held to the same
 surface the exact one is.
 
+The result is also split by how squarely each point was ever seen: the
+angle between its normal and the direction to the camera, in the most
+head-on frame that saw it. A projective TSDF loses surface that was only
+glanced along, and the split says how much of what is missing is that.
+
 Usage:
 
     python tools/surface_completeness_report.py SESSION VOLUME.sftvol
@@ -96,6 +101,9 @@ from spatialforge.point_cloud import (  # noqa: E402
 )
 
 THRESHOLDS_MM = (5, 10, 20)
+# Completeness is also reported by how squarely a point was ever seen, in
+# these bands of angle from its normal.
+VIEWING_ANGLE_BANDS_DEG = (0, 60, 70, 75, 80, 85, 90)
 # Nearer than this a point is not in front of the camera in any useful
 # sense, and its projection is unstable.
 _NEAR_PLANE_M = 0.05
@@ -118,7 +126,38 @@ def count_views(
     oriented.
     """
 
+    return survey_views(
+        points,
+        normals,
+        session,
+        observations,
+        camera,
+        depth_scale_m,
+        depth_tolerance_m=depth_tolerance_m,
+    )[0]
+
+
+def survey_views(
+    points: np.ndarray,
+    normals: np.ndarray | None,
+    session,
+    observations,
+    camera,
+    depth_scale_m: float,
+    *,
+    depth_tolerance_m: float,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """How many frames saw each point, and how squarely the best one did.
+
+    The second array is the largest cosine, over the frames that saw a
+    point, of the angle between its normal and the direction to the camera:
+    1 for a frame that looked straight at the surface, near 0 for one that
+    only glanced along it, and 0 where no frame saw the point. It is
+    ``None`` without normals, which is what the angle is measured from.
+    """
+
     views = np.zeros(len(points), dtype=np.int32)
+    squarest = None if normals is None else np.zeros(len(points))
     for observation in observations:
         pose = np.array(
             [float(value) for value in observation.pose.data["T_world_camera"]]
@@ -157,8 +196,18 @@ def count_views(
         agrees = (at_pixel > 0.0) & (
             np.abs(at_pixel - depth[chosen]) <= depth_tolerance_m
         )
-        views[chosen[agrees]] += 1
-    return views
+        counted = chosen[agrees]
+        views[counted] += 1
+        if squarest is not None:
+            towards_camera = -offset[counted]
+            cosine = np.einsum(
+                "ij,ij->i", normals[counted], towards_camera
+            ) / (
+                np.linalg.norm(normals[counted], axis=1)
+                * np.linalg.norm(towards_camera, axis=1)
+            )
+            squarest[counted] = np.maximum(squarest[counted], cosine)
+    return views, squarest
 
 
 def summarise(
@@ -188,6 +237,32 @@ def summarise(
             return None
         return float(1000.0 * found[position])
 
+    return {
+        "observable_points": total,
+        "reach_m": reach_m,
+        "beyond_reach": total - len(found),
+        "beyond_reach_fraction": (total - len(found)) / total,
+        "within_fraction": _within(
+            found, total, reach_m=reach_m, voxel_size_m=voxel_size_m
+        ),
+        "distance_to_mesh": {
+            "median_mm": ranked(50),
+            "p90_mm": ranked(90),
+            "p95_mm": ranked(95),
+            "p99_mm": ranked(99),
+        },
+    }
+
+
+def _within(
+    found: np.ndarray,
+    total: int,
+    *,
+    reach_m: float,
+    voxel_size_m: float,
+) -> dict[str, float]:
+    """The share of ``total`` points whose distance is under each threshold."""
+
     within = {
         f"{threshold}mm": float(
             np.count_nonzero(found <= threshold / 1000.0) / total
@@ -199,18 +274,102 @@ def summarise(
         within["one_voxel"] = float(
             np.count_nonzero(found <= voxel_size_m) / total
         )
+    return within
+
+
+def band_limit_degrees(
+    camera,
+    *,
+    voxel_size_m: float,
+    truncation_m: float,
+) -> dict[str, float]:
+    """The viewing angle past which the truncation band is under a voxel deep.
+
+    Fusion measures signed distance as a difference in depth. Along a ray
+    ``r``, scaled so its depth is 1, a band of ``truncation`` in depth is
+    ``truncation * |r|`` long. Where the ray meets a surface at an angle
+    theta from its normal, that reaches ``truncation * |r| * cos(theta)``
+    below the surface. Once this is less than a voxel, the surface can lie
+    between voxel centres with none of them inside the band behind it. No
+    voxel then records the negative side, and there is no sign change for a
+    mesh to be extracted from.
+
+    The angle depends on where in the image the surface appears: smallest
+    at the principal point, where ``|r|`` is 1, and largest in the corner
+    farthest from it.
+    """
+
+    ratio = min(1.0, voxel_size_m / truncation_m)
+    across = max(camera.cx, camera.width - 1 - camera.cx) / camera.fx
+    down = max(camera.cy, camera.height - 1 - camera.cy) / camera.fy
+    longest = math.sqrt(1.0 + across * across + down * down)
     return {
-        "observable_points": total,
-        "reach_m": reach_m,
-        "beyond_reach": total - len(found),
-        "beyond_reach_fraction": (total - len(found)) / total,
-        "within_fraction": within,
-        "distance_to_mesh": {
-            "median_mm": ranked(50),
-            "p90_mm": ranked(90),
-            "p95_mm": ranked(95),
-            "p99_mm": ranked(99),
-        },
+        "at_principal_point_deg": math.degrees(math.acos(ratio)),
+        "at_farthest_corner_deg": math.degrees(math.acos(ratio / longest)),
+    }
+
+
+def summarise_by_viewing_angle(
+    distances_m: np.ndarray,
+    squarest_cosine: np.ndarray,
+    *,
+    reach_m: float,
+    voxel_size_m: float,
+    split_deg: float,
+) -> dict[str, object]:
+    """Completeness again, split by how squarely each point was ever seen.
+
+    The angle is between the surface normal and the direction to the
+    camera, in the most head-on frame that saw the point. ``split_deg``
+    divides the points into those some frame saw at least that squarely
+    and those every frame saw more obliquely.
+    """
+
+    angles = np.degrees(np.arccos(np.clip(squarest_cosine, 0.0, 1.0)))
+
+    def part(chosen: np.ndarray) -> dict[str, object]:
+        total = int(np.count_nonzero(chosen))
+        if total == 0:
+            return {
+                "points": 0,
+                "beyond_reach_fraction": None,
+                "within_fraction": None,
+            }
+        distances = distances_m[chosen]
+        found = distances[np.isfinite(distances)]
+        return {
+            "points": total,
+            "beyond_reach_fraction": (total - len(found)) / total,
+            "within_fraction": _within(
+                found, total, reach_m=reach_m, voxel_size_m=voxel_size_m
+            ),
+        }
+
+    bands = []
+    for lower, upper in zip(VIEWING_ANGLE_BANDS_DEG, VIEWING_ANGLE_BANDS_DEG[1:]):
+        # The last band keeps its upper edge, so a point seen exactly
+        # edge-on is in a band like every other.
+        below = (
+            angles <= upper
+            if upper == VIEWING_ANGLE_BANDS_DEG[-1]
+            else angles < upper
+        )
+        bands.append(
+            {
+                "from_deg": lower,
+                "to_deg": upper,
+                **part((angles >= lower) & below),
+            }
+        )
+    return {
+        "angle": (
+            "between the surface normal and the direction to the camera, "
+            "in the most head-on frame that saw the point"
+        ),
+        "split_deg": split_deg,
+        "seen_within_split": part(angles <= split_deg),
+        "seen_only_beyond_split": part(angles > split_deg),
+        "bands": bands,
     }
 
 
@@ -399,7 +558,7 @@ def main(argv: list[str] | None = None) -> int:
         f"(extracted from this volume, minimum weight "
         f"{mesh['minimum_weight']})"
     )
-    views = count_views(
+    views, squarest = survey_views(
         points,
         normals,
         sight_session,
@@ -440,6 +599,37 @@ def main(argv: list[str] | None = None) -> int:
         f"farther than {1000 * arguments.reach_m:.0f} mm from any of it: "
         f"{100 * summary['beyond_reach_fraction']:.1f}%"
     )
+
+    by_viewing_angle = None
+    if squarest is not None:
+        limit = band_limit_degrees(
+            camera,
+            voxel_size_m=volume.voxel_size_m,
+            truncation_m=volume.truncation_m,
+        )
+        by_viewing_angle = {
+            "truncation_band_under_one_voxel_beyond": limit,
+            **summarise_by_viewing_angle(
+                distances,
+                squarest[observable],
+                reach_m=arguments.reach_m,
+                voxel_size_m=volume.voxel_size_m,
+                split_deg=limit["at_principal_point_deg"],
+            ),
+        }
+        print(
+            "by the most head-on view of each point, in degrees from its "
+            f"normal (the truncation band is under one voxel deep beyond "
+            f"{limit['at_principal_point_deg']:.1f}):"
+        )
+        for band in by_viewing_angle["bands"]:
+            if band["points"]:
+                print(
+                    f"  {band['from_deg']:>2}-{band['to_deg']:<2} "
+                    f"{band['points']:>9} points, "
+                    f"{100 * band['beyond_reach_fraction']:5.1f}% farther "
+                    f"than {1000 * arguments.reach_m:.0f} mm from the mesh"
+                )
 
     if manifest_path is not None:
         manifest = {
@@ -499,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
                 "observable_fraction": float(observable.mean()),
             },
             "completeness": summary,
+            "completeness_by_viewing_angle": by_viewing_angle,
             "timings_seconds": {
                 "visibility": round(visibility_seconds, 3),
                 "distance": round(distance_seconds, 3),

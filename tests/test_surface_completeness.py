@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import shutil
 import tempfile
 import unittest
@@ -49,7 +50,14 @@ from tests.test_surface_accuracy import (
     write_model,
 )
 from tools.surface_accuracy_report import main as accuracy_main
-from tools.surface_completeness_report import count_views, main, summarise
+from tools.surface_completeness_report import (
+    band_limit_degrees,
+    count_views,
+    main,
+    summarise,
+    summarise_by_viewing_angle,
+    survey_views,
+)
 
 TEST_ROOT = Path(__file__).resolve().parent
 FIXTURE = TEST_ROOT / "fixtures" / "minimal.vgsession"
@@ -182,11 +190,17 @@ def room_frames():
     return session, camera, depth_scale_m, observations
 
 
-def views_one_point_at_a_time(points, normals, tolerance_m) -> np.ndarray:
-    """The visibility rule again, as a loop over points and frames."""
+def views_one_point_at_a_time(points, normals, tolerance_m):
+    """The visibility rule again, as a loop over points and frames.
+
+    Returns the views of each point and the cosine of its most head-on
+    one, the angle taken with ``math.atan2`` from a cross and a dot
+    product instead of from a normalised dot product.
+    """
 
     session, camera, depth_scale_m, observations = room_frames()
     views = np.zeros(len(points), dtype=np.int32)
+    squarest = np.zeros(len(points))
     for observation in observations:
         pose = np.array(observation.pose.data["T_world_camera"]).reshape((4, 4))
         with Image.open(
@@ -204,7 +218,13 @@ def views_one_point_at_a_time(points, normals, tolerance_m) -> np.ndarray:
             measured = depth[row, column]
             if measured > 0.0 and abs(measured - z) <= tolerance_m:
                 views[index] += 1
-    return views
+                towards = pose[:3, 3] - point
+                angle = math.atan2(
+                    float(np.linalg.norm(np.cross(normal, towards))),
+                    float(normal @ towards),
+                )
+                squarest[index] = max(squarest[index], math.cos(angle))
+    return views, squarest
 
 
 class VisibilityTests(unittest.TestCase):
@@ -221,7 +241,7 @@ class VisibilityTests(unittest.TestCase):
             depth_scale_m,
             depth_tolerance_m=0.02,
         )
-        expected = views_one_point_at_a_time(
+        expected, _ = views_one_point_at_a_time(
             points[chosen], normals[chosen], 0.02
         )
         np.testing.assert_array_equal(views, expected)
@@ -230,6 +250,83 @@ class VisibilityTests(unittest.TestCase):
         self.assertEqual(int(views.max()), len(observations))
         self.assertTrue(np.any((views > 0) & (views < len(observations))))
         self.assertTrue(np.any(views == 0))
+
+    def test_the_squarest_view_matches_one_found_a_point_at_a_time(
+        self,
+    ) -> None:
+        points, normals, _ = model_in_session_frame()
+        chosen = np.random.default_rng(67).choice(len(points), 400, replace=False)
+        session, camera, depth_scale_m, observations = room_frames()
+        views, squarest = survey_views(
+            points[chosen],
+            normals[chosen],
+            session,
+            observations,
+            camera,
+            depth_scale_m,
+            depth_tolerance_m=0.02,
+        )
+        expected_views, expected = views_one_point_at_a_time(
+            points[chosen], normals[chosen], 0.02
+        )
+        np.testing.assert_array_equal(views, expected_views)
+        np.testing.assert_allclose(squarest, expected, rtol=0, atol=1e-12)
+        # A point nobody saw has no view to be square, and the room has
+        # both kinds of surface: looked straight at, and glanced along.
+        np.testing.assert_array_equal(squarest[views == 0], 0.0)
+        self.assertTrue(np.all(squarest[views > 0] > 0.0))
+        self.assertGreater(float(squarest.max()), math.cos(math.radians(10)))
+        self.assertLess(
+            float(squarest[views > 0].min()), math.cos(math.radians(60))
+        )
+
+    def test_the_wall_ahead_is_seen_squarely_and_the_floor_is_not(self) -> None:
+        session, camera, depth_scale_m, observations = room_frames()
+
+        def squarest_of(points, normals):
+            views, squarest = survey_views(
+                points,
+                normals,
+                session,
+                observations,
+                camera,
+                depth_scale_m,
+                depth_tolerance_m=0.02,
+            )
+            return squarest[views > 0]
+
+        # The cameras look down +X at the far wall. A patch of it straight
+        # ahead is seen within a few degrees of head-on.
+        wall = squarest_of(
+            *lattice(0, FAR_WALL_X, (-0.2, 0.2), (-0.2, 0.2), (-1, 0, 0))
+        )
+        self.assertGreater(len(wall), 0)
+        self.assertGreater(float(wall.min()), math.cos(math.radians(15)))
+        # The floor under that wall, to the left of the box, is seen from
+        # cameras a metre above it and two metres back: never within 45
+        # degrees of its normal.
+        floor = squarest_of(
+            *lattice(
+                2, FLOOR_Z, (FAR_WALL_X - 0.4, FAR_WALL_X - 0.1), (0.6, 1.0), (0, 0, 1)
+            )
+        )
+        self.assertGreater(len(floor), 0)
+        self.assertLess(float(floor.max()), math.cos(math.radians(45)))
+
+    def test_without_normals_there_is_no_angle_to_report(self) -> None:
+        points, _, _ = model_in_session_frame()
+        session, camera, depth_scale_m, observations = room_frames()
+        views, squarest = survey_views(
+            points[:50],
+            None,
+            session,
+            observations,
+            camera,
+            depth_scale_m,
+            depth_tolerance_m=0.02,
+        )
+        self.assertEqual(len(views), 50)
+        self.assertIsNone(squarest)
 
     def test_what_no_camera_could_see_is_not_seen(self) -> None:
         points, normals, visible = model_in_session_frame()
@@ -327,6 +424,129 @@ class SummaryTests(unittest.TestCase):
     def test_nothing_observable_is_an_error(self) -> None:
         with self.assertRaisesRegex(SystemExit, "seen by enough frames"):
             summarise(np.empty(0), reach_m=0.03, voxel_size_m=0.01)
+
+    def test_the_split_by_viewing_angle_is_the_one_computed_by_hand(
+        self,
+    ) -> None:
+        # Six points, by the angle of their most head-on view: 0, 60, 65,
+        # 72, 83 and exactly 90 degrees. The two at 72 and 90 are missing.
+        angles = np.array([0.0, 60.0, 65.0, 72.0, 83.0, 90.0])
+        cosines = np.cos(np.radians(angles))
+        cosines[-1] = 0.0
+        # 60 degrees is where a band changes; put the point exactly on it.
+        cosines[1] = 0.5
+        distances = np.array([0.001, 0.004, 0.012, np.inf, 0.006, np.inf])
+        result = summarise_by_viewing_angle(
+            distances,
+            cosines,
+            reach_m=0.03,
+            voxel_size_m=0.04,
+            split_deg=70.5,
+        )
+        self.assertEqual(result["split_deg"], 70.5)
+        self.assertEqual(
+            result["seen_within_split"],
+            {
+                "points": 3,
+                "beyond_reach_fraction": 0.0,
+                "within_fraction": {
+                    "5mm": 2 / 3,
+                    "10mm": 2 / 3,
+                    "20mm": 1.0,
+                },
+            },
+        )
+        self.assertEqual(
+            result["seen_only_beyond_split"],
+            {
+                "points": 3,
+                "beyond_reach_fraction": 2 / 3,
+                "within_fraction": {
+                    "5mm": 0.0,
+                    "10mm": 1 / 3,
+                    "20mm": 1 / 3,
+                },
+            },
+        )
+        self.assertEqual(
+            [
+                (band["from_deg"], band["to_deg"], band["points"])
+                for band in result["bands"]
+            ],
+            [
+                (0, 60, 1),
+                (60, 70, 2),
+                (70, 75, 1),
+                (75, 80, 0),
+                (80, 85, 1),
+                (85, 90, 1),
+            ],
+        )
+        missing = [band["beyond_reach_fraction"] for band in result["bands"]]
+        self.assertEqual(missing, [0.0, 0.0, 1.0, None, 0.0, 1.0])
+        self.assertIsNone(result["bands"][3]["within_fraction"])
+
+
+class BandLimitTests(unittest.TestCase):
+    """Where the truncation band stops being a voxel deep."""
+
+    CAMERA = SimpleNamespace(
+        width=101, height=81, fx=100.0, fy=80.0, cx=50.0, cy=40.0
+    )
+
+    def test_three_voxels_of_truncation_give_out_past_seventy_degrees(
+        self,
+    ) -> None:
+        limit = band_limit_degrees(
+            self.CAMERA, voxel_size_m=0.01, truncation_m=0.03
+        )
+        # acos(1/3) at the principal point. The farthest corner is half
+        # the focal length away on each axis, so its ray is sqrt(1.5)
+        # long: acos(1 / (3 sqrt(1.5))).
+        self.assertAlmostEqual(limit["at_principal_point_deg"], 70.528779, places=6)
+        self.assertAlmostEqual(limit["at_farthest_corner_deg"], 74.206831, places=6)
+
+    def test_at_the_limit_the_band_reaches_exactly_one_voxel_down(self) -> None:
+        # Built from the geometry instead of the formula: a ray through a
+        # pixel, a surface tilted to the limit angle against that ray, and
+        # a point one truncation of depth farther along it. Its distance
+        # below the surface must be one voxel.
+        voxel, truncation = 0.015, 0.045
+        limit = band_limit_degrees(
+            self.CAMERA, voxel_size_m=voxel, truncation_m=truncation
+        )
+        for pixel, name in (
+            ((50, 40), "at_principal_point_deg"),
+            ((0, 0), "at_farthest_corner_deg"),
+            ((100, 80), "at_farthest_corner_deg"),
+        ):
+            with self.subTest(pixel=pixel):
+                ray = np.array(
+                    [
+                        (pixel[0] - self.CAMERA.cx) / self.CAMERA.fx,
+                        (pixel[1] - self.CAMERA.cy) / self.CAMERA.fy,
+                        1.0,
+                    ]
+                )
+                along = ray / np.linalg.norm(ray)
+                # Any unit vector at the limit angle from the reversed
+                # ray will do as the surface normal.
+                side = np.cross(along, [0.3, -0.8, 0.1])
+                side /= np.linalg.norm(side)
+                angle = math.radians(limit[name])
+                normal = -math.cos(angle) * along + math.sin(angle) * side
+                hit = 2.0 * ray
+                behind = hit + truncation * ray
+                self.assertAlmostEqual(behind[2] - hit[2], truncation)
+                below = -float(normal @ (behind - hit))
+                self.assertAlmostEqual(below, voxel, places=12)
+
+    def test_a_band_no_deeper_than_a_voxel_has_no_safe_angle(self) -> None:
+        limit = band_limit_degrees(
+            self.CAMERA, voxel_size_m=0.02, truncation_m=0.02
+        )
+        self.assertEqual(limit["at_principal_point_deg"], 0.0)
+        self.assertGreater(limit["at_farthest_corner_deg"], 0.0)
 
 
 def mesh_without(name: str, drop) -> Path:
@@ -452,6 +672,56 @@ class RoomReportTests(unittest.TestCase):
             holed["within_fraction"]["20mm"],
             whole["within_fraction"]["20mm"] - 0.1,
         )
+
+    def test_the_split_by_viewing_angle_accounts_for_every_point(self) -> None:
+        manifest = baseline()
+        split = manifest["completeness_by_viewing_angle"]
+        completeness = manifest["completeness"]
+        total = completeness["observable_points"]
+        reconstruction = manifest["reconstruction"]
+        self.assertAlmostEqual(
+            split["truncation_band_under_one_voxel_beyond"][
+                "at_principal_point_deg"
+            ],
+            math.degrees(
+                math.acos(
+                    reconstruction["voxel_size_m"]
+                    / reconstruction["truncation_m"]
+                )
+            ),
+        )
+        self.assertEqual(
+            split["split_deg"],
+            split["truncation_band_under_one_voxel_beyond"][
+                "at_principal_point_deg"
+            ],
+        )
+        self.assertEqual(
+            split["seen_within_split"]["points"]
+            + split["seen_only_beyond_split"]["points"],
+            total,
+        )
+        bands = split["bands"]
+        self.assertEqual(sum(band["points"] for band in bands), total)
+        # The bands are the same points as the whole, so their shares,
+        # weighted by their sizes, are the whole's shares.
+        occupied = [band for band in bands if band["points"]]
+        self.assertGreater(len(occupied), 1)
+        self.assertAlmostEqual(
+            sum(
+                band["points"] * band["beyond_reach_fraction"]
+                for band in occupied
+            ),
+            completeness["beyond_reach"],
+        )
+        for threshold, share in completeness["within_fraction"].items():
+            self.assertAlmostEqual(
+                sum(
+                    band["points"] * band["within_fraction"][threshold]
+                    for band in occupied
+                ),
+                share * total,
+            )
 
     def test_more_views_demanded_means_less_counted_as_seen(self) -> None:
         strict = report("strict", "--min-views", "20")
