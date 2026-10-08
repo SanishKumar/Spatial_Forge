@@ -37,6 +37,13 @@ from .tsdf_block_volume import (
     load_tsdf_block_volume,
     write_tsdf_block_volume,
 )
+from .tsdf_fusion_checkpoint import (
+    TsdfFusionCheckpoint,
+    TsdfFusionCheckpointReport,
+    load_tsdf_fusion_checkpoint,
+    restore_tsdf_fusion_checkpoint,
+    write_tsdf_fusion_checkpoint,
+)
 from .tsdf_stream_fusion import (
     TsdfStreamFusionProgress,
     TsdfStreamFusionReceipt,
@@ -175,6 +182,8 @@ __all__ = [
     "TsdfBlockVolumeReport",
     "TsdfContributionStatus",
     "TsdfExpandedPlanReport",
+    "TsdfFusionCheckpoint",
+    "TsdfFusionCheckpointReport",
     "TsdfFusionLedger",
     "TsdfPlanFusionReceipt",
     "TsdfStreamFusionProgress",
@@ -235,6 +244,7 @@ __all__ = [
     "load_scan_session",
     "load_tsdf_block_plan",
     "load_tsdf_block_volume",
+    "load_tsdf_fusion_checkpoint",
     "locate_tsdf_voxel",
     "MAX_TSDF_BLOCK_CROSS_VIEW_OUTCOMES",
     "MAX_TSDF_COVERAGE_DOMAIN_CROSS_VIEW_OUTCOMES",
@@ -262,7 +272,9 @@ __all__ = [
     "traverse_tsdf_voxel_observations_from_context",
     "TSDF_CONTRIBUTION_STATUS_ORDER",
     "verify_tsdf_block_plan_replay",
+    "restore_tsdf_fusion_checkpoint",
     "write_tsdf_block_volume",
+    "write_tsdf_fusion_checkpoint",
     "write_tsdf_expanded_block_plan",
 ]
 
