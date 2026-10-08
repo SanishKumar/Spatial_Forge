@@ -26,6 +26,7 @@ fast path proven identical to a slower one that is easier to trust.
 | With a Kinect's noise simulated | **0.86 mm** median to ground truth at 10 mm voxels, from depth frames a median 3.2 mm off |
 | How much of what was seen | **98.4%** of the observed ground-truth surface has mesh within 20 mm, 93.3% within 5 mm; 96% of what is missing was only ever seen at a glancing angle |
 | On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels ([TUM RGB-D](#results-on-real-data)) |
+| Free space | the voxel at each of the 880 camera positions is observed free in the [expanded volume](#where-there-is-room); adding it changes no triangle of the mesh |
 | Reproducible | the committed scan reconstructs to the same bytes on Linux, macOS and Windows, under Python 3.11 and 3.14, checked on every push |
 | Cost | one CPU core and NumPy: 6.3 billion voxel-observations fused in 211 s |
 
@@ -246,6 +247,39 @@ accuracy.
 Method, the three undocumented conventions of the dataset, and everything
 this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
 
+## Where there is room
+
+A mesh says where surfaces are. A map for moving through a place also has
+to say where there is nothing, and to tell that from where nobody looked.
+Expanding a plan adds every block that holds a voxel some frame observed:
+the space between the cameras and the surfaces.
+
+<p align="center">
+  <img src="docs/assets/icl-room-free-space.png" width="70%" alt="A map of the ICL-NUIM living room from above. The floor is pale: free. A sofa, a coffee table, two armchairs, a sideboard and a cabinet are dark. Grey remains outside the walls and in patches around the table. An orange line, the camera's path, loops through the room and passes over the table.">
+</p>
+
+<p align="center">
+  <em>The living room between 0.28 m and 0.86 m above its floor, from the
+  expanded volume at 20 mm.<br>Pale is observed free, dark is occupied,
+  grey is unknown. The orange line is the camera's path.</em>
+</p>
+
+| Living room, 20 mm | Surface plan | Expanded |
+|---|---|---|
+| Blocks | 7,655 | 17,394 |
+| Mesh | 1,796,756 triangles | the same triangles, byte for byte |
+| Free floor area in the band | 2.05 m² | **14.33 m²** |
+| Camera positions in observed free space | 0 of 880 | **880 of 880** |
+
+The last row is a check the scan makes on itself. No camera position is
+used to mark anything free; free space comes only from depth rays. Yet the
+voxel at every one of the 880 places a camera stood is one that other
+frames looked through.
+
+What is observed is decided by the fusion code itself, run over a box of
+candidate blocks whose size is derived, and checked against a second
+implementation: [`docs/free-space-expansion.md`](docs/free-space-expansion.md).
+
 ## The same bytes everywhere
 
 Reproducibility here is a tested property, not an intention. The committed
@@ -345,6 +379,15 @@ so the picture cannot quietly be of something else.
 Step 3 is the long one. Add `--checkpoint datasets/fr1xyz.sftckpt` and, if
 it is interrupted, running the same command again continues from the last
 save and writes the same volume.
+
+To keep observed free space as well as surfaces, expand the plan between
+steps 2 and 3 and fuse the expanded one:
+
+```bash
+python -m spatialforge reconstruct tsdf-block-plan-expand \
+  datasets/fr1xyz.sftplan datasets/fr1xyz.vgsession \
+  datasets/fr1xyz-free.sftplan
+```
 
 ## How it works
 
@@ -472,9 +515,10 @@ Stated plainly, because the gaps matter more than the features:
   frames. An interrupted fusion can be continued to the same bytes, but
   frames from outside the plan cannot be added: new frames mean a new
   plan and a new fusion.
-- **The free-space path is fixture-scale.** Coverage, cross-view resolution
-  and plan expansion carry a 262,144-outcome cap that a single 640×480 frame
-  exceeds. They are bounded diagnostics, not part of the real-data pipeline.
+- **Free space is observed emptiness, not a route.** The expanded volume
+  says where the scan looked and found nothing. It does not find the
+  floor, know the size of whoever is moving, or plan a path, and a
+  column with one unobserved voxel is unknown.
 
 ## Where this sits
 
@@ -509,11 +553,12 @@ spatialforge/     library and CLI
   tsdf_stream_fusion.py   frame-at-a-time fusion
   tsdf_block_volume.py    the .sftvol format
   tsdf_fusion_checkpoint.py  a fusion saved part way, to continue
+  tsdf_stream_expansion.py   observed free space, at real scale
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            56 test modules
+tests/            58 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```

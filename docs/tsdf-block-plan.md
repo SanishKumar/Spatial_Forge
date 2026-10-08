@@ -131,10 +131,21 @@ to agree:
 | `schema_version` | `activation.free_space_rule` | `expansion` |
 |---|---|---|
 | `0.1.0` | `not-planned` | absent |
+| `0.2.0` | `every-block-with-an-observed-voxel` | present |
 | `0.2.0` | `conservative-nearest-pixel-footprint` | present |
 
 `expansion` records the SHA-256 of the plan it grew from, the rule that
 approved the added blocks, and how many were added.
+
+There are two expansion rules, and each is recorded with its own approval
+rule. The command writes the first: every block holding a voxel some frame
+observed, found by running the fusion evaluator over a bounded box of
+candidate blocks, at the scale of a real scan. The second is the reference
+path's, which covers each pixel's wedge up to the measured surface and
+runs only on fixtures. They are not the same set of blocks, and the loader
+refuses one rule's name beside the other's approval rule.
+[`free-space-expansion.md`](free-space-expansion.md) has the argument, the
+tests that relate the two, and what the expanded volume shows of a room.
 
 The loader refuses every other combination and names the field that
 disagrees: a `0.1.0` plan carrying provenance, a `0.2.0` plan without it,
