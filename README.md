@@ -335,6 +335,10 @@ python tools/render_mesh.py datasets/fr1xyz.ply datasets/fr1xyz-render \
 Step 5 refuses a mesh that was not extracted from the volume it is scoring,
 so the picture cannot quietly be of something else.
 
+Step 3 is the long one. Add `--checkpoint datasets/fr1xyz.sftckpt` and, if
+it is interrupted, running the same command again continues from the last
+save and writes the same volume.
+
 ## How it works
 
 ```mermaid
@@ -406,6 +410,13 @@ that order is the only thing that fixes the last bits. So the streaming path
 is byte-identical to the block-by-block one by construction, and all 790
 posed frames now fuse in 42 s at 30 mm.
 
+The same argument lets a fusion stop. Cut between two frames and no voxel
+is interrupted part way through its additions, so `--checkpoint` saves the
+accumulators as it goes and a run that is interrupted can be run again. The
+living room's 20 mm fusion was killed 80 frames in and restarted; the volume
+it wrote has the digest of the published one. See
+[`docs/fusion-checkpoint.md`](docs/fusion-checkpoint.md).
+
 ### Meshing data that is not tidy
 
 The reference mesher refused the first real volume outright: non-manifold
@@ -449,8 +460,10 @@ Stated plainly, because the gaps matter more than the features:
 - **A size ceiling.** A plan is limited to 100,000 blocks: 51 million
   voxels, 614 MB of accumulators held in memory. A scene that needs more
   is refused with a message saying so.
-- **Fusion does not resume across runs.** A volume is written once, complete.
-  The resumable fusion ledgers exist but live in memory.
+- **A volume cannot be extended.** A plan is made from a fixed set of
+  frames. An interrupted fusion can be continued to the same bytes, but
+  frames from outside the plan cannot be added: new frames mean a new
+  plan and a new fusion.
 - **The free-space path is fixture-scale.** Coverage, cross-view resolution
   and plan expansion carry a 262,144-outcome cap that a single 640×480 frame
   exceeds. They are bounded diagnostics, not part of the real-data pipeline.
@@ -487,11 +500,12 @@ spatialforge/     library and CLI
   tsdf_block_plan.py      sparse block planning
   tsdf_stream_fusion.py   frame-at-a-time fusion
   tsdf_block_volume.py    the .sftvol format
+  tsdf_fusion_checkpoint.py  a fusion saved part way, to continue
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            53 test modules
+tests/            56 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```

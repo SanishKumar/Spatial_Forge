@@ -113,4 +113,8 @@ wrong in one way — and require each to be refused.
 A volume holds at most 100,000 blocks, the most the planner will plan and
 the most fusion will allocate. The whole file is read into memory to be verified. There
 is no partial or memory-mapped load, no compression, and no way to append to
-or resume a volume: it is written once, complete.
+a volume: it is written once, complete.
+
+A fusion that is interrupted before its volume is written can be continued,
+from a separate file that is not a volume:
+[`fusion-checkpoint.md`](fusion-checkpoint.md).

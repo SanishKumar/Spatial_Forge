@@ -52,7 +52,16 @@ from .tsdf_block_volume import (
     _validate_output as _validate_tsdf_block_volume_output,
     write_tsdf_block_volume,
 )
-from .tsdf_stream_fusion import fuse_tsdf_plan_streaming
+from .tsdf_fusion_checkpoint import (
+    load_tsdf_fusion_checkpoint,
+    restore_tsdf_fusion_checkpoint,
+    write_tsdf_fusion_checkpoint,
+)
+from .tsdf_stream_fusion import (
+    advance_tsdf_plan_streaming,
+    finish_tsdf_plan_streaming,
+    fuse_tsdf_plan_streaming,
+)
 from .tsdf_plan_traversal import (
     MAX_TSDF_PLAN_TRAVERSAL_OUTCOMES,
     traverse_tsdf_plan_blocks_from_context,
@@ -397,6 +406,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.plan,
                 arguments.session,
                 arguments.output,
+                checkpoint=arguments.checkpoint,
+                checkpoint_every=arguments.checkpoint_every,
+                stop_after=arguments.stop_after,
             )
         if arguments.reconstruct_command == "tsdf-block-volume-mesh":
             return _run_tsdf_block_volume_mesh(
@@ -1530,7 +1542,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "time, so memory does not grow with sequence length. The fused "
             "sums and weights are written as a .sftvol artifact that "
             "records the scan, plan and payload digests. The output must "
-            "not already exist."
+            "not already exist. With --checkpoint, progress is saved as "
+            "the fusion goes, and running the same command again after "
+            "an interruption continues from the last save and writes the "
+            "same bytes an uninterrupted run would have."
         ),
     )
     block_volume.add_argument(
@@ -1547,6 +1562,36 @@ def _build_parser() -> argparse.ArgumentParser:
         "output",
         type=Path,
         help="New .sftvol path to write. Must not already exist.",
+    )
+    block_volume.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "A .sftckpt path to save progress to as fusion goes. If it "
+            "already holds a checkpoint of this plan and session, fusion "
+            "continues from it; any other existing file is refused and "
+            "left alone. Removed once the volume has been written."
+        ),
+    )
+    block_volume.add_argument(
+        "--checkpoint-every",
+        type=_positive_integer,
+        default=100,
+        help=(
+            "Selected observations between saves, with --checkpoint "
+            "(default: 100)."
+        ),
+    )
+    block_volume.add_argument(
+        "--stop-after",
+        type=_positive_integer,
+        default=None,
+        help=(
+            "Stop once this many more selected observations have been "
+            "processed, leaving the checkpoint to continue from and no "
+            "volume. Requires --checkpoint."
+        ),
     )
 
     block_volume_mesh = reconstruct_commands.add_parser(
@@ -6131,13 +6176,86 @@ def _run_tsdf_block_volume(
     plan_path: Path,
     session_path: Path,
     output: Path,
+    *,
+    checkpoint: Path | None = None,
+    checkpoint_every: int = 100,
+    stop_after: int | None = None,
 ) -> int:
+    # What a failure can still point to: the last save, if there was one.
+    saved: list[tuple[Path, int]] = []
+    resumed_from: int | None = None
+    checkpoints_written = 0
+    checkpoint_path: Path | None = None
     try:
         _validate_tsdf_block_volume_output(output)
+        if checkpoint is None:
+            if stop_after is not None:
+                raise TsdfError(
+                    "--stop-after leaves a checkpoint to continue from, "
+                    "so it requires --checkpoint"
+                )
+        else:
+            checkpoint_path = Path(checkpoint).resolve()
+            if checkpoint_path.suffix.lower() != ".sftckpt":
+                raise TsdfError(
+                    "checkpoint filename must end in .sftckpt"
+                )
         plan = load_tsdf_block_plan(plan_path)
         session = load_scan_session(session_path)
         storage = allocate_empty_tsdf_blocks(plan, session)
-        receipt = fuse_tsdf_plan_streaming(storage, session)
+        if checkpoint_path is None:
+            receipt = fuse_tsdf_plan_streaming(storage, session)
+        else:
+            progress = None
+            if checkpoint_path.exists():
+                # Loaded and matched to this plan before anything is
+                # replaced: the only file ever written over is a
+                # checkpoint of this same fusion.
+                progress = restore_tsdf_fusion_checkpoint(
+                    load_tsdf_fusion_checkpoint(checkpoint_path),
+                    storage,
+                )
+                resumed_from = progress.processed_observations
+                saved.append((checkpoint_path, resumed_from))
+            budget = stop_after
+            while (progress is None or not progress.is_complete) and (
+                budget is None or budget > 0
+            ):
+                before = (
+                    0 if progress is None else progress.processed_observations
+                )
+                progress = advance_tsdf_plan_streaming(
+                    storage,
+                    session,
+                    progress,
+                    observations=(
+                        checkpoint_every
+                        if budget is None
+                        else min(checkpoint_every, budget)
+                    ),
+                )
+                saved_report = write_tsdf_fusion_checkpoint(
+                    storage,
+                    progress,
+                    checkpoint_path,
+                    replace_existing=True,
+                )
+                checkpoints_written += 1
+                saved[:] = [
+                    (checkpoint_path, progress.processed_observations)
+                ]
+                if budget is not None:
+                    budget -= progress.processed_observations - before
+            if not progress.is_complete:
+                return _report_tsdf_block_volume_paused(
+                    plan,
+                    progress,
+                    checkpoint_path,
+                    resumed_from,
+                    checkpoints_written,
+                    saved_report,
+                )
+            receipt = finish_tsdf_plan_streaming(storage, session, progress)
         report = write_tsdf_block_volume(storage, receipt, output)
     except SessionValidationError as error:
         print(f"TSDF BLOCK VOLUME FAILED {plan_path}", file=sys.stderr)
@@ -6147,7 +6265,24 @@ def _run_tsdf_block_volume(
     except (TsdfError, SessionReplayError) as error:
         print(f"TSDF BLOCK VOLUME FAILED {plan_path}", file=sys.stderr)
         print(f"- {error}", file=sys.stderr)
+        for saved_path, reached in saved:
+            print(
+                f"- the first {reached} selected observations are saved "
+                f"in {saved_path}; run the same command to continue "
+                "from them",
+                file=sys.stderr,
+            )
         return 2
+
+    checkpoint_removed = False
+    if checkpoint_path is not None:
+        # The volume is on disk, so the checkpoint has nothing left to
+        # offer. It is this run's own file, or one this run verified.
+        try:
+            checkpoint_path.unlink(missing_ok=True)
+            checkpoint_removed = True
+        except OSError:
+            pass
 
     print(f"TSDF BLOCK VOLUME {report.session_id}", file=sys.stdout)
     print("artifact: valid", file=sys.stdout)
@@ -6222,6 +6357,21 @@ def _run_tsdf_block_volume(
     print("ledger_persisted: no", file=sys.stdout)
     print("free_space_coverage_planned: no", file=sys.stdout)
     print("plan_expanded: no", file=sys.stdout)
+    if checkpoint_path is not None:
+        print(
+            "resumed_from_selected_observation: "
+            + ("none" if resumed_from is None else str(resumed_from)),
+            file=sys.stdout,
+        )
+        print(
+            f"checkpoints_written: {checkpoints_written}",
+            file=sys.stdout,
+        )
+        print(
+            "checkpoint_removed: "
+            + ("yes" if checkpoint_removed else f"no ({checkpoint_path})"),
+            file=sys.stdout,
+        )
     print(f"volume_bytes: {report.output_bytes}", file=sys.stdout)
     print(f"output: {report.output}", file=sys.stdout)
     print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
@@ -6231,6 +6381,49 @@ def _run_tsdf_block_volume(
     )
     print(
         f"replay_digest_sha256: {report.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _report_tsdf_block_volume_paused(
+    plan,
+    progress,
+    checkpoint_path: Path,
+    resumed_from: int | None,
+    checkpoints_written: int,
+    saved_report,
+) -> int:
+    """Say where a deliberately stopped fusion has got to."""
+
+    print(f"TSDF BLOCK VOLUME PAUSED {plan.session_id}", file=sys.stdout)
+    print("artifact: valid", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "frames: "
+        f"total={progress.total_observations} "
+        f"selected={progress.selected_observations} "
+        f"processed={progress.processed_observations} "
+        f"fused={progress.fused_observations} "
+        f"remaining={progress.remaining_observations}",
+        file=sys.stdout,
+    )
+    print(
+        "resumed_from_selected_observation: "
+        + ("none" if resumed_from is None else str(resumed_from)),
+        file=sys.stdout,
+    )
+    print(f"checkpoints_written: {checkpoints_written}", file=sys.stdout)
+    print(f"checkpoint: {checkpoint_path}", file=sys.stdout)
+    print(f"checkpoint_bytes: {saved_report.output_bytes}", file=sys.stdout)
+    print(
+        f"checkpoint_sha256: {saved_report.output_digest_sha256}",
+        file=sys.stdout,
+    )
+    print("volume_written: no", file=sys.stdout)
+    print(f"plan_sha256: {plan.artifact_digest_sha256}", file=sys.stdout)
+    print(
+        f"replay_digest_sha256: {plan.replay_digest_sha256}",
         file=sys.stdout,
     )
     return 0
