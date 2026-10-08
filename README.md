@@ -513,3 +513,5 @@ mesh, validated on real sensor data and measured against a ground-truth
 surface for accuracy and for completeness. Pose estimation, localization
 and semantic mapping are outside it.
 Built as the reconstruction backend for an indoor navigation project.
+
+What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).
