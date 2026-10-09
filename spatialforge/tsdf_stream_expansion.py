@@ -34,6 +34,16 @@ the planned blocks and the camera centres, grown by that bound with ``m``
 replaced by the box's own diagonal, therefore contains every observed
 voxel. The test that a larger box finds nothing more is a check of this
 argument, not a substitute for it.
+
+Most of such a box is behind something. A block hidden by a wall is in
+the image and in front of the camera, so the two whole-block verdicts
+fusion uses do not settle it, and it would be evaluated voxel by voxel on
+every frame only to find, every time, that nothing lands. A third verdict
+settles it from the depth image. If the nearest corner of a block is
+farther than a truncation behind the largest depth measured anywhere in
+the rectangle of pixels the block projects into, no voxel of it can be
+within a truncation of what its own pixel measured. The largest depth in
+a rectangle is read from a small table built once per frame.
 """
 
 from __future__ import annotations
@@ -75,6 +85,16 @@ from .tsdf_stream_fusion import (
     _decode_metric_depth,
 )
 from .tsdf_voxel_contribution import _validate_contribution_plan
+
+# Whether blocks hidden behind a frame's surfaces are settled without
+# evaluating their voxels. The proposal does not depend on it.
+STREAM_EXPANSION_SKIPS_HIDDEN_BLOCKS = True
+# Pixels along the side of one cell of the largest-depth table.
+_DEPTH_TILE_PIXELS = 8
+# Slack on a block's nearest depth, relative to how far away it is, and
+# on the pixel rectangle it projects into. Both make the verdict rarer.
+_HIDDEN_RELATIVE_DEPTH_SLACK = 1e-9
+_HIDDEN_PIXEL_SLACK = 1
 
 # The candidate box is held as one bit and one index triple per block, and
 # the proposal lists every one of them as approved or rejected.
@@ -218,6 +238,17 @@ def propose_tsdf_plan_expansion_streaming(
                 camera, transform, candidates[pending], plan.voxel_size_m
             )
             visible = pending[verdicts == BLOCK_EVALUATE]
+            if STREAM_EXPANSION_SKIPS_HIDDEN_BLOCKS and len(visible):
+                visible = visible[
+                    ~_hidden_blocks(
+                        camera,
+                        transform,
+                        candidates[visible],
+                        plan.voxel_size_m,
+                        plan.truncation_m,
+                        _largest_depth_table(depth_m),
+                    )
+                ]
             for first in range(0, len(visible), STREAM_FUSION_CHUNK_BLOCKS):
                 rows = visible[first:first + STREAM_FUSION_CHUNK_BLOCKS]
                 _, _, weight_deltas = _evaluate_ready_voxels(
@@ -282,6 +313,176 @@ def propose_tsdf_plan_expansion_streaming(
         raise TsdfError(
             f"cannot complete TSDF stream expansion: {error}"
         ) from error
+
+
+def _largest_depth_table(depth_m: np.ndarray) -> list[list[np.ndarray]]:
+    """Tables from which the largest valid depth in any rectangle is read.
+
+    The image is cut into tiles and each tile keeps its largest valid
+    depth, or zero if it has none. ``table[i][j]`` then holds, for every
+    position, the largest value in a window of ``2**i`` by ``2**j`` tiles.
+    Any rectangle of tiles is covered by four such windows, so its largest
+    depth is the largest of four entries.
+    """
+
+    tile = _DEPTH_TILE_PIXELS
+    height, width = depth_m.shape
+    rows = -(-height // tile)
+    columns = -(-width // tile)
+    padded = np.zeros((rows * tile, columns * tile))
+    valid = np.isfinite(depth_m) & (depth_m > 0.0)
+    padded[:height, :width] = np.where(valid, depth_m, 0.0)
+    base = padded.reshape((rows, tile, columns, tile)).max(axis=(1, 3))
+
+    table: list[list[np.ndarray]] = [[base]]
+    span = 1
+    while 2 * span <= columns:
+        previous = table[0][-1]
+        table[0].append(
+            np.maximum(previous[:, :-span], previous[:, span:])
+        )
+        span *= 2
+    span = 1
+    while 2 * span <= rows:
+        table.append(
+            [
+                np.maximum(previous[:-span, :], previous[span:, :])
+                for previous in table[-1]
+            ]
+        )
+        span *= 2
+    return table
+
+
+def _largest_depth_in(
+    table: list[list[np.ndarray]],
+    first_row: np.ndarray,
+    last_row: np.ndarray,
+    first_column: np.ndarray,
+    last_column: np.ndarray,
+) -> np.ndarray:
+    """The largest tile value in each inclusive rectangle of tiles."""
+
+    result = np.zeros(len(first_row))
+
+    def level(extent: np.ndarray, levels: int) -> np.ndarray:
+        # The largest power of two not above the extent, counted in whole
+        # numbers. A logarithm would have to be trusted to be exact at
+        # exactly the extents where it matters.
+        found = np.zeros(len(extent), dtype=np.int64)
+        for power in range(1, levels):
+            found[extent >= (1 << power)] = power
+        return found
+
+    row_level = level(last_row - first_row + 1, len(table))
+    column_level = level(last_column - first_column + 1, len(table[0]))
+    for i in range(len(table)):
+        for j in range(len(table[0])):
+            chosen = np.flatnonzero((row_level == i) & (column_level == j))
+            if not len(chosen):
+                continue
+            window = table[i][j]
+            top = first_row[chosen]
+            bottom = last_row[chosen] - (1 << i) + 1
+            left = first_column[chosen]
+            right = last_column[chosen] - (1 << j) + 1
+            result[chosen] = np.maximum(
+                np.maximum(window[top, left], window[top, right]),
+                np.maximum(window[bottom, left], window[bottom, right]),
+            )
+    return result
+
+
+def _hidden_blocks(
+    camera,
+    transform: tuple[float, ...],
+    blocks: np.ndarray,
+    voxel_size_m: float,
+    truncation_m: float,
+    table: list[list[np.ndarray]],
+) -> np.ndarray:
+    """Blocks no voxel of which one frame can observe, by its depth image.
+
+    ``True`` promises that the evaluator would give no voxel of the block
+    a contribution from this frame. ``False`` promises nothing.
+
+    A block's voxel centres lie in the box its eight extreme centres span.
+    With all eight in front of the camera, every centre is at least as
+    deep as the nearest corner, and projects inside the rectangle the
+    corners' projections span. So if the nearest corner is more than a
+    truncation behind the largest depth measured in that rectangle, every
+    voxel is more than a truncation behind what its own pixel measured.
+    """
+
+    matrix = [float(component) for component in transform]
+    base = blocks * TSDF_BLOCK_RESOLUTION
+    corners = np.empty((len(blocks), 8, 3))
+    low = (base.astype(np.float64) + 0.5) * voxel_size_m
+    high = (
+        (base + (TSDF_BLOCK_RESOLUTION - 1)).astype(np.float64) + 0.5
+    ) * voxel_size_m
+    for corner in range(8):
+        for axis in range(3):
+            corners[:, corner, axis] = (
+                high if (corner >> axis) & 1 else low
+            )[:, axis]
+    delta_x = corners[:, :, 0] - matrix[3]
+    delta_y = corners[:, :, 1] - matrix[7]
+    delta_z = corners[:, :, 2] - matrix[11]
+    camera_x = matrix[0] * delta_x + matrix[4] * delta_y + matrix[8] * delta_z
+    camera_y = matrix[1] * delta_x + matrix[5] * delta_y + matrix[9] * delta_z
+    camera_z = matrix[2] * delta_x + matrix[6] * delta_y + matrix[10] * delta_z
+    reach = np.maximum(
+        np.maximum(np.abs(delta_x), np.abs(delta_y)), np.abs(delta_z)
+    ).max(axis=1)
+    slack = _HIDDEN_RELATIVE_DEPTH_SLACK * (1.0 + reach)
+    nearest = camera_z.min(axis=1)
+    # Only a block wholly in front of the camera has a rectangle to speak
+    # of; anything else is left to the evaluator.
+    settled = np.isfinite(reach) & (nearest > slack)
+    safe_z = np.where(settled[:, None], camera_z, 1.0)
+    with np.errstate(over="ignore", invalid="ignore"):
+        u = camera.fx * camera_x / safe_z + camera.cx
+        v = camera.fy * camera_y / safe_z + camera.cy
+        first_column = np.floor(u.min(axis=1) + 0.5) - _HIDDEN_PIXEL_SLACK
+        last_column = np.floor(u.max(axis=1) + 0.5) + _HIDDEN_PIXEL_SLACK
+        first_row = np.floor(v.min(axis=1) + 0.5) - _HIDDEN_PIXEL_SLACK
+        last_row = np.floor(v.max(axis=1) + 0.5) + _HIDDEN_PIXEL_SLACK
+    settled &= (
+        np.isfinite(first_column)
+        & np.isfinite(last_column)
+        & np.isfinite(first_row)
+        & np.isfinite(last_row)
+    )
+    # Pixels outside the image measure nothing, so the rectangle can be
+    # cut to the image; a block that misses it entirely is not this
+    # verdict's to give.
+    tile = _DEPTH_TILE_PIXELS
+    tile_rows, tile_columns = table[0][0].shape
+    settled &= (
+        (last_column >= 0)
+        & (first_column <= camera.width - 1)
+        & (last_row >= 0)
+        & (first_row <= camera.height - 1)
+    )
+    index = np.flatnonzero(settled)
+    hidden = np.zeros(len(blocks), dtype=bool)
+    if not len(index):
+        return hidden
+
+    def tiles(values: np.ndarray, limit: int, count: int) -> np.ndarray:
+        clipped = np.clip(values[index], 0, limit - 1).astype(np.int64)
+        return np.minimum(clipped // tile, count - 1)
+
+    largest = _largest_depth_in(
+        table,
+        tiles(first_row, camera.height, tile_rows),
+        tiles(last_row, camera.height, tile_rows),
+        tiles(first_column, camera.width, tile_columns),
+        tiles(last_column, camera.width, tile_columns),
+    )
+    hidden[index] = (nearest[index] - slack[index]) > (largest + truncation_m)
+    return hidden
 
 
 def _candidate_blocks(

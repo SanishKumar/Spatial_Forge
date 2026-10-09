@@ -50,9 +50,20 @@ from spatialforge.tsdf_expanded_plan import write_tsdf_expanded_block_plan
 from spatialforge.tsdf_plan_expansion import (
     propose_tsdf_plan_expansion_from_domain,
 )
+from spatialforge.tsdf_block_contributions import _evaluate_ready_voxels
 from spatialforge.tsdf_stream_expansion import (
+    _DEPTH_TILE_PIXELS,
+    _hidden_blocks,
+    _largest_depth_in,
+    _largest_depth_table,
     candidate_box_margin_m,
     propose_tsdf_plan_expansion_streaming,
+)
+from spatialforge.tsdf_stream_fusion import (
+    BLOCK_EVALUATE,
+    _chunk_voxel_centres_world_m,
+    _classify_blocks,
+    _decode_metric_depth,
 )
 
 from tests.heavy_fixtures import shared_case, shared_room_case
@@ -350,6 +361,140 @@ class RoomScanTests(unittest.TestCase):
         self.assertGreater(len(outside), 1000)
         seen, _ = observed_blocks(room.plan, room.session, outside)
         self.assertFalse(seen.any())
+
+
+class HiddenBlockTests(unittest.TestCase):
+    """The verdict that settles a block behind a frame's surfaces."""
+
+    def test_a_block_called_hidden_receives_nothing(self) -> None:
+        room = shared_room_case()
+        proposal = propose_tsdf_plan_expansion_streaming(
+            room.plan, room.session
+        )
+        blocks = np.asarray(proposal.domain_block_indices, dtype=np.int64)
+        camera, depth_scale_m = _validate_reconstruction_contract(room.session)
+        hidden_total = 0
+        observed_total = 0
+        nothing_total = 0
+        for observation in replay_session(room.session).observations[::3]:
+            transform = tuple(observation.pose.data["T_world_camera"])
+            depth_m = _decode_metric_depth(
+                room.session,
+                observation,
+                camera.width,
+                camera.height,
+                depth_scale_m,
+            )
+            in_view = np.flatnonzero(
+                _classify_blocks(
+                    camera, transform, blocks, room.plan.voxel_size_m
+                )
+                == BLOCK_EVALUATE
+            )
+            hidden = _hidden_blocks(
+                camera,
+                transform,
+                blocks[in_view],
+                room.plan.voxel_size_m,
+                room.plan.truncation_m,
+                _largest_depth_table(depth_m),
+            )
+            _, _, weights = _evaluate_ready_voxels(
+                camera,
+                transform,
+                depth_m,
+                room.plan.truncation_m,
+                _chunk_voxel_centres_world_m(
+                    blocks[in_view], room.plan.voxel_size_m
+                ),
+            )
+            received = weights.reshape((len(in_view), 512)).any(axis=1)
+            # The promise: hidden means the evaluator gives nothing.
+            self.assertFalse(np.any(hidden & received))
+            hidden_total += int(hidden.sum())
+            observed_total += int(received.sum())
+            nothing_total += int((~received).sum())
+        # And it is a verdict that gets given. On this small image, with
+        # tiles an eighth of its width, it settles 994 of the 2,287 blocks
+        # that are in view and receive nothing.
+        self.assertGreater(observed_total, 1000)
+        self.assertGreater(nothing_total, 2000)
+        self.assertGreater(hidden_total, nothing_total // 3)
+
+    def test_the_proposal_does_not_depend_on_it(self) -> None:
+        room = shared_room_case()
+        cases = [(room.plan, room.session)]
+        for raw_depth, stride in ((3000, 2), (6000, 1)):
+            case = shared_case(raw_depth, stride)
+            cases.append((case.plan, load_scan_session(case.session_path)))
+        for plan, session in cases:
+            with self.subTest(session=session.session_id, plan=plan.path.name):
+                with_it = propose_tsdf_plan_expansion_streaming(plan, session)
+                with patch(
+                    "spatialforge.tsdf_stream_expansion."
+                    "STREAM_EXPANSION_SKIPS_HIDDEN_BLOCKS",
+                    False,
+                ):
+                    without = propose_tsdf_plan_expansion_streaming(
+                        plan, session
+                    )
+                self.assertEqual(with_it, without)
+
+    def test_the_table_gives_the_largest_depth_in_any_rectangle(self) -> None:
+        generator = np.random.default_rng(89)
+        height, width = 53, 77  # not multiples of the tile
+        depth = generator.uniform(0.3, 6.0, size=(height, width))
+        depth[generator.random((height, width)) < 0.2] = 0.0
+        depth[5, 7] = np.nan
+        depth[9, 3] = np.inf
+        depth[11, 2] = -1.0
+        table = _largest_depth_table(depth)
+        tile = _DEPTH_TILE_PIXELS
+        rows = -(-height // tile)
+        columns = -(-width // tile)
+        self.assertEqual(table[0][0].shape, (rows, columns))
+        valid = np.where(np.isfinite(depth) & (depth > 0.0), depth, 0.0)
+        first_row = generator.integers(0, rows, size=600)
+        last_row = np.maximum(first_row, generator.integers(0, rows, size=600))
+        first_column = generator.integers(0, columns, size=600)
+        last_column = np.maximum(
+            first_column, generator.integers(0, columns, size=600)
+        )
+        answers = _largest_depth_in(
+            table, first_row, last_row, first_column, last_column
+        )
+        for index in range(600):
+            expected = valid[
+                first_row[index] * tile:(last_row[index] + 1) * tile,
+                first_column[index] * tile:(last_column[index] + 1) * tile,
+            ].max()
+            self.assertEqual(answers[index], expected)
+        # One tile, one row of tiles, one column, and the whole image.
+        whole = _largest_depth_in(
+            table,
+            np.array([0]),
+            np.array([rows - 1]),
+            np.array([0]),
+            np.array([columns - 1]),
+        )
+        self.assertEqual(whole[0], valid.max())
+
+    def test_a_frame_with_no_depth_hides_everything_in_front_of_it(
+        self,
+    ) -> None:
+        camera = SimpleNamespace(
+            width=64, height=48, fx=48.0, fy=48.0, cx=31.5, cy=23.5
+        )
+        identity = (1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0)
+        table = _largest_depth_table(np.zeros((48, 64)))
+        # Blocks along the optical axis, 0.32 m to the block at 0.04 m
+        # voxels: one straddling the camera, the rest in front of it.
+        blocks = np.array([[0, 0, z] for z in (-1, 0, 2, 9)], dtype=np.int64)
+        hidden = _hidden_blocks(camera, identity, blocks, 0.04, 0.12, table)
+        # Straddling or behind the camera is never this verdict's to give.
+        # The block starting at the camera has voxels nearer than a
+        # truncation, where nothing measured still hides nothing.
+        self.assertEqual(hidden.tolist(), [False, False, True, True])
 
 
 class CandidateBoxTests(unittest.TestCase):
