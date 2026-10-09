@@ -290,6 +290,11 @@ def build_tsdf_block_mesh(
     )
 
 
+# Blocks whose cells are classified per pass. The mesh does not depend on
+# it; what the mesher needs beyond the volume's values does.
+_CLASSIFICATION_CHUNK_BLOCKS = 2048
+
+
 def triangulate_tsdf_block_volume(
     volume: TsdfBlockVolume,
     *,
@@ -307,37 +312,84 @@ def triangulate_tsdf_block_volume(
         values[volume.weights < minimum_weight] = np.nan
     blocks = np.asarray(volume.block_indices, dtype=np.int64)
 
-    patch = _neighbour_patches(values, volume.block_indices)
-    known = np.ones(values.shape, dtype=bool)
-    nonzero = np.ones(values.shape, dtype=bool)
-    any_negative = np.zeros(values.shape, dtype=bool)
-    any_positive = np.zeros(values.shape, dtype=bool)
-    for offset_x, offset_y, offset_z in _CORNER_OFFSETS:
-        corner = patch[
-            :,
-            offset_z:offset_z + _SIDE,
-            offset_y:offset_y + _SIDE,
-            offset_x:offset_x + _SIDE,
-        ]
-        known &= ~np.isnan(corner)
-        nonzero &= corner != 0.0
-        any_negative |= corner < 0.0
-        any_positive |= corner > 0.0
-
+    # Every cell is classified, and almost none of them hold surface. The
+    # classification is made a run of blocks at a time, keeping only the
+    # cells that do and the eight corner values of each, so that what it
+    # needs is a run's worth of room and not several copies of the
+    # volume. Rows are taken in order, so the cells come out in the order
+    # a single pass over the whole volume would give them.
+    neighbours = _neighbour_rows(volume.block_indices)
     considered = int(values.size)
-    unknown_cells = considered - int(np.count_nonzero(known))
-    eligible_mask = known & nonzero
-    eligible = int(np.count_nonzero(eligible_mask))
-    exact_zero = int(np.count_nonzero(known)) - eligible
-    active_mask = eligible_mask & any_negative & any_positive
-    row, local_z, local_y, local_x = np.nonzero(active_mask)
-    active = int(row.size)
+    known_count = 0
+    eligible = 0
+    found_rows = []
+    found_z = []
+    found_y = []
+    found_x = []
+    found_corners = []
+    for first in range(0, len(blocks), _CLASSIFICATION_CHUNK_BLOCKS):
+        patch = _neighbour_patches(
+            values, neighbours, first, first + _CLASSIFICATION_CHUNK_BLOCKS
+        )
+        shape = (len(patch), _SIDE, _SIDE, _SIDE)
+        known = np.ones(shape, dtype=bool)
+        nonzero = np.ones(shape, dtype=bool)
+        any_negative = np.zeros(shape, dtype=bool)
+        any_positive = np.zeros(shape, dtype=bool)
+        for offset_x, offset_y, offset_z in _CORNER_OFFSETS:
+            corner = patch[
+                :,
+                offset_z:offset_z + _SIDE,
+                offset_y:offset_y + _SIDE,
+                offset_x:offset_x + _SIDE,
+            ]
+            known &= ~np.isnan(corner)
+            nonzero &= corner != 0.0
+            any_negative |= corner < 0.0
+            any_positive |= corner > 0.0
+        known_count += int(np.count_nonzero(known))
+        eligible_mask = known & nonzero
+        eligible += int(np.count_nonzero(eligible_mask))
+        chunk_row, chunk_z, chunk_y, chunk_x = np.nonzero(
+            eligible_mask & any_negative & any_positive
+        )
+        if not len(chunk_row):
+            continue
+        found_rows.append(chunk_row + first)
+        found_z.append(chunk_z)
+        found_y.append(chunk_y)
+        found_x.append(chunk_x)
+        found_corners.append(
+            np.stack(
+                [
+                    patch[
+                        chunk_row,
+                        chunk_z + offset_z,
+                        chunk_y + offset_y,
+                        chunk_x + offset_x,
+                    ]
+                    for offset_x, offset_y, offset_z in _CORNER_OFFSETS
+                ],
+                axis=1,
+            )
+        )
+
+    unknown_cells = considered - known_count
+    exact_zero = known_count - eligible
+    active = sum(len(part) for part in found_rows)
     if active == 0:
         raise MeshExtractionError(
             "TSDF block volume produced no triangles "
             f"(cells={considered}, unknown={unknown_cells}, "
             f"exact_zero={exact_zero}, eligible={eligible})"
         )
+
+    row = np.concatenate(found_rows)
+    local_z = np.concatenate(found_z)
+    local_y = np.concatenate(found_y)
+    local_x = np.concatenate(found_x)
+    corner_values = np.concatenate(found_corners)
+    del found_rows, found_z, found_y, found_x, found_corners
 
     # Linearise global voxel indices over the block bounding box. This is
     # the dense flat index the reference uses, so "lower voxel of an edge"
@@ -372,19 +424,7 @@ def triangulate_tsdf_block_volume(
     )
     anchor = anchor[order]
     flat = flat[order]
-    corner_values = np.stack(
-        [
-            patch[
-                row,
-                local_z + offset_z,
-                local_y + offset_y,
-                local_x + offset_x,
-            ]
-            for offset_x, offset_y, offset_z in _CORNER_OFFSETS
-        ],
-        axis=1,
-    )
-    del patch, known, nonzero, any_negative, any_positive, eligible_mask
+    corner_values = corner_values[order]
     flat_offset = (
         _OFFSETS[:, 2] * extent[1] + _OFFSETS[:, 1]
     ) * extent[0] + _OFFSETS[:, 0]
@@ -494,29 +534,22 @@ def triangulate_tsdf_block_volume(
     )
 
 
-def _neighbour_patches(
-    values: np.ndarray,
+def _neighbour_rows(
     block_indices: tuple[tuple[int, int, int], ...],
-) -> np.ndarray:
-    """Extend each block by one voxel into its +x, +y and +z neighbours.
+) -> dict[tuple[int, int, int], np.ndarray]:
+    """For each of the seven +x, +y, +z neighbours, the row it is stored in.
 
-    A cell anchored on a block's upper faces needs corners that belong to up
-    to seven neighbouring blocks. Blocks that are not planned contribute
-    unknown voxels, exactly as unobserved voxels do.
+    A neighbour that is not planned is given the number of blocks, one past
+    the last row, as a marker.
     """
 
     block_count = len(block_indices)
     row_of = {index: row for row, index in enumerate(block_indices)}
-    padded = np.concatenate(
-        [values, np.full((1, _SIDE, _SIDE, _SIDE), np.nan)],
-        axis=0,
-    )
-
-    def rows(offset_x: int, offset_y: int, offset_z: int) -> np.ndarray:
-        return np.fromiter(
+    return {
+        offset: np.fromiter(
             (
                 row_of.get(
-                    (x + offset_x, y + offset_y, z + offset_z),
+                    (x + offset[0], y + offset[1], z + offset[2]),
                     block_count,
                 )
                 for x, y, z in block_indices
@@ -524,19 +557,58 @@ def _neighbour_patches(
             dtype=np.int64,
             count=block_count,
         )
+        for offset in (
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 1, 0),
+            (1, 0, 1),
+            (0, 1, 1),
+            (1, 1, 1),
+        )
+    }
 
+
+def _neighbour_patches(
+    values: np.ndarray,
+    neighbours: dict[tuple[int, int, int], np.ndarray],
+    first: int,
+    stop: int,
+) -> np.ndarray:
+    """Extend a run of blocks by one voxel into their +x, +y, +z neighbours.
+
+    A cell anchored on a block's upper faces needs corners that belong to up
+    to seven neighbouring blocks. Blocks that are not planned contribute
+    unknown voxels, exactly as unobserved voxels do.
+    """
+
+    block_count = len(values)
+    run = values[first:stop]
     patch = np.full(
-        (block_count, _SIDE + 1, _SIDE + 1, _SIDE + 1),
+        (len(run), _SIDE + 1, _SIDE + 1, _SIDE + 1),
         np.nan,
     )
-    patch[:, :_SIDE, :_SIDE, :_SIDE] = values
-    patch[:, :_SIDE, :_SIDE, _SIDE] = padded[rows(1, 0, 0), :, :, 0]
-    patch[:, :_SIDE, _SIDE, :_SIDE] = padded[rows(0, 1, 0), :, 0, :]
-    patch[:, _SIDE, :_SIDE, :_SIDE] = padded[rows(0, 0, 1), 0, :, :]
-    patch[:, :_SIDE, _SIDE, _SIDE] = padded[rows(1, 1, 0), :, 0, 0]
-    patch[:, _SIDE, :_SIDE, _SIDE] = padded[rows(1, 0, 1), 0, :, 0]
-    patch[:, _SIDE, _SIDE, :_SIDE] = padded[rows(0, 1, 1), 0, 0, :]
-    patch[:, _SIDE, _SIDE, _SIDE] = padded[rows(1, 1, 1), 0, 0, 0]
+    patch[:, :_SIDE, :_SIDE, :_SIDE] = run
+    whole = slice(None, _SIDE)
+    for offset, source in (
+        # Where the neighbour's voxels go in the patch, as z, y, x, and
+        # which of the neighbour's own voxels they are.
+        ((1, 0, 0), (whole, whole, _SIDE)),
+        ((0, 1, 0), (whole, _SIDE, whole)),
+        ((0, 0, 1), (_SIDE, whole, whole)),
+        ((1, 1, 0), (whole, _SIDE, _SIDE)),
+        ((1, 0, 1), (_SIDE, whole, _SIDE)),
+        ((0, 1, 1), (_SIDE, _SIDE, whole)),
+        ((1, 1, 1), (_SIDE, _SIDE, _SIDE)),
+    ):
+        rows = neighbours[offset][first:stop]
+        planned = np.flatnonzero(rows < block_count)
+        if not len(planned):
+            continue
+        taken = tuple(
+            0 if part == _SIDE else whole for part in source
+        )
+        patch[(planned,) + source] = values[(rows[planned],) + taken]
     return patch
 
 
