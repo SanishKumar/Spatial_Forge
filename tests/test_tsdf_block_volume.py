@@ -14,9 +14,11 @@ import io
 import json
 import struct
 import tempfile
+import tracemalloc
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -241,6 +243,58 @@ class BlockVolumeRoundTripTests(unittest.TestCase):
         self.assertEqual(volume.block_count, 351)
         self.assertEqual(volume.contributions_applied, 1_127_112)
         self.assertEqual(volume.observed_voxel_count, 81_292)
+
+    def test_a_volume_is_written_and_loaded_without_a_copy_of_it(
+        self,
+    ) -> None:
+        # A volume is as large as anything this project holds, and the
+        # ceiling on its size is set by how much room handling one takes.
+        # Writing must take none beyond the storage already there, and
+        # loading the file's own bytes and nothing like twice that.
+        case = shared_room_case()
+        storage = allocate_empty_tsdf_blocks(case.plan, case.session)
+        receipt = fuse_tsdf_plan_streaming(storage, case.session)
+        payload = storage.tsdf_sums.nbytes + storage.weights.nbytes
+        self.assertEqual(payload, 351 * 6144)
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            output = Path(temporary_dir) / "room.sftvol"
+            tracemalloc.start()
+            try:
+                tracemalloc.reset_peak()
+                before, _ = tracemalloc.get_traced_memory()
+                write_tsdf_block_volume(storage, receipt, output)
+                _, peak = tracemalloc.get_traced_memory()
+                written = peak - before
+
+                tracemalloc.reset_peak()
+                before, _ = tracemalloc.get_traced_memory()
+                # The payload is verified a run of blocks at a time. This
+                # room is smaller than one run, so the run is made short
+                # here to check what a large volume would be given.
+                with patch(
+                    "spatialforge.tsdf_block_volume."
+                    "_VALIDATION_CHUNK_BLOCKS",
+                    16,
+                ):
+                    volume = load_tsdf_block_volume(output)
+                _, peak = tracemalloc.get_traced_memory()
+                loaded = peak - before
+            finally:
+                tracemalloc.stop()
+            size = output.stat().st_size
+
+        self.assertGreater(size, payload)
+        # Joining the pieces into one bytes object took three times the
+        # payload. Written from where they are, the accumulators cost
+        # nothing; what is left is the block indices and the header.
+        self.assertLess(written, payload // 10)
+        # The file is read once. Slicing it into its arrays, as bytes,
+        # used to be a second copy.
+        self.assertGreater(loaded, size)
+        self.assertLess(loaded, size + payload // 4)
+        self.assertEqual(
+            volume.tsdf_sums.tobytes(), storage.tsdf_sums.tobytes()
+        )
 
 
 class BlockVolumeWriterGuardTests(unittest.TestCase):

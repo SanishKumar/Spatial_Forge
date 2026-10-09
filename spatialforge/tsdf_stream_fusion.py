@@ -90,6 +90,8 @@ from .tsdf_voxel_update import (
 # temporaries of one pass stay cache-resident, which is worth more than the
 # Python overhead it costs; the fused bytes do not depend on it.
 STREAM_FUSION_CHUNK_BLOCKS = 256
+# Blocks per pass when a stage's accumulators are checked at its end.
+_FINAL_CHECK_CHUNK_BLOCKS = 4096
 
 # Verdicts of the whole-block visibility test.
 BLOCK_EVALUATE = 0
@@ -793,11 +795,32 @@ def _fuse_stage(
                 "session inputs changed during TSDF stream fusion; rerun "
                 "the command"
             )
-        if not np.all(np.isfinite(sums)):
+        # Checked a run of blocks at a time. Taken over the whole storage at
+        # once, the second test alone needs a temporary the size of the
+        # sums, and it is made at the end of every stage.
+        runs = range(0, len(blocks), _FINAL_CHECK_CHUNK_BLOCKS)
+        if not all(
+            bool(
+                np.all(
+                    np.isfinite(
+                        block_sums[first:first + _FINAL_CHECK_CHUNK_BLOCKS]
+                    )
+                )
+            )
+            for first in runs
+        ):
             raise TsdfError(
                 "TSDF stream fusion produced a non-finite sum"
             )
-        if np.any(np.abs(sums) > weights):
+        if any(
+            bool(
+                np.any(
+                    np.abs(block_sums[first:first + _FINAL_CHECK_CHUNK_BLOCKS])
+                    > block_weights[first:first + _FINAL_CHECK_CHUNK_BLOCKS]
+                )
+            )
+            for first in runs
+        ):
             raise TsdfError(
                 "TSDF stream fusion sum exceeds its weight envelope"
             )
@@ -848,8 +871,13 @@ def _fuse_stage(
 def storage_payload_sha256(array: np.ndarray) -> str:
     """Digest one storage array as little-endian C-ordered bytes."""
 
-    canonical = array.astype(array.dtype.newbyteorder("<"), copy=False)
-    return hashlib.sha256(canonical.tobytes(order="C")).hexdigest()
+    # Hashed where it lies. On a little-endian machine this is the array's
+    # own buffer; turning it into bytes first would be a copy of the
+    # largest thing fusion holds, made once per stage only to be read.
+    canonical = np.ascontiguousarray(
+        array, dtype=array.dtype.newbyteorder("<")
+    )
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _decode_metric_depth(

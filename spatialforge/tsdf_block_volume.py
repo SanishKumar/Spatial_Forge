@@ -86,6 +86,8 @@ _TSDF_SIGN = "positive-free-space-negative-behind-surface"
 _NORMALIZATION = "tsdf-sum-divided-by-weight"
 _UNKNOWN_RULE = "weight-zero"
 _MAX_HEADER_NESTING = 8
+# Blocks checked per pass when a loaded payload is verified.
+_VALIDATION_CHUNK_BLOCKS = 4096
 _PAYLOAD_LAYOUT = (
     "block_indices:int32:[blocks,3]",
     "tsdf_sums:float64:[blocks,8,8,8]",
@@ -223,13 +225,11 @@ def write_tsdf_block_volume(
 
     block_indices = np.asarray(storage.block_indices, dtype=np.int64)
     index_payload = block_indices.astype(_INDEX_DTYPE).tobytes(order="C")
-    sum_payload = storage.tsdf_sums.astype(_SUM_DTYPE, copy=False).tobytes(
-        order="C"
-    )
-    weight_payload = storage.weights.astype(
-        _WEIGHT_DTYPE,
-        copy=False,
-    ).tobytes(order="C")
+    # The accumulators are written from where they are. On a
+    # little-endian machine these are the storage's own buffers, so
+    # writing a volume needs no second copy of it.
+    sums = np.ascontiguousarray(storage.tsdf_sums, dtype=_SUM_DTYPE)
+    weights = np.ascontiguousarray(storage.weights, dtype=_WEIGHT_DTYPE)
 
     header = _build_header(
         session_id=plan.session_id,
@@ -256,22 +256,21 @@ def write_tsdf_block_volume(
     if len(encoded_header) > MAX_TSDF_BLOCK_VOLUME_HEADER_BYTES:
         raise TsdfError("TSDF block volume header exceeds its size limit")
 
-    encoded = b"".join(
+    output_digest, output_bytes = _write_without_overwrite(
+        output_path,
         (
             TSDF_BLOCK_VOLUME_MAGIC,
             struct.pack("<Q", len(encoded_header)),
             encoded_header,
             index_payload,
-            sum_payload,
-            weight_payload,
-        )
+            memoryview(sums).cast("B"),
+            memoryview(weights).cast("B"),
+        ),
     )
-    output_digest = hashlib.sha256(encoded).hexdigest()
-    _write_without_overwrite(output_path, encoded)
     return TsdfBlockVolumeReport(
         output=output_path,
         output_digest_sha256=output_digest,
-        output_bytes=len(encoded),
+        output_bytes=output_bytes,
         session_id=plan.session_id,
         block_count=storage.block_count,
         voxel_slots=storage.voxel_slots,
@@ -293,7 +292,13 @@ def load_tsdf_block_volume(path: str | Path) -> TsdfBlockVolume:
         raise TsdfError(f"TSDF block volume does not exist: {input_path}")
     try:
         with input_path.open("rb") as input_file:
-            encoded = input_file.read(MAX_TSDF_BLOCK_VOLUME_BYTES + 1)
+            # Asked for by its own size, and one byte more to notice if it
+            # grew. A read of "up to the maximum" reserves the maximum,
+            # whatever the file turns out to hold.
+            size = os.fstat(input_file.fileno()).st_size
+            encoded = input_file.read(
+                min(size, MAX_TSDF_BLOCK_VOLUME_BYTES) + 1
+            )
     except OSError as error:
         raise TsdfError(f"cannot read TSDF block volume: {error}") from error
     if len(encoded) > MAX_TSDF_BLOCK_VOLUME_BYTES:
@@ -302,6 +307,9 @@ def load_tsdf_block_volume(path: str | Path) -> TsdfBlockVolume:
             f"{MAX_TSDF_BLOCK_VOLUME_BYTES} bytes"
         )
     digest = hashlib.sha256(encoded).hexdigest()
+    # Everything below reads the file through views. A slice of the
+    # bytes would be a copy, and three of them a second volume.
+    contents = memoryview(encoded)
 
     if len(encoded) < _PREAMBLE_BYTES or not encoded.startswith(
         TSDF_BLOCK_VOLUME_MAGIC
@@ -330,11 +338,11 @@ def load_tsdf_block_volume(path: str | Path) -> TsdfBlockVolume:
         )
     index_bytes = 3 * _INDEX_DTYPE.itemsize * block_count
     sum_bytes = TSDF_BLOCK_VOXELS * _SUM_DTYPE.itemsize * block_count
-    index_payload = encoded[payload_offset:payload_offset + index_bytes]
-    sum_payload = encoded[
+    index_payload = contents[payload_offset:payload_offset + index_bytes]
+    sum_payload = contents[
         payload_offset + index_bytes:payload_offset + index_bytes + sum_bytes
     ]
-    weight_payload = encoded[payload_offset + index_bytes + sum_bytes:]
+    weight_payload = contents[payload_offset + index_bytes + sum_bytes:]
     for payload, name in (
         (index_payload, "block_indices"),
         (sum_payload, "tsdf_sums"),
@@ -710,20 +718,32 @@ def _validate_accumulators(
 ) -> None:
     """Re-derive what the header claims from the payload it describes."""
 
-    if not bool(np.all(np.isfinite(tsdf_sums))):
-        raise TsdfError("TSDF block volume contains a non-finite sum")
-    if bool(np.any(np.abs(tsdf_sums) > weights)):
-        raise TsdfError(
-            "TSDF block volume sum exceeds its weight envelope"
-        )
-    unobserved = weights == 0
-    if bool(np.any(np.signbit(tsdf_sums[unobserved]))):
-        raise TsdfError(
-            "TSDF block volume unobserved voxel is not canonical zero"
-        )
-    observed = int(np.count_nonzero(weights))
-    maximum = int(weights.max())
-    applied = int(weights.sum(dtype=np.uint64))
+    # A run of blocks at a time, so the checks need room for a few
+    # megabytes of temporaries and not for another copy of the volume.
+    # The order of the checks within a run is the order they have
+    # always been made in.
+    observed = 0
+    maximum = 0
+    applied = 0
+    for first in range(0, len(weights), _VALIDATION_CHUNK_BLOCKS):
+        sums = tsdf_sums[first:first + _VALIDATION_CHUNK_BLOCKS]
+        counts = weights[first:first + _VALIDATION_CHUNK_BLOCKS]
+        if not bool(np.all(np.isfinite(sums))):
+            raise TsdfError(
+                "TSDF block volume contains a non-finite sum"
+            )
+        if bool(np.any(np.abs(sums) > counts)):
+            raise TsdfError(
+                "TSDF block volume sum exceeds its weight envelope"
+            )
+        if bool(np.any(np.signbit(sums[counts == 0]))):
+            raise TsdfError(
+                "TSDF block volume unobserved voxel is not canonical "
+                "zero"
+            )
+        observed += int(np.count_nonzero(counts))
+        maximum = max(maximum, int(counts.max()))
+        applied += int(counts.sum(dtype=np.uint64))
     if (
         observed != fusion["observed_voxels"]
         or maximum != fusion["maximum_weight"]
@@ -747,7 +767,14 @@ def _validate_output(output: str | Path) -> Path:
     return output_path
 
 
-def _write_without_overwrite(output_path: Path, encoded: bytes) -> None:
+def _write_without_overwrite(
+    output_path: Path,
+    pieces: tuple[bytes | memoryview, ...],
+) -> tuple[str, int]:
+    """Write the pieces in order; return the file's digest and size."""
+
+    digest = hashlib.sha256()
+    written = 0
     temporary_path: Path | None = None
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -758,7 +785,10 @@ def _write_without_overwrite(output_path: Path, encoded: bytes) -> None:
         )
         temporary_path = Path(temporary_name)
         with open(descriptor, "wb", closefd=True) as output_file:
-            output_file.write(encoded)
+            for piece in pieces:
+                output_file.write(piece)
+                digest.update(piece)
+                written += len(piece)
         try:
             os.link(temporary_path, output_path)
         except FileExistsError as error:
@@ -783,6 +813,7 @@ def _write_without_overwrite(output_path: Path, encoded: bytes) -> None:
                 temporary_path.unlink(missing_ok=True)
             except OSError:
                 pass
+    return digest.hexdigest(), written
 
 
 def _object(

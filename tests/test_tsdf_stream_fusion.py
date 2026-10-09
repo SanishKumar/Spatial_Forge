@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import tracemalloc
 import unittest
 from contextlib import ExitStack, contextmanager
 from dataclasses import FrozenInstanceError, replace
@@ -249,6 +250,58 @@ class StreamFusionParityTests(unittest.TestCase):
 
 
 class StreamFusionMemoryTests(unittest.TestCase):
+    def test_fusing_allocates_nothing_the_size_of_the_storage(self) -> None:
+        # The accumulators are the largest thing fusion holds, and how
+        # many blocks a plan may have is set by what holding them costs.
+        # So fusion itself must not need a second copy: not to check the
+        # sums at the end, and not to take their digest.
+        room = shared_room_case()
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary_dir:
+            # The room again at half the voxel size, so that the storage is
+            # several times anything else a pass has to hold. Replaying the
+            # scan to check it reads files of about a megabyte.
+            plan_path = Path(temporary_dir) / "fine.sftplan"
+            plan_tsdf_blocks(
+                load_scan_session(room.session_path),
+                plan_path,
+                voxel_size_m=0.02,
+                truncation_m=0.06,
+            )
+            plan = load_tsdf_block_plan(plan_path)
+            storage = allocate_empty_tsdf_blocks(plan, room.session)
+            payload = storage.tsdf_sums.nbytes + storage.weights.nbytes
+            # A run of blocks is short next to this plan, as it would be
+            # next to a large one.
+            with (
+                patch(
+                    "spatialforge.tsdf_stream_fusion."
+                    "STREAM_FUSION_CHUNK_BLOCKS",
+                    16,
+                ),
+                patch(
+                    "spatialforge.tsdf_stream_fusion."
+                    "_FINAL_CHECK_CHUNK_BLOCKS",
+                    16,
+                ),
+            ):
+                tracemalloc.start()
+                try:
+                    before, _ = tracemalloc.get_traced_memory()
+                    tracemalloc.reset_peak()
+                    receipt = fuse_tsdf_plan_streaming(storage, room.session)
+                    _, peak = tracemalloc.get_traced_memory()
+                finally:
+                    tracemalloc.stop()
+
+        self.assertGreater(payload, 6_000_000)
+        self.assertEqual(receipt.block_count * 6144, payload)
+        self.assertGreater(receipt.applied_count, 1_000_000)
+        # The sums alone are two thirds of the payload, and checking them
+        # in one piece used to need a temporary that size: a pass peaked
+        # at 0.77 of the payload. It peaks at 0.20 now, most of that the
+        # replay.
+        self.assertLess(peak - before, payload // 3)
+
     def test_it_fuses_a_scan_the_all_frames_context_refuses(self) -> None:
         """The point of streaming: sequence length stops being a limit."""
 

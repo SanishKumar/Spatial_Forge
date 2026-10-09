@@ -83,6 +83,7 @@ MAX_TSDF_FUSION_CHECKPOINT_BYTES = (
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _MAX_HEADER_NESTING = 8
+_VALIDATION_CHUNK_BLOCKS = 4096
 _PAYLOAD_LAYOUT = (
     "tsdf_sums:float64:[blocks,8,8,8]",
     "weights:uint32:[blocks,8,8,8]",
@@ -255,7 +256,12 @@ def load_tsdf_fusion_checkpoint(path: str | Path) -> TsdfFusionCheckpoint:
         raise TsdfError(f"TSDF fusion checkpoint does not exist: {input_path}")
     try:
         with input_path.open("rb") as input_file:
-            encoded = input_file.read(MAX_TSDF_FUSION_CHECKPOINT_BYTES + 1)
+            # By its own size: a read of "up to the maximum" reserves the
+            # maximum, whatever the file turns out to hold.
+            size = os.fstat(input_file.fileno()).st_size
+            encoded = input_file.read(
+                min(size, MAX_TSDF_FUSION_CHECKPOINT_BYTES) + 1
+            )
     except OSError as error:
         raise TsdfError(
             f"cannot read TSDF fusion checkpoint: {error}"
@@ -266,6 +272,8 @@ def load_tsdf_fusion_checkpoint(path: str | Path) -> TsdfFusionCheckpoint:
             f"{MAX_TSDF_FUSION_CHECKPOINT_BYTES} bytes"
         )
     digest = hashlib.sha256(encoded).hexdigest()
+    # Read through views: a slice of the bytes would be a copy.
+    contents = memoryview(encoded)
 
     if len(encoded) < _PREAMBLE_BYTES or not encoded.startswith(
         TSDF_FUSION_CHECKPOINT_MAGIC
@@ -296,8 +304,8 @@ def load_tsdf_fusion_checkpoint(path: str | Path) -> TsdfFusionCheckpoint:
             f"{expected_payload}"
         )
     sum_bytes = TSDF_BLOCK_VOXELS * _SUM_DTYPE.itemsize * block_count
-    sum_payload = encoded[payload_offset:payload_offset + sum_bytes]
-    weight_payload = encoded[payload_offset + sum_bytes:]
+    sum_payload = contents[payload_offset:payload_offset + sum_bytes]
+    weight_payload = contents[payload_offset + sum_bytes:]
     for content, recorded, name in (
         (sum_payload, progress.tsdf_sums_sha256, "tsdf_sums"),
         (weight_payload, progress.weights_sha256, "weights"),
@@ -600,24 +608,35 @@ def _validate_accumulators(
 ) -> None:
     """Re-derive what the header claims from the payload it describes."""
 
-    if not bool(np.all(np.isfinite(tsdf_sums))):
-        raise TsdfError("TSDF fusion checkpoint contains a non-finite sum")
-    if bool(np.any(np.abs(tsdf_sums) > weights)):
-        raise TsdfError(
-            "TSDF fusion checkpoint sum exceeds its weight envelope"
-        )
-    unobserved = weights == 0
-    if bool(np.any(tsdf_sums[unobserved] != 0.0)) or bool(
-        np.any(np.signbit(tsdf_sums[unobserved]))
-    ):
-        raise TsdfError(
-            "TSDF fusion checkpoint unobserved voxel is not canonical zero"
-        )
-    if int(weights.sum(dtype=np.uint64)) != progress.applied_count:
+    # A run of blocks at a time, as the volume loader does it.
+    applied = 0
+    maximum = 0
+    for first in range(0, len(weights), _VALIDATION_CHUNK_BLOCKS):
+        sums = tsdf_sums[first:first + _VALIDATION_CHUNK_BLOCKS]
+        counts = weights[first:first + _VALIDATION_CHUNK_BLOCKS]
+        if not bool(np.all(np.isfinite(sums))):
+            raise TsdfError(
+                "TSDF fusion checkpoint contains a non-finite sum"
+            )
+        if bool(np.any(np.abs(sums) > counts)):
+            raise TsdfError(
+                "TSDF fusion checkpoint sum exceeds its weight envelope"
+            )
+        unseen = sums[counts == 0]
+        if bool(np.any(unseen != 0.0)) or bool(
+            np.any(np.signbit(unseen))
+        ):
+            raise TsdfError(
+                "TSDF fusion checkpoint unobserved voxel is not "
+                "canonical zero"
+            )
+        applied += int(counts.sum(dtype=np.uint64))
+        maximum = max(maximum, int(counts.max()))
+    if applied != progress.applied_count:
         raise TsdfError(
             "TSDF fusion checkpoint progress does not match its payload"
         )
-    if int(weights.max()) > progress.fused_observations:
+    if maximum > progress.fused_observations:
         raise TsdfError(
             "TSDF fusion checkpoint weight exceeds its fused observations"
         )
