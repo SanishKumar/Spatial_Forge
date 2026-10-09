@@ -61,6 +61,21 @@ TUM_DEFAULT_INTRINSICS = TumCameraIntrinsics(
     cy=239.5,
 )
 
+# The axis of the dataset's frame a caller may name as pointing up, for a
+# session that is to be level. The TUM benchmark's own is "z".
+TUM_SOURCE_UP_AXES = {
+    "x": (1.0, 0.0, 0.0),
+    "y": (0.0, 1.0, 0.0),
+    "z": (0.0, 0.0, 1.0),
+    "-x": (-1.0, 0.0, 0.0),
+    "-y": (0.0, -1.0, 0.0),
+    "-z": (0.0, 0.0, -1.0),
+}
+# A level session faces the way its first camera does along the floor. A
+# camera that looks this nearly straight up or down, as the sine of the
+# angle between its axis and the up axis, has no such way.
+_MIN_LEVEL_HEADING = 1e-3
+
 
 @dataclass(frozen=True, slots=True)
 class TumImportReport:
@@ -72,6 +87,9 @@ class TumImportReport:
     source_pose_count: int
     matched_rgbd_count: int
     matched_pose_count: int
+    # The source axis the session's z was laid along, or None for a
+    # session in its first camera's own frame.
+    source_up: str | None = None
 
     @property
     def unmatched_rgb_count(self) -> int:
@@ -106,16 +124,32 @@ def import_tum_dataset(
     output: str | Path,
     *,
     intrinsics: TumCameraIntrinsics = TUM_DEFAULT_INTRINSICS,
+    source_up: str | None = None,
 ) -> TumImportReport:
     """Convert one extracted TUM folder into a validated ScanSession.
 
     ``intrinsics`` is for sequences published in the TUM layout by a
     different camera; the default is the benchmark's own.
+
+    ``source_up`` names the axis of the dataset's frame that points up,
+    one of ``TUM_SOURCE_UP_AXES``, and asks for a level session: z along
+    that axis, the origin at the first posed camera, x the way that
+    camera faces along the floor. Without it the session is that
+    camera's own frame, tilted however the camera was held. The motion
+    between frames is the same either way.
     """
 
     source_root = Path(source)
     output_root = Path(output)
     _validate_intrinsics(intrinsics)
+    if source_up is not None and (
+        not isinstance(source_up, str) or source_up not in TUM_SOURCE_UP_AXES
+    ):
+        raise TumImportError(
+            "source_up must be one of "
+            + ", ".join(TUM_SOURCE_UP_AXES)
+            + ", or left out"
+        )
 
     if not source_root.exists():
         raise TumImportError(f"source directory does not exist: {source_root}")
@@ -152,6 +186,11 @@ def import_tum_dataset(
         matched_rgb_timestamps,
         [pose.timestamp_ns for pose in poses],
     )
+    if source_up is not None and not pose_matches:
+        raise TumImportError(
+            "a level session was asked for, and no frame has a pose to "
+            "level it by"
+        )
 
     session_id = _session_id(source_root.name)
     report = TumImportReport(
@@ -163,7 +202,12 @@ def import_tum_dataset(
         source_pose_count=len(poses),
         matched_rgbd_count=len(matched_pairs),
         matched_pose_count=len(pose_matches),
+        source_up=source_up,
     )
+    if pose_matches:
+        # Before anything is written: a first camera that cannot set a
+        # level session's heading is a refusal, not a staging directory.
+        _session_from_tum(poses[pose_matches[min(pose_matches)]], source_up)
 
     try:
         output_root.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +233,7 @@ def import_tum_dataset(
             matched_pairs,
             pose_matches,
             intrinsics,
+            source_up,
         )
         try:
             load_scan_session(temporary_root)
@@ -488,6 +533,7 @@ def _write_session(
     matched_pairs: Sequence[tuple[int, int]],
     pose_matches: dict[int, int],
     intrinsics: TumCameraIntrinsics,
+    source_up: str | None,
 ) -> None:
     (root / "calibration").mkdir(parents=True)
     (root / "streams").mkdir()
@@ -538,6 +584,7 @@ def _write_session(
         pose_matches,
         matched_rgb_timestamps,
         first_timestamp,
+        source_up,
     )
 
     streams: dict[str, dict[str, Any]] = {
@@ -626,15 +673,12 @@ def _normalized_pose_records(
     matches: dict[int, int],
     rgb_timestamps: Sequence[int],
     first_rgb_timestamp: int,
+    source_up: str | None,
 ) -> list[dict[str, Any]]:
     if not matches:
         return []
 
-    first_output_index = min(matches)
-    anchor_pose = poses[matches[first_output_index]].transform
-    session_from_tum = _multiply_transform(
-        T_RIG_CAMERA, _invert_rigid_transform(anchor_pose)
-    )
+    session_from_tum = _session_from_tum(poses[matches[min(matches)]], source_up)
 
     records: list[dict[str, Any]] = []
     for output_index, pose_index in sorted(matches.items()):
@@ -656,6 +700,48 @@ def _normalized_pose_records(
             }
         )
     return records
+
+
+def _session_from_tum(
+    anchor: _TumPose,
+    source_up: str | None,
+) -> tuple[float, ...]:
+    """The rigid motion from the dataset's frame to the session's.
+
+    With no up axis named the session is the first camera's rig frame:
+    forward, left and up are that camera's own. With one, the session is
+    level. Its z is the named axis, its origin the first camera, and its
+    x the way that camera faces once its climb or dive is taken out.
+    """
+
+    pose = anchor.transform
+    if source_up is None:
+        return _multiply_transform(
+            T_RIG_CAMERA, _invert_rigid_transform(pose)
+        )
+    up = TUM_SOURCE_UP_AXES[source_up]
+    facing = (pose[2], pose[6], pose[10])
+    climb = sum(facing[axis] * up[axis] for axis in range(3))
+    along_floor = tuple(facing[axis] - climb * up[axis] for axis in range(3))
+    length = math.sqrt(sum(value * value for value in along_floor))
+    if length < _MIN_LEVEL_HEADING:
+        raise TumImportError(
+            "the first posed camera looks straight along the up axis, so "
+            "it faces no way along the floor that a level session could "
+            "call forward"
+        )
+    forward = tuple(value / length for value in along_floor)
+    left = (
+        up[1] * forward[2] - up[2] * forward[1],
+        up[2] * forward[0] - up[0] * forward[2],
+        up[0] * forward[1] - up[1] * forward[0],
+    )
+    origin = (pose[3], pose[7], pose[11])
+    rows = []
+    for row in (forward, left, up):
+        rows.extend(row)
+        rows.append(-sum(row[axis] * origin[axis] for axis in range(3)))
+    return tuple(_clean_float(value) for value in (*rows, 0.0, 0.0, 0.0, 1.0))
 
 
 def _multiply_transform(

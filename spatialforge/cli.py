@@ -451,6 +451,9 @@ def _run_scan(arguments: argparse.Namespace) -> int:
                 cx=arguments.cx,
                 cy=arguments.cy,
             ),
+            arguments.up
+            if arguments.down is None
+            else f"-{arguments.down}",
         )
 
     try:
@@ -527,6 +530,25 @@ def _build_parser() -> argparse.ArgumentParser:
                 "layout from another camera (default: %(default)s)."
             ),
         )
+    import_tum_level = import_tum.add_mutually_exclusive_group()
+    import_tum_level.add_argument(
+        "--up",
+        choices=("x", "y", "z"),
+        default=None,
+        help=(
+            "The axis of the dataset's frame that points up; z for the "
+            "TUM benchmark. Makes the session level: z up, the origin at "
+            "the first camera, x the way that camera faces along the "
+            "floor. Without it the session is the first camera's own "
+            "frame, tilted however the camera was held."
+        ),
+    )
+    import_tum_level.add_argument(
+        "--down",
+        choices=("x", "y", "z"),
+        default=None,
+        help="The same, for a dataset whose named axis points down.",
+    )
 
     reconstruct = commands.add_parser(
         "reconstruct",
@@ -6692,9 +6714,12 @@ def _run_tum_import(
     source: Path,
     output: Path,
     intrinsics: TumCameraIntrinsics,
+    source_up: str | None = None,
 ) -> int:
     try:
-        report = import_tum_dataset(source, output, intrinsics=intrinsics)
+        report = import_tum_dataset(
+            source, output, intrinsics=intrinsics, source_up=source_up
+        )
         session = load_scan_session(report.output)
         replay = replay_session(session)
     except (TumImportError, SessionValidationError, SessionReplayError) as error:
@@ -6726,6 +6751,15 @@ def _run_tum_import(
         f"rgb={report.unmatched_rgb_count} "
         f"depth={report.unmatched_depth_count} "
         f"poses={report.unmatched_pose_count}",
+        file=sys.stdout,
+    )
+    print(
+        "frame: "
+        + (
+            "first camera"
+            if report.source_up is None
+            else f"level, up is source {report.source_up}"
+        ),
         file=sys.stdout,
     )
     print(f"digest_sha256: {replay.digest_sha256}", file=sys.stdout)

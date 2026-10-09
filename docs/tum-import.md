@@ -137,6 +137,43 @@ This makes the first known rig pose the session origin while keeping emitted
 camera poses in the documented OpenCV camera-axis convention. Poses are not
 interpolated. Missing or gapped ground truth remains missing.
 
+### A level session
+
+That frame's "up" is the first camera's own. A camera held looking down at
+a desk takes the whole room with it: in `freiburg1_room` the first frame
+looks 41 degrees below the horizon, and the session's z axis is 41 degrees
+off the room's. Reconstruction does not mind, since nothing in fusion knows
+which way is down. Anything that reads the volume as a floor plan does: a
+[free-space map](free-space-expansion.md) is a column of voxels over a
+height band, and a tilted grid has no such columns.
+
+`--up` names the axis of the dataset's frame that points up and asks for a
+level session instead:
+
+```powershell
+python -m spatialforge scan import-tum SOURCE OUTPUT.vgsession --up z
+```
+
+```text
+z_session  = the named axis
+origin     = the first posed camera
+x_session  = the way that camera faces, with its climb or dive taken out
+y_session  = z cross x
+```
+
+The TUM benchmark's motion-capture frame has z up, which the depth itself
+confirms for `freiburg1_room`: the direction most of its surfaces face is
+0.9 degrees from that axis, with the floor at 0.00 m and the desk tops at
+0.75 m. `--down y` is the same for a frame whose y points at the floor.
+
+The motion between frames is the same in either session; only the frame
+they are written in differs, so the two reconstruct the same room on
+differently turned grids. When the first camera happens to be level
+already, the two sessions are the same files. A first camera that looks
+straight along the up axis faces no way along the floor, and the import is
+refused, as is a level session of a sequence with no poses. Without `--up`
+or `--down` an import is byte for byte what it always was.
+
 ## Explicitly deferred
 
 - dataset downloads and archive extraction;

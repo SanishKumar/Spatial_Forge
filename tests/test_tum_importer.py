@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import shutil
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from spatialforge.session_loader import load_scan_session
 from spatialforge.tum_importer import (
     T_RIG_CAMERA,
     TUM_DEFAULT_INTRINSICS,
+    TUM_SOURCE_UP_AXES,
     TumCameraIntrinsics,
     _associate_timestamps,
     import_tum_dataset,
@@ -325,6 +327,323 @@ class TumImporterIntrinsicsTests(unittest.TestCase):
                 )
 
         self.assertIn("mirrored camera frame", str(raised.exception))
+
+
+def quaternion_of(rotation) -> tuple[float, float, float, float]:
+    """The unit quaternion (x, y, z, w) of a rotation with w well off zero."""
+
+    w = math.sqrt(1.0 + rotation[0][0] + rotation[1][1] + rotation[2][2]) / 2.0
+    return (
+        (rotation[2][1] - rotation[1][2]) / (4.0 * w),
+        (rotation[0][2] - rotation[2][0]) / (4.0 * w),
+        (rotation[1][0] - rotation[0][1]) / (4.0 * w),
+        w,
+    )
+
+
+def camera_rotation(forward, up) -> list[list[float]]:
+    """Columns right, down, forward for a camera facing ``forward``.
+
+    ``up`` is the way the top of its image points, made perpendicular.
+    """
+
+    length = math.sqrt(sum(value * value for value in forward))
+    forward = [value / length for value in forward]
+    along = sum(a * b for a, b in zip(up, forward))
+    down = [-(a - along * b) for a, b in zip(up, forward)]
+    length = math.sqrt(sum(value * value for value in down))
+    down = [value / length for value in down]
+    right = [
+        down[1] * forward[2] - down[2] * forward[1],
+        down[2] * forward[0] - down[0] * forward[2],
+        down[0] * forward[1] - down[1] * forward[0],
+    ]
+    return [[right[row], down[row], forward[row]] for row in range(3)]
+
+
+def matrix(values) -> list[list[float]]:
+    return [list(values[4 * row:4 * row + 4]) for row in range(4)]
+
+
+def product(left, right) -> list[list[float]]:
+    return [
+        [sum(left[i][k] * right[k][j] for k in range(4)) for j in range(4)]
+        for i in range(4)
+    ]
+
+
+def inverse(pose) -> list[list[float]]:
+    rotation = [[pose[j][i] for j in range(3)] for i in range(3)]
+    moved = [-sum(rotation[i][k] * pose[k][3] for k in range(3)) for i in range(3)]
+    return [[*rotation[i], moved[i]] for i in range(3)] + [[0.0, 0.0, 0.0, 1.0]]
+
+
+class TumImporterLevelTests(unittest.TestCase):
+    """A session whose z is the dataset's up, not the first camera's."""
+
+    def dataset(self, root: Path, poses) -> Path:
+        """The tiny fixture with its two poses replaced."""
+
+        source = root / "rgbd_dataset_freiburg1_tiny"
+        shutil.copytree(TUM_FIXTURE, source)
+        lines = ["# timestamp tx ty tz qx qy qz qw"]
+        for stamp, (position, rotation) in zip(
+            ("1305031102.000500", "1305031102.033000"), poses
+        ):
+            lines.append(
+                " ".join(
+                    [stamp]
+                    + [repr(float(value)) for value in position]
+                    + [repr(value) for value in quaternion_of(rotation)]
+                )
+            )
+        (source / "groundtruth.txt").write_text(
+            "\n".join(lines) + "\n", encoding="ascii"
+        )
+        return source
+
+    def poses_of(self, session_path: Path):
+        session = load_scan_session(session_path)
+        return [
+            matrix(sample.data["T_world_camera"])
+            for sample in session.streams["pose"]
+        ]
+
+    def test_a_level_first_camera_gives_the_session_it_always_gave(
+        self,
+    ) -> None:
+        # Facing along the dataset's x with the top of its image along z:
+        # this camera's own forward, left and up are already the level
+        # ones, so asking for a level session changes nothing at all.
+        level = camera_rotation((1, 0, 0), (0, 0, 1))
+        turned = camera_rotation((0.6, 0.8, 0), (0, 0, 1))
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            root = Path(temporary)
+            source = self.dataset(
+                root, [((1.0, 2.0, 3.0), level), ((1.5, 2.0, 3.25), turned)]
+            )
+            import_tum_dataset(source, root / "as-held.vgsession")
+            import_tum_dataset(source, root / "level.vgsession", source_up="z")
+            self.assertEqual(
+                tree_snapshot(root / "level.vgsession"),
+                tree_snapshot(root / "as-held.vgsession"),
+            )
+            first, second = self.poses_of(root / "level.vgsession")
+        self.assertEqual(
+            [value for row in first for value in row], list(T_RIG_CAMERA)
+        )
+        # Half a metre along x and a quarter of a metre up.
+        self.assertEqual([row[3] for row in second[:3]], [0.5, 0.0, 0.25])
+
+    def test_a_tilted_first_camera_keeps_its_tilt(self) -> None:
+        # Looking along x and 30 degrees down. As held, the session
+        # takes this camera for level and the whole room tips up to
+        # meet it. Level, the camera is the thing that is tipped.
+        dive = math.radians(30.0)
+        tilted = camera_rotation(
+            (math.cos(dive), 0.0, -math.sin(dive)), (0, 0, 1)
+        )
+        other = camera_rotation((0.2, 1.0, -0.4), (0.1, 0, 1))
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            root = Path(temporary)
+            source = self.dataset(
+                root, [((1.0, 2.0, 3.0), tilted), ((1.5, 2.5, 3.25), other)]
+            )
+            import_tum_dataset(source, root / "as-held.vgsession")
+            import_tum_dataset(source, root / "level.vgsession", source_up="z")
+            held = self.poses_of(root / "as-held.vgsession")
+            level = self.poses_of(root / "level.vgsession")
+
+        self.assertEqual(
+            [value for row in held[0] for value in row], list(T_RIG_CAMERA)
+        )
+        # The first camera is at the origin and faces along x and down.
+        self.assertEqual([row[3] for row in level[0][:3]], [0.0, 0.0, 0.0])
+        facing = [row[2] for row in level[0][:3]]
+        self.assertAlmostEqual(facing[0], math.cos(dive), places=12)
+        self.assertEqual(facing[1], 0.0)
+        self.assertAlmostEqual(facing[2], -math.sin(dive), places=12)
+        # The second is where the dataset put it relative to the first:
+        # the dataset's x, y and z here are the session's.
+        for axis, expected in enumerate((0.5, 0.5, 0.25)):
+            self.assertAlmostEqual(level[1][axis][3], expected, places=12)
+        # As held, the same quarter of a metre of height is spread over
+        # two axes.
+        self.assertNotAlmostEqual(held[1][2][3], 0.25, places=2)
+        # And nothing between the frames has changed: the motion from
+        # one camera to the next is the same motion.
+        relative_held = product(inverse(held[0]), held[1])
+        relative_level = product(inverse(level[0]), level[1])
+        for row in range(4):
+            for column in range(4):
+                self.assertAlmostEqual(
+                    relative_level[row][column],
+                    relative_held[row][column],
+                    places=12,
+                )
+
+    def test_any_axis_can_be_the_one_that_points_up(self) -> None:
+        position_first, position_second = (0.3, -1.1, 0.7), (0.9, -0.2, 1.6)
+        first = camera_rotation((1.0, 0.7, -0.4), (0.2, -0.1, 1.0))
+        second = camera_rotation((-0.3, 1.0, 0.5), (0.0, 0.3, 1.0))
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            root = Path(temporary)
+            source = self.dataset(
+                root, [(position_first, first), (position_second, second)]
+            )
+            for name, up in TUM_SOURCE_UP_AXES.items():
+                with self.subTest(up=name):
+                    output = root / f"level{name}.vgsession"
+                    report = import_tum_dataset(source, output, source_up=name)
+                    level = self.poses_of(output)
+                    self.assertEqual(report.source_up, name)
+                    # Height in the session is distance along the named
+                    # axis in the dataset.
+                    climbed = sum(
+                        (position_second[axis] - position_first[axis])
+                        * up[axis]
+                        for axis in range(3)
+                    )
+                    self.assertAlmostEqual(level[1][2][3], climbed, places=12)
+                    self.assertEqual(
+                        [row[3] for row in level[0][:3]], [0.0, 0.0, 0.0]
+                    )
+                    # The first camera faces along x and to neither side.
+                    self.assertAlmostEqual(level[0][1][2], 0.0, places=12)
+                    self.assertGreater(level[0][0][2], 0.0)
+                    # Still a rotation, and a right-handed one.
+                    rotation = [row[:3] for row in level[1][:3]]
+                    for i in range(3):
+                        for j in range(3):
+                            dot = sum(
+                                rotation[k][i] * rotation[k][j]
+                                for k in range(3)
+                            )
+                            self.assertAlmostEqual(
+                                dot, 1.0 if i == j else 0.0, places=12
+                            )
+                    self.assertGreater(
+                        rotation[0][0]
+                        * (
+                            rotation[1][1] * rotation[2][2]
+                            - rotation[1][2] * rotation[2][1]
+                        )
+                        - rotation[0][1]
+                        * (
+                            rotation[1][0] * rotation[2][2]
+                            - rotation[1][2] * rotation[2][0]
+                        )
+                        + rotation[0][2]
+                        * (
+                            rotation[1][0] * rotation[2][1]
+                            - rotation[1][1] * rotation[2][0]
+                        ),
+                        0.999,
+                    )
+
+    def test_what_cannot_be_levelled_is_refused_and_nothing_written(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            root = Path(temporary)
+            # The fixture's own first camera looks along the dataset's z.
+            for name, source_up, message in (
+                ("along", "z", "straight along the up axis"),
+                ("against", "-z", "straight along the up axis"),
+                ("unknown", "w", "source_up must be one of"),
+                ("upper", "Z", "source_up must be one of"),
+            ):
+                with self.subTest(case=name):
+                    with self.assertRaises(TumImportError) as raised:
+                        import_tum_dataset(
+                            TUM_FIXTURE,
+                            root / f"{name}.vgsession",
+                            source_up=source_up,
+                        )
+                    self.assertIn(message, str(raised.exception))
+            # A scan with no poses has nothing to be levelled by.
+            unposed = root / "rgbd_dataset_freiburg1_tiny"
+            shutil.copytree(TUM_FIXTURE, unposed)
+            (unposed / "groundtruth.txt").unlink()
+            with self.assertRaises(TumImportError) as raised:
+                import_tum_dataset(
+                    unposed, root / "unposed.vgsession", source_up="y"
+                )
+            self.assertIn("no frame has a pose", str(raised.exception))
+            # The same fixture is level about its x and y.
+            import_tum_dataset(TUM_FIXTURE, root / "x.vgsession", source_up="x")
+            self.assertEqual(
+                sorted(path.name for path in root.iterdir()),
+                ["rgbd_dataset_freiburg1_tiny", "x.vgsession"],
+            )
+
+    def test_cli_names_the_axis_and_says_which_frame_it_wrote(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            root = Path(temporary)
+            outputs = {}
+            for name, extra in (
+                ("held", []),
+                ("up", ["--up", "x"]),
+                ("down", ["--down", "y"]),
+            ):
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    exit_code = main(
+                        [
+                            "scan",
+                            "import-tum",
+                            str(TUM_FIXTURE),
+                            str(root / f"{name}.vgsession"),
+                            *extra,
+                        ]
+                    )
+                self.assertEqual(exit_code, 0)
+                outputs[name] = stdout.getvalue()
+            down = self.poses_of(root / "down.vgsession")
+            by_name = root / "by-name.vgsession"
+            import_tum_dataset(TUM_FIXTURE, by_name, source_up="-y")
+            self.assertEqual(
+                tree_snapshot(root / "down.vgsession"), tree_snapshot(by_name)
+            )
+            # Both at once, or an axis the dataset does not have.
+            for extra in (["--up", "x", "--down", "y"], ["--up", "w"]):
+                with (
+                    self.assertRaises(SystemExit) as raised,
+                    redirect_stderr(io.StringIO()),
+                ):
+                    main(
+                        [
+                            "scan",
+                            "import-tum",
+                            str(TUM_FIXTURE),
+                            str(root / "refused.vgsession"),
+                            *extra,
+                        ]
+                    )
+                self.assertEqual(raised.exception.code, 2)
+            # The first camera looks along z: refused, and it says why.
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                exit_code = main(
+                    [
+                        "scan",
+                        "import-tum",
+                        str(TUM_FIXTURE),
+                        str(root / "refused.vgsession"),
+                        "--up",
+                        "z",
+                    ]
+                )
+            self.assertEqual(exit_code, 2)
+            self.assertIn("straight along the up axis", stderr.getvalue())
+            self.assertFalse((root / "refused.vgsession").exists())
+
+        self.assertIn("frame: first camera\n", outputs["held"])
+        self.assertIn("frame: level, up is source x\n", outputs["up"])
+        self.assertIn("frame: level, up is source -y\n", outputs["down"])
+        # The second camera is a metre along the dataset's x from the
+        # first, which with y down is no height at all.
+        self.assertEqual(down[1][2][3], 0.0)
 
 
 class TumImporterCliTests(unittest.TestCase):
