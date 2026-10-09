@@ -64,7 +64,10 @@ TSDF_EXPANSION_APPROVAL_RULES = {
     ),
 }
 TSDF_BLOCK_RESOLUTION = 8
-MAX_PLANNED_BLOCKS = 100_000
+# The most blocks a plan may hold: 128 million voxels, and 1.5 GB of
+# accumulators in memory while they are fused. Fusing, writing and
+# loading a volume each need about that much and no multiple of it.
+MAX_PLANNED_BLOCKS = 250_000
 # Widest per-sample block span the vectorised planner expands itself. A
 # truncation band many blocks wide is legal but pathological, and is left to
 # the per-pixel reference path rather than given a fast path of its own.

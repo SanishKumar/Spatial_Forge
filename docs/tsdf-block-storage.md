@@ -82,7 +82,7 @@ bytes per block = 512 * (8 + 4) = 6,144
 ```
 
 The reference allocator permits as many blocks as the planner will plan:
-100,000, which is `614,400,000` bytes of numeric payload. The two limits are
+250,000, which is `1,536,000,000` bytes of numeric payload. The two limits are
 one number, so a plan the planner accepts is never refused here for its
 size. It checks this bound before calling
 NumPy. Reported payload bytes are the arrays' numeric `nbytes`; they do not

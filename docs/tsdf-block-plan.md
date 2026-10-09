@@ -116,7 +116,7 @@ records:
 - canonical surface and active block index lists.
 
 It contains no timestamp or filesystem path. Planning rechecks the replay
-digest before publication, permits at most 100,000 unique active blocks,
+digest before publication, permits at most 250,000 unique active blocks,
 requires signed 32-bit block coordinates, and refuses to overwrite either an
 existing or race-created target.
 
@@ -171,7 +171,7 @@ checking:
 - agreement between the version, the free-space rule and the expansion
   provenance;
 - ASCII JSON types, finite numeric values, fixed grid and activation
-  conventions, and the 100,000-block limit;
+  conventions, and the 250,000-block limit;
 - positive and internally consistent frame, depth-sample, and block counters;
 - signed 32-bit block coordinates in strict X-fastest order, with no
   duplicates;

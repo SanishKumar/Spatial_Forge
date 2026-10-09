@@ -110,10 +110,20 @@ wrong in one way — and require each to be refused.
 
 ## Limits
 
-A volume holds at most 100,000 blocks, the most the planner will plan and
-the most fusion will allocate. The whole file is read into memory to be verified. There
-is no partial or memory-mapped load, no compression, and no way to append to
-a volume: it is written once, complete.
+A volume holds at most 250,000 blocks, the most the planner will plan and
+the most fusion will allocate: 1.5 GB of accumulators. The whole file is
+read into memory to be verified. There is no partial or memory-mapped
+load, no compression, and no way to append to a volume: it is written
+once, complete.
+
+The ceiling is set by memory, and what it costs to handle a volume is
+one copy of it. The writer streams the accumulators from the storage
+they were fused in, hashing as it goes. The loader reads the file once,
+hands out views of what it read, and verifies the payload a run of
+blocks at a time. A test measures both with `tracemalloc`: writing
+allocates under a tenth of the payload, loading the file and under a
+quarter of the payload more. Before that was so, writing took twice the
+payload on top of the storage, and the ceiling was 100,000 blocks.
 
 A fusion that is interrupted before its volume is written can be continued,
 from a separate file that is not a volume:

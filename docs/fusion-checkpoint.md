@@ -137,7 +137,7 @@ a save leaves the previous checkpoint intact.
 - **A stage that fails is lost.** The frames since the last save are fused
   again on the next run. Saving more often costs one hash and one write of
   the accumulators each time: 6,144 bytes per block, 47 MB for the room at
-  20 mm and at most 614 MB.
+  20 mm and at most 1.5 GB.
 
 `--stop-after N` stops deliberately once N more selected frames have been
 processed, leaving the checkpoint and no volume. It exists for running a
