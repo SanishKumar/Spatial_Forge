@@ -1,0 +1,199 @@
+{
+  "depth_reference": {
+    "beyond_limit": 0,
+    "frames": 48,
+    "limit_m": 0.16,
+    "matched": 100350,
+    "model_normals_facing_camera_fraction": 0.9969108121574489,
+    "nearest_point": {
+      "max_matched_mm": 12.65781608507987,
+      "mean_mm": 3.4260839740293147,
+      "median_mm": 3.2135912017464014,
+      "p90_mm": 5.7852227511545085,
+      "p95_mm": 6.6026775496481545,
+      "p99_mm": 8.142628468939419,
+      "rms_mm": 3.8369774956774667,
+      "std_mm": 1.7275256597905635
+    },
+    "normals_trusted_at_fraction": 0.9969108121574489,
+    "normals_trusted_from": "this session's depth",
+    "point_to_plane": {
+      "max_matched_mm": 7.919014430928593,
+      "mean_mm": 0.6238033303143953,
+      "mean_signed_mm": 0.3491530328048471,
+      "median_mm": 0.49808748220939875,
+      "p90_mm": 1.1993888943621476,
+      "p95_mm": 1.6661793623062837,
+      "p99_mm": 2.9620610077199876,
+      "rms_mm": 0.8553293728302873,
+      "std_mm": 0.5851988902201728
+    },
+    "points": 100350,
+    "within_fraction": {
+      "10mm": 0.9990832087693075,
+      "20mm": 1.0,
+      "5mm": 0.8191330343796711
+    }
+  },
+  "environment": {
+    "numpy": "2.4.6",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "python": "3.14.6"
+  },
+  "evaluation": {
+    "beyond_limit": 0,
+    "limit_m": 0.16,
+    "matched": 1235317,
+    "nearest_point": {
+      "max_matched_mm": 56.45603006876981,
+      "mean_mm": 3.786904166929985,
+      "median_mm": 3.3272789701530607,
+      "p90_mm": 6.158806715275723,
+      "p95_mm": 7.230283094471256,
+      "p99_mm": 15.512435467792134,
+      "rms_mm": 4.8234468551508725,
+      "std_mm": 2.987473245897468
+    },
+    "point_to_plane": {
+      "max_matched_mm": 53.34143734763923,
+      "mean_mm": 1.0317176598097455,
+      "mean_signed_mm": 0.4832363117035116,
+      "median_mm": 0.4946578845150003,
+      "p90_mm": 1.6839026663265264,
+      "p95_mm": 3.0052252349262645,
+      "p99_mm": 13.615032189878654,
+      "rms_mm": 2.843737113776839,
+      "std_mm": 2.649981026858216
+    },
+    "points": 1235317,
+    "within_fraction": {
+      "10mm": 0.9831775973292686,
+      "20mm": 0.99306169995232,
+      "5mm": 0.7900757457397575
+    }
+  },
+  "inputs": {
+    "model": "datasets/icl/model/living-room.ply",
+    "model_points": 9982296,
+    "model_sha256": "414c05790dac39abe97aaa298939ead6855cdc72d24d35442ce84db22be4279c",
+    "plan_sha256": "b8ab645a2e84097eefcd7d35044f097513cacc813abba902eab2902e8148c67a",
+    "replay_digest_sha256": "9ba8d9dc9bbb550e54e5db46da8257c838d513001ace85d461a2d68dc194ec93",
+    "session": "datasets/icl-kt1.vgsession",
+    "session_id": "tum-icl-nuim-living-room-kt1",
+    "source_trajectory_sha256": "409594a2bdac96cd53455e58b664f7c0a5f5bddb9ecb318b66c5180aeb86a060",
+    "volume": "datasets/icl-kt1-15mm.sftvol",
+    "volume_sha256": "514ab71c2ae05746b860af387a8e2772059ca5b3dd7d1d8c78cd640e6c55d184"
+  },
+  "measurement": "surface-distance-to-ground-truth-model",
+  "measures": "distance from each vertex of the reconstructed mesh to a ground-truth surface model: to the nearest model point, and to the tangent plane through it. The frames are aligned by one rigid motion fitted to raw depth, not to the reconstruction, and the same distances for raw depth are given as the floor of the measurement. Camera poses are the dataset's ground truth.",
+  "mesh": {
+    "minimum_component_triangles": 200,
+    "minimum_weight": 3,
+    "path": "datasets/icl-kt1-15mm.ply",
+    "sha256": "64dd6821b674e30ba579baddf1daf114d8f30a885a11053cecf4178fec691dd9",
+    "source_volume_sha256": "514ab71c2ae05746b860af387a8e2772059ca5b3dd7d1d8c78cd640e6c55d184",
+    "triangles": 2435026,
+    "vertices": 1235317
+  },
+  "reconstruction": {
+    "active_blocks": 10571,
+    "contributions_applied": 250216056,
+    "contributions_evaluated": 2614166016,
+    "frame_stride": 2,
+    "fused_frames": 483,
+    "maximum_weight": 209,
+    "observed_voxel_slots": 3148776,
+    "path": "sparse-block-streaming-fusion",
+    "persisted": true,
+    "planned_voxel_slots": 5412352,
+    "truncation_m": 0.045,
+    "voxel_size_m": 0.015
+  },
+  "registration": {
+    "fit_frame_stride": 20,
+    "fit_frames": 49,
+    "fit_samples": 102487,
+    "fitted_to": "raw depth",
+    "frame_search": {
+      "agreement": 0.9048787588903215,
+      "method": "planes in three perpendicular directions, matched between raw depth and the model in each of 24 ways",
+      "runner_up_agreement": 0.639271305577507,
+      "start_model_from_source": [
+        0.9997793461308817,
+        -0.0032669007013541107,
+        -0.020750576134504563,
+        -0.0739069018201699,
+        0.003425189574581227,
+        0.9999652746164203,
+        0.007597212494396959,
+        1.2875725543218504,
+        0.020725036223962517,
+        -0.007666610797108017,
+        0.999755818163816,
+        -2.1456056556352254,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    },
+    "initial_translation_m": null,
+    "method": "point-to-plane, raw depth to model, coarse then fine",
+    "model_from_source": [
+      0.9997906068189866,
+      -0.0005990305679348818,
+      -0.020454429322306997,
+      -0.06277228448264317,
+      0.0006659187156821231,
+      0.9999944532039304,
+      0.003263451184955374,
+      1.2918709557182613,
+      0.02045236095874207,
+      -0.003276388827834983,
+      0.9997854600900447,
+      -2.1495646172671954,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "pixel_step": 12,
+    "reused_from": null,
+    "rotation_degrees": 1.187413055151202,
+    "session_was_imported": true,
+    "source_pose_consistency": 3.9968028886505635e-15,
+    "stages": [
+      {
+        "iterations": 12,
+        "last_step_m": 5.43959344769223e-14,
+        "last_step_rad": 2.4703846855550566e-14,
+        "limit_m": 0.08,
+        "matched_fraction": 1.0,
+        "model_points": 587194
+      },
+      {
+        "iterations": 6,
+        "last_step_m": 6.796111517636337e-08,
+        "last_step_rad": 2.8511217128385925e-08,
+        "limit_m": 0.02,
+        "matched_fraction": 1.0,
+        "model_points": 9982296
+      }
+    ]
+  },
+  "schema": "spatialforge.result-manifest",
+  "schema_version": "0.2.0",
+  "source_commit": "64393bacf50197f52ebf0f81f14581a0c744f8ed",
+  "source_worktree_clean": true,
+  "timings_seconds": {
+    "evaluation": 42.379,
+    "model_load": 0.705,
+    "registration": 67.053
+  },
+  "vertex_errors": {
+    "path": "datasets/icl-kt1-15mm-errors.npy",
+    "quantity": "absolute distance to model tangent plane, m",
+    "sha256": "3fb6b69277fb4a96dbb7427c27a1b7eff6306cc6b1f01f457bf2fe9a382fd458"
+  }
+}
