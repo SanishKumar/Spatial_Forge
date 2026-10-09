@@ -26,7 +26,7 @@ fast path proven identical to a slower one that is easier to trust.
 | With a Kinect's noise simulated | **0.86 mm** median to ground truth at 10 mm voxels, from depth frames a median 3.2 mm off |
 | How much of what was seen | **98.4%** of the observed ground-truth surface has mesh within 20 mm, 93.3% within 5 mm; 96% of what is missing was only ever seen at a glancing angle |
 | On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels ([TUM RGB-D](#results-on-real-data)) |
-| Free space | the voxel at each of the 880 camera positions is observed free in the [expanded volume](#where-there-is-room); adding it changes no triangle of the mesh |
+| Free space | the voxel at each of the 880 camera positions is observed free in the [expanded volume](#where-there-is-room); adding it changes no triangle of the 20 mm mesh, and adds 118 to 7.2 million at 10 mm |
 | Reproducible | the committed scan reconstructs to the same bytes on Linux, macOS and Windows, under Python 3.11 and 3.14, checked on every push |
 | Cost | one CPU core and NumPy: 6.3 billion voxel-observations fused in 211 s |
 
@@ -274,7 +274,9 @@ the space between the cameras and the surfaces.
 The last row is a check the scan makes on itself. No camera position is
 used to mark anything free; free space comes only from depth rays. Yet the
 voxel at every one of the 880 places a camera stood is one that other
-frames looked through.
+frames looked through. On the real Kinect sequence the same check finds
+476 of 790 positions in observed free space, 314 unseen, and none behind
+a surface, and there too the mesh is unchanged.
 
 What is observed is decided by the fusion code itself, run over a box of
 candidate blocks whose size is derived, and checked against a second
@@ -508,8 +510,8 @@ Stated plainly, because the gaps matter more than the features:
 - **Not real time.** Fourteen to thirty million voxel-observations per
   second on one CPU core, depending on how much of the scene each frame
   can see. A GPU system does this live; this one takes minutes.
-- **A size ceiling.** A plan is limited to 100,000 blocks: 51 million
-  voxels, 614 MB of accumulators held in memory. A scene that needs more
+- **A size ceiling.** A plan is limited to 250,000 blocks: 128 million
+  voxels, 1.5 GB of accumulators held in memory. A scene that needs more
   is refused with a message saying so.
 - **A volume cannot be extended.** A plan is made from a fixed set of
   frames. An interrupted fusion can be continued to the same bytes, but

@@ -327,6 +327,7 @@ its sign, positive on the camera's side of the true surface:
 | one frame of the dataset's noisy depth | 7.66 mm | 10.90 mm | 16.42 mm | 57.53 mm | +9.64 mm |
 | mesh from it, 20 mm voxels | 9.67 mm | 10.83 mm | 13.25 mm | 23.55 mm | +10.17 mm |
 | mesh from it, 15 mm voxels | **9.27 mm** | 10.53 mm | 12.88 mm | 22.96 mm | **+9.82 mm** |
+| mesh from it, 10 mm voxels | 8.46 mm | 9.86 mm | 11.90 mm | 21.28 mm | +8.86 mm |
 | mesh from simulated noise, 15 mm voxels | 0.77 mm | 1.63 mm | 3.82 mm | 5.02 mm | +0.27 mm |
 | mesh from exact depth, 15 mm voxels | 0.45 mm | 1.02 mm | 2.87 mm | 3.20 mm | +0.40 mm |
 
@@ -372,9 +373,14 @@ shares. No fixed factor turns a held-out residual into accuracy, in either
 direction, and that is the caveat the TUM page has carried from the start,
 now with a measured example of each case.
 
-**10 mm was refused.** The planner stops at 100,000 blocks and this
-sequence needs more: its outliers scatter surface through the room, 41,455
-blocks at 15 mm where exact depth needs 14,059.
+**Finer voxels do not remove it either.** This sequence's outliers scatter
+surface through the room: 41,455 blocks at 15 mm where exact depth needs
+14,059, and 126,967 at 10 mm where it needs 27,965. That was more than a
+plan could hold, and an earlier version of this page had to say that 10 mm
+was refused. With the ceiling at 250,000 blocks it runs: a median 8.46 mm
+from the truth and 8.86 mm on the camera's side of it, against 9.27 and
+9.82 at 15 mm. The held-out residual at 10 mm is 6.33 mm at the median,
+0.75 of the true error, and as blind to the offset as it was.
 
 **A fit to its own depth was refused too.** Asked to fit the alignment to
 this sequence's own depth rather than reuse the exact one, the registration
@@ -411,7 +417,7 @@ are readings in one frame. One model point in four is tested: 2,495,574
 points, of which 515,430 (20.7%) are observable. The model is the whole
 room, and the other 79% of its points are surface this trajectory did not
 see three times; nothing is claimed about them. For the noisy sequences
-sight is decided on the exact depth, so all eight meshes are held to the
+sight is decided on the exact depth, so all nine meshes are held to the
 same 515,430 points.
 
 Of those, the share with mesh within each distance, and the share with none
@@ -427,6 +433,7 @@ within 30 mm:
 | simulated noise | 10 mm | 91.4% | 94.9% | 98.6% | 0.9% |
 | the dataset's noisy files | 20 mm | 22.0% | 47.4% | 77.8% | 7.0% |
 | the dataset's noisy files | 15 mm | 21.8% | 50.7% | 80.0% | 6.4% |
+| the dataset's noisy files | 10 mm | 22.2% | 56.6% | 87.3% | 5.3% |
 
 **Noise costs almost no coverage.** At 10 mm the mesh from simulated noise
 has 91.4% of the seen surface within 5 mm where exact depth has 93.3%, and

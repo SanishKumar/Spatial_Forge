@@ -125,41 +125,58 @@ measured: the reference cannot run on a real frame.
 
 ## On the living room
 
-ICL-NUIM `lr kt2`, 440 frames, 20 mm voxels, 60 mm truncation:
+ICL-NUIM `lr kt2`, 440 frames, at two voxel sizes with a truncation of
+three voxels:
 
 ```text
-                        surface plan      expanded
-blocks                         7,655        17,394
-observed voxels            2,520,109     7,206,954
-contributions applied    188,387,632   626,372,579
-expand                                        74 s
-fuse                            54 s         130 s
-volume                         47 MB        107 MB
+                             20 mm                        10 mm
+                  surface plan    expanded     surface plan      expanded
+blocks                   7,655      17,394           27,965       122,688
+observed voxels      2,520,109   7,206,954        8,890,488    55,598,462
+contributions      188,387,632 626,372,579      657,800,997 4,877,187,683
+expand                                64 s                          166 s
+fuse                      54 s       130 s            211 s         842 s
+volume                   47 MB      107 MB           172 MB        755 MB
 ```
 
-**The mesh does not change.** The mesh extracted from the expanded volume
-has the same 911,173 vertices and 1,796,756 triangles as the one from the
-surface plan's volume, byte for byte. The two files differ in one header
-line, the digest of the volume each came from. Free space adds no surface
-and moves none, so the accuracy and completeness figures are the same
-figures.
+**The mesh barely changes, and at 20 mm not at all.** The mesh extracted
+from the 20 mm expanded volume has the same 911,173 vertices and 1,796,756
+triangles as the one from the surface plan's volume, byte for byte. The
+two files differ in one header line, the digest of the volume each came
+from, and the accuracy and completeness figures are the same figures.
+
+At 10 mm it is the same mesh with 118 triangles added to 7,237,866. None
+is removed and none moves. The 118 come to 4.5 cm² in all, 106 of them
+in a column of five blocks up one vertical edge. Voxels the two volumes
+share hold the same values, so these can only be cells that lacked a
+corner: one whose neighbour lies in a block the surface plan never held.
+With that block present the cell has all eight corners and is meshed. They
+move the accuracy figures in the fourth digit: RMS 1.694 mm to 1.697 mm,
+the median unchanged at 0.451 mm.
+
+An earlier version of this page said free space adds no surface. That is
+what the 20 mm room and the real desk show, and it is not a rule.
 
 **The map does.** Over the band in the picture, 0.28 m to 0.86 m above the
 floor:
 
 | | Free | Occupied | Unknown |
 |---|---|---|---|
-| surface plan | 2.05 m² | 7.97 m² | 25.67 m² |
-| expanded | **14.33 m²** | 7.97 m² | 13.38 m² |
+| surface plan, 20 mm | 2.05 m² | 7.97 m² | 25.67 m² |
+| expanded, 20 mm | **14.33 m²** | 7.97 m² | 13.38 m² |
+| surface plan, 10 mm | 0.89 m² | 7.31 m² | 25.08 m² |
+| expanded, 10 mm | **14.25 m²** | 7.31 m² | 11.72 m² |
 
 A column is free only if every voxel of it in the band was observed, at
 least three times, and lies in front of every surface seen. It is occupied
-if any voxel in the band is at or behind a surface. The occupied area is
-the same in both because the surfaces are the same.
+if any voxel in the band is at or behind a surface. At each voxel size the
+occupied area is the same with and without free space, because the
+surfaces are.
 
 **Every camera was somewhere the volume calls free.** The voxel at each of
-the 880 camera positions is observed free space in the expanded volume:
-880 free, none unseen, none behind a surface. No camera position was used
+the 880 camera positions is observed free space in the expanded volume, at
+20 mm and at 10 mm: 880 free, none unseen, none behind a surface. No
+camera position was used
 to mark anything free. Free space comes only from the depth rays of the
 frames, so this is other frames having looked through the place where each
 camera stood. In the surface plan's volume all 880 are unseen.
@@ -176,6 +193,58 @@ python tools/free_space_map.py \
 The scan's floor is at −1.17 m in its own frame, which is where the band's
 heights above the floor come from.
 
+## On a real sensor
+
+TUM `freiburg1_xyz`, a real Kinect over a desk, 395 frames fused, 15 mm
+voxels:
+
+```text
+                        surface plan      expanded
+blocks                         5,401         8,692
+observed voxels            1,492,894     2,678,995
+contributions applied     66,200,108   100,644,932
+```
+
+**The mesh does not change here either.** 279,979 vertices and 535,486
+triangles, the same arrays. The held-out residual is the same to a
+thousandth of a millimetre, 7.518 mm at the median, with four more of
+5.76 million held-out samples landing in observed voxels.
+
+**No camera is behind a surface.** Of the 790 camera positions, the voxel is
+observed free for 476 and unseen for 314, and behind a surface for none.
+The unseen ones are the positions furthest back: none in the front third of
+the path, two thirds of the rear third. This camera slides half a metre
+along each axis and never turns round, so no frame looks back through the
+places it retreated to.
+
+At the cameras' height the expanded volume holds 1.39 m² as free where the
+surface plan's holds 0.10 m², and 2.24 m² as occupied in both. It is a
+desk seen from one side, not a room: 91% of that map is unknown, and no
+picture of it is worth showing.
+
+### What most of the box is
+
+The box for this scan is 91,800 blocks around a plan of 5,401. A few far
+depth readings stretch it to nearly eight metres, and almost all of it is
+behind something. A block behind a wall is in the image and in front of the
+camera, so the whole-block verdicts fusion uses do not settle it, and it was
+evaluated voxel by voxel on every frame to find each time that nothing
+lands.
+
+A third verdict settles it from the depth image. If the nearest corner of a
+block is more than a truncation behind the largest depth measured anywhere
+in the rectangle of pixels the block projects into, no voxel of it can be
+within a truncation of what its own pixel measured. The largest depth in a
+rectangle is read from a table built once per frame.
+
+| | Without | With |
+|---|---|---|
+| desk, 395 frames, 91,800 candidate blocks | 1,607 s | 148 s |
+| living room, 440 frames, 30,960 candidate blocks | 74 s | 64 s |
+
+The plans are the same plans, digest for digest. The verdict is tested
+against the evaluator: no block it calls hidden receives a contribution.
+
 ## What it does not do
 
 - **It is not a traversability map.** Free means observed empty over the
@@ -187,9 +256,10 @@ heights above the floor come from.
   without looking down into.
 - **Glass and mirrors are whatever the depth says they are.** A depth
   camera that sees through a window marks the window free.
-- **There is a ceiling.** A plan holds at most 100,000 blocks and the
-  candidate box at most 500,000. The living room at 10 mm would need
-  122,688 blocks and is refused, 217 frames in, as soon as the count passes
-  the ceiling. It fits at 20 mm.
+- **There is a ceiling.** A plan holds at most 250,000 blocks and the
+  candidate box at most 500,000. The living room at 10 mm needs 122,688,
+  which was more than a plan could hold until the ceiling was raised from
+  100,000. An expansion that passes the ceiling is refused at the frame
+  where it does, not after the whole scan has been read.
 - **Surface only glanced at is still lost.** Expansion adds free space. It
   does not bring back the [glancing-angle loss](icl-nuim-validation.md#what-is-missing-is-what-was-only-glanced-at).

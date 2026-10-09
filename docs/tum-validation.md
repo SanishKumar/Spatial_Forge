@@ -117,7 +117,7 @@ held-out surface point falls inside a voxel that fusion actually observed.
 
 The first version of this page had to say that 10 mm was refused: the scene
 needs 12,503 blocks and accumulator storage stopped at 10,922. Storage now
-holds whatever the planner will plan, 100,000 blocks, and the result is
+holds whatever the planner will plan, now 250,000 blocks, and the result is
 [`../results/tum-freiburg1-xyz-10mm.json`](../results/tum-freiburg1-xyz-10mm.json):
 
 | | 15 mm | 10 mm |

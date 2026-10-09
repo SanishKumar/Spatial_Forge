@@ -125,6 +125,20 @@ allocates under a tenth of the payload, loading the file and under a
 quarter of the payload more. Before that was so, writing took twice the
 payload on top of the storage, and the ceiling was 100,000 blocks.
 
+Measured on the largest volume here, the living room with its free space
+at 10 mm, 122,688 blocks and 0.70 GiB of accumulators:
+
+```text
+fuse, with a checkpoint every 100 frames    0.90 GiB peak
+mesh, 7.2 million triangles                 4.27 GiB peak
+```
+
+Fusion peaked at 1.30 GiB before its end-of-stage check was made a run of
+blocks at a time, and writes the same volume, digest for digest, either
+way. Meshing is the expensive step, and not because of blocks: the same
+triangles cost 3.33 GiB from the 27,965-block volume without free space.
+That is about 10 kB a block, and a little over 3 GiB for the mesh itself.
+
 A fusion that is interrupted before its volume is written can be continued,
 from a separate file that is not a volume:
 [`fusion-checkpoint.md`](fusion-checkpoint.md).
