@@ -100,7 +100,7 @@ from .tsdf_plan_expansion import (
 from .tsdf_block_plan import TSDF_EXPANSION_APPROVAL_RULES
 from .tsdf_expanded_plan import write_tsdf_expanded_block_plan
 from .tsdf_stream_expansion import (
-    propose_tsdf_plan_expansion_streaming,
+    survey_tsdf_plan_expansion_streaming,
 )
 from .tsdf_plan_fusion import (
     begin_tsdf_fusion_ledger,
@@ -5272,7 +5272,8 @@ def _run_tsdf_block_plan_expand(
         _validate_tsdf_block_plan_output(output)
         plan = load_tsdf_block_plan(plan_path)
         session = load_scan_session(session_path)
-        proposal = propose_tsdf_plan_expansion_streaming(plan, session)
+        survey = survey_tsdf_plan_expansion_streaming(plan, session)
+        proposal = survey.proposal
         report = write_tsdf_expanded_block_plan(plan, proposal, output)
     except SessionValidationError as error:
         print(
@@ -5303,9 +5304,9 @@ def _run_tsdf_block_plan_expand(
     )
     print(
         "candidate_box: "
-        f"blocks={proposal.domain_block_count} "
-        f"approved={proposal.approved_block_count} "
-        f"rejected={proposal.rejected_block_count}",
+        f"blocks={survey.candidate_block_count} "
+        f"approved={survey.observed_block_count} "
+        f"rejected={survey.rejected_block_count}",
         file=sys.stdout,
     )
     print(

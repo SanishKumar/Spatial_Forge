@@ -58,6 +58,7 @@ from spatialforge.tsdf_stream_expansion import (
     _largest_depth_table,
     candidate_box_margin_m,
     propose_tsdf_plan_expansion_streaming,
+    survey_tsdf_plan_expansion_streaming,
 )
 from spatialforge.tsdf_stream_fusion import (
     BLOCK_EVALUATE,
@@ -361,6 +362,134 @@ class RoomScanTests(unittest.TestCase):
         self.assertGreater(len(outside), 1000)
         seen, _ = observed_blocks(room.plan, room.session, outside)
         self.assertFalse(seen.any())
+
+
+class SurveyTests(unittest.TestCase):
+    """The same expansion without a list of what it rejected.
+
+    A real room's box is over a million blocks, nearly all of them
+    rejected. The survey counts those and lists only what it approved, so
+    it has to be shown to approve what the full proposal approves.
+    """
+
+    def cases(self):
+        room = shared_room_case()
+        yield room.plan, room.session
+        for raw_depth, stride in REFERENCE_CASES:
+            case = shared_case(raw_depth, stride)
+            yield case.plan, load_scan_session(case.session_path)
+
+    def test_it_approves_what_the_proposal_approves(self) -> None:
+        for plan, session in self.cases():
+            with self.subTest(session=session.session_id, plan=plan.path.name):
+                proposal = propose_tsdf_plan_expansion_streaming(plan, session)
+                survey = survey_tsdf_plan_expansion_streaming(plan, session)
+                self.assertEqual(
+                    survey.proposal.approved_block_indices,
+                    proposal.approved_block_indices,
+                )
+                self.assertEqual(
+                    survey.proposal.expanded_block_indices,
+                    proposal.expanded_block_indices,
+                )
+                self.assertEqual(
+                    survey.proposal.added_block_indices,
+                    proposal.added_block_indices,
+                )
+                self.assertEqual(
+                    survey.proposal.free_space_rule, proposal.free_space_rule
+                )
+                # What it does not list, it still counts.
+                self.assertEqual(survey.proposal.rejected_block_indices, ())
+                self.assertEqual(
+                    survey.candidate_block_count, proposal.domain_block_count
+                )
+                self.assertEqual(
+                    survey.observed_block_count, proposal.approved_block_count
+                )
+                self.assertEqual(
+                    survey.rejected_block_count, proposal.rejected_block_count
+                )
+                # And the box it reports is the box the proposal lists.
+                box = np.asarray(proposal.domain_block_indices)
+                self.assertEqual(
+                    survey.box_low_block, tuple(box.min(axis=0).tolist())
+                )
+                self.assertEqual(
+                    survey.box_shape_blocks,
+                    tuple((box.max(axis=0) - box.min(axis=0) + 1).tolist()),
+                )
+                self.assertEqual(
+                    survey.candidate_block_count,
+                    math.prod(survey.box_shape_blocks),
+                )
+
+    def test_the_plan_it_writes_is_the_same_file(self) -> None:
+        for plan, session in self.cases():
+            with self.subTest(session=session.session_id, plan=plan.path.name):
+                with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+                    listed = Path(temporary) / "listed.sftplan"
+                    surveyed = Path(temporary) / "surveyed.sftplan"
+                    write_tsdf_expanded_block_plan(
+                        plan,
+                        propose_tsdf_plan_expansion_streaming(plan, session),
+                        listed,
+                    )
+                    write_tsdf_expanded_block_plan(
+                        plan,
+                        survey_tsdf_plan_expansion_streaming(
+                            plan, session
+                        ).proposal,
+                        surveyed,
+                    )
+                    self.assertEqual(
+                        surveyed.read_bytes(), listed.read_bytes()
+                    )
+
+    def test_it_takes_a_box_too_large_to_list(self) -> None:
+        room = shared_room_case()
+        whole = survey_tsdf_plan_expansion_streaming(room.plan, room.session)
+        with patch(
+            "spatialforge.tsdf_stream_expansion."
+            "MAX_TSDF_STREAM_EXPANSION_CANDIDATE_BLOCKS",
+            1000,
+        ):
+            with self.assertRaises(TsdfError):
+                propose_tsdf_plan_expansion_streaming(room.plan, room.session)
+            limited = survey_tsdf_plan_expansion_streaming(
+                room.plan, room.session
+            )
+        self.assertEqual(limited, whole)
+        self.assertEqual(whole.candidate_block_count, 1584)
+        self.assertEqual(whole.frames_read, 20)
+        # It has a limit of its own, and says which box met it.
+        with patch(
+            "spatialforge.tsdf_stream_expansion."
+            "MAX_TSDF_STREAM_EXPANSION_BOX_BLOCKS",
+            1000,
+        ):
+            with self.assertRaises(TsdfError) as caught:
+                survey_tsdf_plan_expansion_streaming(room.plan, room.session)
+        message = str(caught.exception)
+        self.assertIn("1584 candidate blocks", message)
+        self.assertIn("the maximum is 1000", message)
+
+    def test_the_box_is_judged_a_run_at_a_time_to_the_same_answer(
+        self,
+    ) -> None:
+        room = shared_room_case()
+        whole = survey_tsdf_plan_expansion_streaming(room.plan, room.session)
+        # 1,584 blocks in runs of seven: 227 runs a frame where the
+        # default takes the box in one.
+        with patch(
+            "spatialforge.tsdf_stream_expansion."
+            "_BOX_CLASSIFICATION_CHUNK_BLOCKS",
+            7,
+        ):
+            in_runs = survey_tsdf_plan_expansion_streaming(
+                room.plan, room.session
+            )
+        self.assertEqual(in_runs, whole)
 
 
 class HiddenBlockTests(unittest.TestCase):

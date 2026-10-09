@@ -257,9 +257,12 @@ against the evaluator: no block it calls hidden receives a contribution.
 - **Glass and mirrors are whatever the depth says they are.** A depth
   camera that sees through a window marks the window free.
 - **There is a ceiling.** A plan holds at most 250,000 blocks and the
-  candidate box at most 500,000. The living room at 10 mm needs 122,688,
+  candidate box at most 8,000,000. The living room at 10 mm needs 122,688,
   which was more than a plan could hold until the ceiling was raised from
   100,000. An expansion that passes the ceiling is refused at the frame
-  where it does, not after the whole scan has been read.
+  where it does, not after the whole scan has been read. The box was held
+  to 500,000 while every block of it was listed as approved or rejected;
+  the command now counts the rejected ones and lists only what it
+  approves, and writes the same plan.
 - **Surface only glanced at is still lost.** Expansion adds free space. It
   does not bring back the [glancing-angle loss](icl-nuim-validation.md#what-is-missing-is-what-was-only-glanced-at).

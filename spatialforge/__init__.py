@@ -45,7 +45,9 @@ from .tsdf_fusion_checkpoint import (
     write_tsdf_fusion_checkpoint,
 )
 from .tsdf_stream_expansion import (
+    TsdfStreamExpansionSurvey,
     propose_tsdf_plan_expansion_streaming,
+    survey_tsdf_plan_expansion_streaming,
 )
 from .tsdf_stream_fusion import (
     TsdfStreamFusionProgress,
@@ -189,6 +191,7 @@ __all__ = [
     "TsdfFusionCheckpointReport",
     "TsdfFusionLedger",
     "TsdfPlanFusionReceipt",
+    "TsdfStreamExpansionSurvey",
     "TsdfStreamFusionProgress",
     "TsdfStreamFusionReceipt",
     "TsdfCoverageDomainCrossViewReceipt",
@@ -267,6 +270,7 @@ __all__ = [
     "replay_session",
     "survey_tsdf_observation_pixel_footprints_from_context",
     "survey_tsdf_plan_block_rays_from_context",
+    "survey_tsdf_plan_expansion_streaming",
     "survey_tsdf_plan_pixel_footprints_from_context",
     "sweep_tsdf_coverage_domain_cross_view_from_context",
     "trace_tsdf_observation_block_rays_from_context",

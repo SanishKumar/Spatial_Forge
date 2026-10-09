@@ -49,6 +49,7 @@ a rectangle is read from a small table built once per frame.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -96,9 +97,15 @@ _DEPTH_TILE_PIXELS = 8
 _HIDDEN_RELATIVE_DEPTH_SLACK = 1e-9
 _HIDDEN_PIXEL_SLACK = 1
 
-# The candidate box is held as one bit and one index triple per block, and
-# the proposal lists every one of them as approved or rejected.
+# A proposal lists every candidate block as approved or rejected, which
+# is what limits the box it can be made from.
 MAX_TSDF_STREAM_EXPANSION_CANDIDATE_BLOCKS = 500_000
+# A survey lists only the blocks it approved. The box itself is one bit
+# and one index triple per block, and a real scan's can be large: a few
+# far depth readings stretch it well past the room.
+MAX_TSDF_STREAM_EXPANSION_BOX_BLOCKS = 8_000_000
+# Blocks given a whole-block verdict per pass over the box.
+_BOX_CLASSIFICATION_CHUNK_BLOCKS = 65_536
 
 
 def candidate_box_margin_m(
@@ -127,6 +134,27 @@ def candidate_box_margin_m(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class TsdfStreamExpansionSurvey:
+    """What an expansion looked at, and the proposal it came to.
+
+    The proposal's domain is the blocks that were approved and no more.
+    The blocks that were looked at and rejected are counted here and not
+    listed, so the box may be far larger than a list of it could be.
+    """
+
+    box_low_block: tuple[int, int, int]
+    box_shape_blocks: tuple[int, int, int]
+    candidate_block_count: int
+    observed_block_count: int
+    frames_read: int
+    proposal: TsdfPlanExpansionProposal
+
+    @property
+    def rejected_block_count(self) -> int:
+        return self.candidate_block_count - self.observed_block_count
+
+
 def propose_tsdf_plan_expansion_streaming(
     plan: TsdfBlockPlan,
     session: ScanSession,
@@ -139,8 +167,96 @@ def propose_tsdf_plan_expansion_streaming(
     domain: the candidate box in place of the surveyed pixel cover. The
     blocks it adds to the plan are the same blocks.
 
+    Every block of the box is listed, approved or rejected, so the box
+    may hold no more than a list of it reasonably can. For a larger one
+    use ``survey_tsdf_plan_expansion_streaming``.
+
     ``extra_margin_blocks`` grows the box beyond what the bound requires.
     It can only cost time; it exists so the bound can be tested.
+    """
+
+    candidates, observed, _, _, _ = _observe_box(
+        plan,
+        session,
+        extra_margin_blocks,
+        MAX_TSDF_STREAM_EXPANSION_CANDIDATE_BLOCKS,
+    )
+    approved = {(int(x), int(y), int(z)) for x, y, z in candidates[observed]}
+    rejected = {
+        (int(x), int(y), int(z)) for x, y, z in candidates[~observed]
+    }
+    return TsdfPlanExpansionProposal(
+        source_plan_digest_sha256=plan.artifact_digest_sha256,
+        replay_digest_sha256=plan.replay_digest_sha256,
+        frame_stride=plan.frame_stride,
+        total_observations=plan.total_observations,
+        block_resolution=plan.block_resolution,
+        source_plan_block_indices=plan.active_blocks,
+        domain_block_indices=_ordered_blocks(approved | rejected),
+        approved_block_indices=_ordered_blocks(approved),
+        rejected_block_indices=_ordered_blocks(rejected),
+        expanded_block_indices=_ordered_blocks(
+            set(plan.active_blocks) | approved
+        ),
+        free_space_rule=TSDF_FREE_SPACE_RULE_OBSERVED,
+    )
+
+
+def survey_tsdf_plan_expansion_streaming(
+    plan: TsdfBlockPlan,
+    session: ScanSession,
+    *,
+    extra_margin_blocks: int = 0,
+) -> TsdfStreamExpansionSurvey:
+    """The same expansion, without listing the blocks it rejected.
+
+    The blocks approved, and so the expanded plan, are those
+    ``propose_tsdf_plan_expansion_streaming`` arrives at. The box can be
+    sixteen times larger.
+    """
+
+    candidates, observed, low, shape, frames_read = _observe_box(
+        plan,
+        session,
+        extra_margin_blocks,
+        MAX_TSDF_STREAM_EXPANSION_BOX_BLOCKS,
+    )
+    approved = {(int(x), int(y), int(z)) for x, y, z in candidates[observed]}
+    ordered = _ordered_blocks(approved)
+    return TsdfStreamExpansionSurvey(
+        box_low_block=(int(low[0]), int(low[1]), int(low[2])),
+        box_shape_blocks=(shape[0], shape[1], shape[2]),
+        candidate_block_count=len(candidates),
+        observed_block_count=len(ordered),
+        frames_read=frames_read,
+        proposal=TsdfPlanExpansionProposal(
+            source_plan_digest_sha256=plan.artifact_digest_sha256,
+            replay_digest_sha256=plan.replay_digest_sha256,
+            frame_stride=plan.frame_stride,
+            total_observations=plan.total_observations,
+            block_resolution=plan.block_resolution,
+            source_plan_block_indices=plan.active_blocks,
+            domain_block_indices=ordered,
+            approved_block_indices=ordered,
+            rejected_block_indices=(),
+            expanded_block_indices=_ordered_blocks(
+                set(plan.active_blocks) | approved
+            ),
+            free_space_rule=TSDF_FREE_SPACE_RULE_OBSERVED,
+        ),
+    )
+
+
+def _observe_box(
+    plan: TsdfBlockPlan,
+    session: ScanSession,
+    extra_margin_blocks: int,
+    candidate_limit: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], int]:
+    """Which blocks of the candidate box hold an observed voxel.
+
+    Returns the box's blocks in canonical order, one flag for each, the
+    box's lowest block and extent, and how many frames were read.
     """
 
     if not isinstance(plan, TsdfBlockPlan):
@@ -212,8 +328,10 @@ def propose_tsdf_plan_expansion_streaming(
                 for _, transform in ready
             ],
             extra_margin_blocks,
+            candidate_limit,
         )
         observed = np.zeros(len(candidates), dtype=bool)
+        frames_read = 0
         # Where each planned block sits in the box, so that blocks the
         # plan already has are not counted as additions.
         planned = np.asarray(plan.active_blocks, dtype=np.int64) - low
@@ -234,21 +352,38 @@ def propose_tsdf_plan_expansion_streaming(
             pending = np.flatnonzero(~observed)
             if not len(pending):
                 break
-            verdicts = _classify_blocks(
-                camera, transform, candidates[pending], plan.voxel_size_m
+            frames_read += 1
+            table = (
+                _largest_depth_table(depth_m)
+                if STREAM_EXPANSION_SKIPS_HIDDEN_BLOCKS
+                else None
             )
-            visible = pending[verdicts == BLOCK_EVALUATE]
-            if STREAM_EXPANSION_SKIPS_HIDDEN_BLOCKS and len(visible):
-                visible = visible[
-                    ~_hidden_blocks(
-                        camera,
-                        transform,
-                        candidates[visible],
-                        plan.voxel_size_m,
-                        plan.truncation_m,
-                        _largest_depth_table(depth_m),
+            # The whole-block verdicts are given a run of the box at a
+            # time: each needs a dozen arrays of eight corners a block.
+            kept = []
+            for start in range(
+                0, len(pending), _BOX_CLASSIFICATION_CHUNK_BLOCKS
+            ):
+                part = pending[start:start + _BOX_CLASSIFICATION_CHUNK_BLOCKS]
+                part = part[
+                    _classify_blocks(
+                        camera, transform, candidates[part], plan.voxel_size_m
                     )
+                    == BLOCK_EVALUATE
                 ]
+                if table is not None and len(part):
+                    part = part[
+                        ~_hidden_blocks(
+                            camera,
+                            transform,
+                            candidates[part],
+                            plan.voxel_size_m,
+                            plan.truncation_m,
+                            table,
+                        )
+                    ]
+                kept.append(part)
+            visible = np.concatenate(kept)
             for first in range(0, len(visible), STREAM_FUSION_CHUNK_BLOCKS):
                 rows = visible[first:first + STREAM_FUSION_CHUNK_BLOCKS]
                 _, _, weight_deltas = _evaluate_ready_voxels(
@@ -285,26 +420,7 @@ def propose_tsdf_plan_expansion_streaming(
                 "rerun the command"
             )
 
-        approved = {
-            (int(x), int(y), int(z)) for x, y, z in candidates[observed]
-        }
-        rejected = {
-            (int(x), int(y), int(z)) for x, y, z in candidates[~observed]
-        }
-        expanded = _ordered_blocks(set(plan.active_blocks) | approved)
-        return TsdfPlanExpansionProposal(
-            source_plan_digest_sha256=plan.artifact_digest_sha256,
-            replay_digest_sha256=plan.replay_digest_sha256,
-            frame_stride=plan.frame_stride,
-            total_observations=plan.total_observations,
-            block_resolution=plan.block_resolution,
-            source_plan_block_indices=plan.active_blocks,
-            domain_block_indices=_ordered_blocks(approved | rejected),
-            approved_block_indices=_ordered_blocks(approved),
-            rejected_block_indices=_ordered_blocks(rejected),
-            expanded_block_indices=expanded,
-            free_space_rule=TSDF_FREE_SPACE_RULE_OBSERVED,
-        )
+        return candidates, observed, low, shape, frames_read
     except (TsdfError, SessionReplayError):
         raise
     except PointCloudError as error:
@@ -490,6 +606,7 @@ def _candidate_blocks(
     camera,
     camera_centres_m: list[tuple[float, float, float]],
     extra_margin_blocks: int,
+    candidate_limit: int,
 ) -> tuple[np.ndarray, np.ndarray, list[int]]:
     """Every block of the box that must contain all observed voxels.
 
@@ -533,13 +650,12 @@ def _candidate_blocks(
         )
     shape = (high - low + 1).tolist()
     count = shape[0] * shape[1] * shape[2]
-    if count > MAX_TSDF_STREAM_EXPANSION_CANDIDATE_BLOCKS:
+    if count > candidate_limit:
         raise TsdfError(
             "TSDF stream expansion would consider "
             f"{count} candidate blocks ({shape[0]} x {shape[1]} x "
-            f"{shape[2]}); the maximum is "
-            f"{MAX_TSDF_STREAM_EXPANSION_CANDIDATE_BLOCKS}. Use a coarser "
-            "voxel size"
+            f"{shape[2]}); the maximum is {candidate_limit}. Use a "
+            "coarser voxel size"
         )
     # Canonical order: x fastest, then y, then z.
     z, y, x = np.meshgrid(
