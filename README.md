@@ -560,7 +560,7 @@ spatialforge/     library and CLI
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            58 test modules
+tests/            59 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```

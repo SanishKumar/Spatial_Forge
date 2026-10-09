@@ -37,7 +37,8 @@ volume fused from the session it is named with; both are checked by digest.
 Usage:
 
     python tools/surface_accuracy_report.py SESSION VOLUME.sftvol MESH.ply
-        MODEL.ply [--initial-translation X Y Z] [--fit-frame-stride N]
+        MODEL.ply [--initial-translation X Y Z | --find-frame]
+        [--fit-frame-stride N]
         [--alignment EARLIER.json [--alignment-session SESSION]]
         [--pixel-step N] [--limit-m L]
         [--errors-out ERRORS.npy] [--manifest-out RESULT.json]
@@ -47,6 +48,13 @@ Usage:
 the model's frame, in metres. The fit only needs it to within a few
 centimetres. It is expressed in the frame of the trajectory the session was
 imported from or, for a session that was not imported, the session's own.
+
+``--find-frame`` asks for no guess. The trajectory's frame is first placed
+in the model by the room's own planes (``tools/_frame_search.py``), turned
+any way and any distance off, and the fit starts from there. It is refused
+where the planes do not settle the question: a scene that is not mostly
+planes in three perpendicular directions, or one that fits the model about
+as well in two placements.
 
 ``--alignment`` takes the manifest of an earlier report and judges this
 mesh in the frame that report fitted, without fitting again. It is for
@@ -86,6 +94,11 @@ import numpy as np
 if __package__ in (None, ""):  # run as a script rather than imported
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tools._frame_search import (  # noqa: E402
+    choose_frame,
+    oriented_depth,
+    search_frame,
+)
 from tools._nearest import NearestPointIndex  # noqa: E402
 from tools._output import (  # noqa: E402
     positive_int,
@@ -759,6 +772,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar=("X", "Y", "Z"),
     )
     parser.add_argument(
+        "--find-frame",
+        action="store_true",
+        help=(
+            "Place the trajectory in the model by the room's planes and "
+            "start the fit there, instead of from an --initial-translation."
+        ),
+    )
+    parser.add_argument(
         "--alignment",
         type=Path,
         default=None,
@@ -814,8 +835,19 @@ def main(argv: list[str] | None = None) -> int:
                 "--alignment reuses a fitted alignment; an "
                 "--initial-translation would have nothing to start"
             )
+        if arguments.find_frame:
+            parser.error(
+                "--alignment reuses a fitted alignment; --find-frame would "
+                "have nothing to start"
+            )
     elif arguments.alignment_session is not None:
         parser.error("--alignment-session needs --alignment")
+    elif arguments.find_frame:
+        if arguments.initial_translation is not None:
+            parser.error(
+                "--find-frame looks for the starting placement; an "
+                "--initial-translation would give it one"
+            )
     elif arguments.initial_translation is None:
         arguments.initial_translation = (0.0, 0.0, 0.0)
     if arguments.initial_translation is not None and not all(
@@ -936,6 +968,7 @@ def main(argv: list[str] | None = None) -> int:
     stages: list[RegistrationStage] = []
     fit_samples = 0
     reused: dict[str, object] | None = None
+    frame_search: dict[str, object] | None = None
     if arguments.alignment is not None:
         transform, reused = load_alignment(
             arguments.alignment,
@@ -959,13 +992,47 @@ def main(argv: list[str] | None = None) -> int:
         )
         coarse_points = model_points[::thinning]
         coarse_normals = model_normals[::thinning]
+        coarse_index = NearestPointIndex(coarse_points, cell_m=COARSE_LIMIT_M)
         transform = np.eye(4)
-        transform[:3, 3] = arguments.initial_translation
+        if arguments.find_frame:
+            candidates = search_frame(
+                *oriented_depth(
+                    session,
+                    fit_frames,
+                    camera,
+                    depth_scale_m,
+                    arguments.pixel_step,
+                    source_from_session,
+                ),
+                coarse_points,
+                coarse_normals,
+                coarse_index,
+            )
+            transform = choose_frame(candidates).model_from_source
+            frame_search = {
+                "method": (
+                    "planes in three perpendicular directions, matched "
+                    "between raw depth and the model in each of 24 ways"
+                ),
+                "agreement": candidates[0].agreement,
+                "runner_up_agreement": candidates[1].agreement,
+                "start_model_from_source": [
+                    float(value) for value in transform.ravel()
+                ],
+            }
+            print(
+                "frame search: the best placement puts "
+                f"{100 * candidates[0].agreement:.1f}% of the depth on the "
+                "model and facing with it; the next, "
+                f"{100 * candidates[1].agreement:.1f}%"
+            )
+        else:
+            transform[:3, 3] = arguments.initial_translation
         transform, coarse = register_point_to_plane(
             fit_points,
             coarse_points,
             coarse_normals,
-            NearestPointIndex(coarse_points, cell_m=COARSE_LIMIT_M),
+            coarse_index,
             transform,
             limit_m=COARSE_LIMIT_M,
             iterations=COARSE_ITERATIONS,
@@ -984,7 +1051,13 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 "registration did not settle: its last update was "
                 f"{fine.last_step_m:.3g} m and {fine.last_step_rad:.3g} "
-                "rad. Give a closer --initial-translation."
+                "rad. "
+                + (
+                    "The placement the frame search found is not one the "
+                    "fit can refine."
+                    if arguments.find_frame
+                    else "Give a closer --initial-translation."
+                )
             )
         stages = [coarse, fine]
     registration_seconds = time.perf_counter() - started
@@ -1168,9 +1241,10 @@ def main(argv: list[str] | None = None) -> int:
                 "source_pose_consistency": pose_deviation,
                 "initial_translation_m": (
                     None
-                    if reused is not None
+                    if arguments.initial_translation is None
                     else list(arguments.initial_translation)
                 ),
+                "frame_search": frame_search,
                 "fit_frame_stride": stride,
                 "fit_frames": 0 if reused is not None else len(fit_frames),
                 "pixel_step": arguments.pixel_step,

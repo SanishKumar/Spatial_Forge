@@ -31,14 +31,17 @@ import numpy as np
 from spatialforge import (
     allocate_empty_tsdf_blocks,
     fuse_tsdf_plan_streaming,
+    load_tsdf_block_plan,
     write_tsdf_block_volume,
 )
 from spatialforge.replay import replay_session
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_mesh import extract_tsdf_block_mesh
+from spatialforge.tsdf_block_plan import plan_tsdf_blocks
 from spatialforge.tum_importer import T_RIG_CAMERA, import_tum_dataset
 
-from tests.heavy_fixtures import shared_room_case
+from tests import room_fixture
+from tests.heavy_fixtures import ROOM_PLAN_ARGUMENTS, shared_room_case
 from tests.room_fixture import (
     BOX,
     CEILING_Z,
@@ -48,6 +51,7 @@ from tests.room_fixture import (
     NOISE_SIGMA_M,
     RIGHT_WALL_Y,
 )
+from tools._frame_search import AMBIGUITY_RATIO
 from tools._nearest import NearestPointIndex
 from tools.surface_accuracy_report import (
     SurfaceDistances,
@@ -721,6 +725,203 @@ class RoomReportTests(unittest.TestCase):
             first["evaluation"]["point_to_plane"]["median_mm"],
             places=3,
         )
+
+
+LEVEL_POSE = room_fixture._pose_for
+
+
+def tipped_pose(frame: int) -> tuple[float, ...]:
+    """The room fixture's arc, with the camera tipped 25 degrees down."""
+
+    level = LEVEL_POSE(frame)
+    tip = math.radians(25.0)
+    pose = list(level)
+    for row in range(3):
+        down, forward = level[4 * row + 1], level[4 * row + 2]
+        pose[4 * row + 1] = math.cos(tip) * down - math.sin(tip) * forward
+        pose[4 * row + 2] = math.cos(tip) * forward + math.sin(tip) * down
+    return tuple(pose)
+
+
+_TIPPED: SimpleNamespace | None = None
+
+
+def tipped_room() -> SimpleNamespace:
+    """The same room scanned looking down: scan, volume and mesh.
+
+    The fixture's camera is level, and the floor and ceiling stay out of
+    all but the last rows of its image. A scan that is to be placed by
+    its planes has to see planes facing three ways, so this one looks at
+    the floor as well as the walls.
+    """
+
+    global _TIPPED
+    if _TIPPED is None:
+        session_path = ROOM.root / "tipped.vgsession"
+        with patch("tests.room_fixture._pose_for", tipped_pose):
+            room_fixture._write_session(session_path)
+        session = load_scan_session(session_path)
+        plan_path = ROOM.root / "tipped.sftplan"
+        plan_tsdf_blocks(
+            session, plan_path, frame_stride=1, **ROOM_PLAN_ARGUMENTS
+        )
+        storage = allocate_empty_tsdf_blocks(
+            load_tsdf_block_plan(plan_path), session
+        )
+        receipt = fuse_tsdf_plan_streaming(storage, session)
+        volume = ROOM.root / "tipped.sftvol"
+        write_tsdf_block_volume(storage, receipt, volume)
+        mesh = ROOM.root / "tipped.ply"
+        extract_tsdf_block_mesh(volume, mesh)
+        _TIPPED = SimpleNamespace(
+            session=session_path, volume=volume, mesh=mesh
+        )
+    return _TIPPED
+
+
+class FoundFrameTests(unittest.TestCase):
+    """The report with no starting guess, placed by the room's planes."""
+
+    def tipped(self, name: str, *extra: str, **arguments) -> dict:
+        room = tipped_room()
+        return run_report(
+            name,
+            *extra,
+            session=room.session,
+            volume=room.volume,
+            mesh=room.mesh,
+            **arguments,
+        )
+
+    def test_the_frame_it_finds_is_the_frame_a_guess_leads_to(self) -> None:
+        guessed = self.tipped("tipped_guessed")
+        searched = self.tipped(
+            "tipped_searched", "--find-frame", translation=None
+        )
+
+        registration = searched["registration"]
+        self.assertIsNone(registration["initial_translation_m"])
+        self.assertEqual(registration["fitted_to"], "raw depth")
+        found = registration["frame_search"]
+        # One placement, and the scan can tell. Nearly all of the depth
+        # lands on the model. The next best still puts five sixths of it
+        # on some wall facing the right way, in a room with one box in
+        # it, and that is inside what the search will call a difference.
+        self.assertGreater(found["agreement"], 0.95)
+        self.assertLess(
+            found["runner_up_agreement"],
+            AMBIGUITY_RATIO * found["agreement"],
+        )
+        self.assertGreater(found["runner_up_agreement"], 0.7)
+        start = np.array(found["start_model_from_source"]).reshape((4, 4))
+        # The search is a guess, good to centimetres and to a degree.
+        self.assertLess(
+            float(np.abs(start[:3, 3] - MODEL_FROM_SESSION[:3, 3]).max()),
+            0.05,
+        )
+        self.assertLess(
+            float(np.abs(start[:3, :3] - MODEL_FROM_SESSION[:3, :3]).max()),
+            0.03,
+        )
+        # The fit from it settles where the fit from a given guess does.
+        np.testing.assert_allclose(
+            registration["model_from_source"],
+            guessed["registration"]["model_from_source"],
+            atol=1e-6,
+        )
+        for figure in ("median_mm", "rms_mm", "p95_mm"):
+            self.assertAlmostEqual(
+                searched["evaluation"]["point_to_plane"][figure],
+                guessed["evaluation"]["point_to_plane"][figure],
+                places=3,
+            )
+        # A run that was given its guess says so, and searched nothing.
+        self.assertIsNone(guessed["registration"]["frame_search"])
+        self.assertEqual(
+            guessed["registration"]["initial_translation_m"],
+            [float(value) for value in ROUGH_TRANSLATION],
+        )
+
+    def test_a_model_turned_and_moved_any_way_is_found(self) -> None:
+        # The same room, published in a frame that has nothing to do with
+        # the scan's: 131 degrees round a tilted axis and five metres off.
+        turn = rigid((0.4, -1.0, 0.7), 131.0, (4.0, -3.0, 2.5))
+        placed = turn @ MODEL_FROM_SESSION
+        points, normals = room_model()
+        turned = ROOM.root / "turned.ply"
+        write_model(turned, apply(placed, points), normals @ placed[:3, :3].T)
+
+        searched = self.tipped(
+            "tipped_turned", "--find-frame", translation=None, model=turned
+        )
+
+        guessed = self.tipped("tipped_guessed_again")
+        fitted = np.array(
+            searched["registration"]["model_from_source"]
+        ).reshape((4, 4))
+        expected = turn @ np.array(
+            guessed["registration"]["model_from_source"]
+        ).reshape((4, 4))
+        # The model is stored in single precision, and the turned one
+        # rounds differently: agreement to a hundredth of a millimetre.
+        np.testing.assert_allclose(fitted, expected, atol=1e-5)
+        self.assertAlmostEqual(
+            searched["evaluation"]["point_to_plane"]["median_mm"],
+            guessed["evaluation"]["point_to_plane"]["median_mm"],
+            places=2,
+        )
+        self.assertEqual(
+            searched["evaluation"]["beyond_limit"],
+            guessed["evaluation"]["beyond_limit"],
+        )
+        # No translation alone gets there. The true one is the best a
+        # caller could give, and from it the fit is refused.
+        room = tipped_room()
+        with (
+            self.assertRaises(SystemExit) as raised,
+            redirect_stdout(io.StringIO()),
+        ):
+            main(
+                report_arguments(
+                    translation=[f"{value:.3f}" for value in placed[:3, 3]],
+                    session=room.session,
+                    volume=room.volume,
+                    mesh=room.mesh,
+                    model=turned,
+                )
+            )
+        self.assertRegex(
+            str(raised.exception), "did not settle|too far off|constrained"
+        )
+
+    def test_a_scan_that_sees_walls_facing_two_ways_is_refused(self) -> None:
+        # The level camera: one wall ahead, one to each side, and no
+        # floor or ceiling a normal can be taken on.
+        with (
+            self.assertRaises(SystemExit) as raised,
+            redirect_stdout(io.StringIO()),
+        ):
+            main([*report_arguments(translation=None), "--find-frame"])
+        self.assertIn("three perpendicular", str(raised.exception))
+
+    def test_a_guess_and_a_search_are_exclusive(self) -> None:
+        baseline()
+        for arguments in (
+            [*report_arguments(), "--find-frame"],
+            [
+                *report_arguments(translation=None),
+                "--find-frame",
+                "--alignment",
+                str(ROOM.root / "baseline.json"),
+            ],
+        ):
+            with self.subTest(arguments=arguments[4:]):
+                with (
+                    self.assertRaises(SystemExit) as raised,
+                    redirect_stderr(io.StringIO()),
+                ):
+                    main(arguments)
+                self.assertEqual(raised.exception.code, 2)
 
 
 class ReusedAlignmentTests(unittest.TestCase):
