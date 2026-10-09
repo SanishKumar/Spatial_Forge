@@ -3,6 +3,43 @@
 What changed between tagged versions. Numbers quoted here are the ones in
 `results/`; each manifest there records the commit it was produced from.
 
+## 0.6.0 (2026-10-09)
+
+Larger volumes, and free space on a real sensor.
+
+Measured
+
+- **Free space on the real Kinect desk.** TUM `freiburg1_xyz` at 15 mm,
+  expanded from 5,401 blocks to 8,692. The mesh is the same mesh and the
+  held-out residual the same to a thousandth of a millimetre. Of 790
+  camera positions the voxel is observed free for 476, unseen for 314 and
+  behind a surface for none.
+- **The living room's free space at 10 mm.** 122,688 blocks, more than a
+  plan could hold before. Its map agrees with the 20 mm one, 14.25 m² free
+  against 14.33, and all 880 camera positions are in observed free space.
+- **Free space can add triangles.** At 20 mm and on the desk the expanded
+  volume's mesh is identical. At 10 mm it has 118 more triangles in 7.2
+  million, 4.5 cm² along one vertical edge, and none fewer. 0.5.0 said free
+  space adds no surface; that was two cases, not a rule.
+- **The dataset's noisy sequence at 10 mm.** 126,967 blocks, refused until
+  now. A median 8.46 mm from the truth and 8.86 mm on the camera's side of
+  it: finer voxels do not remove the offset.
+
+Changed
+
+- A plan may hold 250,000 blocks, up from 100,000: 1.5 GB of accumulators.
+- Fusing, writing and loading a volume no longer copy it. Writing took
+  twice the payload on top of the storage and now takes under a tenth of
+  it. Loading a two-megabyte volume allocated 616 MB, because a read of "up
+  to the maximum" reserves the maximum; it now allocates the file. Fusing
+  the largest volume here, 0.70 GiB of accumulators, peaks at 0.90 GiB
+  where it peaked at 1.30, and writes the same bytes.
+- Plan expansion settles blocks hidden behind a frame's surfaces from the
+  depth image instead of evaluating their voxels. The real desk's plan
+  expands in 148 s where it took 1,607 s, to the same plan.
+- The mesher classifies cells a run of blocks at a time: about 10 kB of
+  memory a block where it was 16. The meshes are the same files.
+
 ## 0.5.0 (2026-10-08)
 
 Three things 0.4 listed as not done: the glancing-angle loss is tested

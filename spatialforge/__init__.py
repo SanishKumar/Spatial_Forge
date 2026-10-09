@@ -282,4 +282,4 @@ __all__ = [
     "write_tsdf_expanded_block_plan",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
