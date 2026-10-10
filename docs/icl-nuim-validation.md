@@ -32,6 +32,9 @@ engine: the voxel grid, the fusion rule, and the mesher. This is the error
 SpatialForge adds to perfect input, and it is a floor under any real
 result, not a forecast of one.
 
+The dataset's other path through this room, `lr kt1`, is
+[further down](#a-second-trajectory), measured the same way.
+
 ## Three things the dataset does not tell you
 
 **It is left-handed.** The published intrinsics have `fy = -480`: the scene
@@ -81,6 +84,15 @@ last update          1.8e-9 m
 The mesh is then judged in a frame it had no part in choosing. The test
 suite checks the property directly: a mesh with every vertex moved 25 mm
 must score worse, which is exactly what a fit to the mesh would undo.
+
+A fit like this refines a placement that is already close, so it has to be
+started somewhere. When this page was first written the start was a
+translation found by hand. The report now finds its own, from the room's
+planes and with nothing given, and that is how
+[a second trajectory](#a-second-trajectory) was placed at all. Started
+that way on this one, the fit arrives at the transform above to sixteen
+significant digits
+([`../results/icl-nuim-lr-kt2-20mm-surface-found-frame.json`](../results/icl-nuim-lr-kt2-20mm-surface-found-frame.json)).
 
 ## How it is measured
 
@@ -169,8 +181,10 @@ against the other:
 
 The residual runs at 87 to 89% of the true error at every voxel size. They
 are different measurements, of a volume in one case and a mesh in the
-other, and one scene does not make a law. But on exact depth the number
-TUM is limited to moves with the real one and slightly understates it.
+other, and one scene does not make a law:
+[a second path through this room](#the-held-out-residual-checked-again)
+puts it at 72 to 83%. But on exact depth the number TUM is limited to
+moves with the real one and understates it.
 With sensor noise the relation is very different, and
 [the next section](#what-it-does-to-the-held-out-residual) measures it.
 
@@ -577,6 +591,203 @@ blocks: 44,341 against 7,655.
 
 The manifests are `../results/icl-nuim-lr-kt2-*-band*-*.json`.
 
+## A second trajectory
+
+Everything above is one path through the room, and one path cannot say
+whether its figures belong to the engine or to the path. The dataset's
+`living_room_traj1` ("lr kt1") went through the same commands: the same
+room and model, another route. 966 frames, 965 of them posed, 483 fused.
+
+### Its frame is not the first one's
+
+Both trajectory files begin with the same pose, `0 0 -2.25` and no
+rotation. Each is written relative to its own first camera, so each sits
+somewhere else in the model:
+
+```text
+          fitted to                           rotation   translation
+lr kt2     93,574 depth samples, 44 frames    1.1758°    (-0.74539, +1.29978, -0.78788) m
+lr kt1    102,487 depth samples, 49 frames    1.1874°    (-0.06277, +1.29187, -2.14956) m
+```
+
+The two are 1.52 m apart. Started from the first trajectory's translation,
+the fit for the second never settled, and the report refused to measure in
+a frame that was still moving. (Placed by the first trajectory's fitted
+transform outright, two thirds of its held-out depth had no model surface
+within 16 cm. Measured once, while working this out.)
+
+So the report finds the start itself, with `--find-frame`
+([`tools/_frame_search.py`](../tools/_frame_search.py)). A room is mostly
+planes facing three perpendicular ways, and that is enough to place it:
+
+- depth gives oriented points, a normal taken across each sample and
+  turned toward the camera;
+- the three directions most normals lie along are found in the depth and
+  in the model, and one triple can be laid on the other in 24 ways;
+- under each, the scan is slid along every axis to where most of it sits
+  on a model plane facing the same way;
+- each placement is scored by the share of the depth that then lies
+  within 5 cm of the model and faces as the model does there.
+
+| | Best placement | Next best |
+|---|---|---|
+| lr kt1 | 90.5% of the depth | 63.9% |
+| lr kt2 | 89.2% | 65.4% |
+
+The best is a guess, good to a two-centimetre bin, and the fit runs from
+it as from any other guess and has to settle: its last update here was
+0.07 micrometres. Given a translation by hand instead, the fit for this
+trajectory arrives at the same transform to sixteen significant digits,
+and so does the first trajectory's, started from the search.
+
+The search refuses rather than guess twice over. If no placement puts half
+the depth on the model, none was found. If a second comes within nine
+tenths of the first, the scan cannot tell them apart: a bare rectangular
+room is the same room turned half way round.
+
+Two things were wrong in it before it worked, and each is now a test.
+Taking a change in depth across a sample for an edge threw away every
+wall seen along its length; the test for an edge is now that inverse
+depth stops being linear across the sample, which on a plane it is at any
+slope. And this model holds the outsides of the room's walls, larger than
+the insides and seen by no frame. Sliding the scan to match large planes
+with large planes laid its walls on those, 5.2 m from where they belong.
+The slide is now judged by how much of the scan it accounts for, and the
+size of what it lands on does not count.
+
+### The same figures
+
+Distance from each mesh vertex to the model's tangent plane:
+
+| | Voxel | Vertices | Median | Mean | RMS | p95 | p99 |
+|---|---|---|---|---|---|---|---|
+| lr kt1 | 20 mm | 692,396 | 0.50 mm | 1.32 mm | 3.91 mm | 4.39 mm | 20.5 mm |
+| lr kt1 | 15 mm | 1,235,317 | 0.49 mm | 1.03 mm | 2.84 mm | 3.01 mm | 13.6 mm |
+| lr kt1 | 10 mm | 2,774,882 | **0.48 mm** | **0.77 mm** | **1.57 mm** | 2.20 mm | 5.9 mm |
+| lr kt1 | raw depth (floor) | 100,350 samples | 0.50 mm | 0.62 mm | 0.86 mm | 1.67 mm | 3.0 mm |
+| lr kt2 | 10 mm | 3,656,989 | 0.45 mm | 0.77 mm | 1.69 mm | 2.34 mm | 6.5 mm |
+| lr kt2 | raw depth (floor) | 93,549 samples | 0.43 mm | 0.57 mm | 0.83 mm | 1.56 mm | 3.1 mm |
+
+Every reading of the first table holds for the second. The median is the
+floor, and here the mesh is a shade under the raw depth it was fused
+from. The tail shrinks as the voxel does while the median stays put. The
+mean signed distance is +0.35 mm at 10 mm against +0.33 mm, with raw depth
+at +0.35 mm by itself. No vertex of any of the three meshes is farther
+than 160 mm from the model; the worst is 78 mm at 20 mm voxels and 39 mm
+at 10 mm. To the nearest model point, the SurfReg
+statistic, the 10 mm mesh has a mean of 3.56 mm and 99.2% within 10 mm,
+where the first trajectory's has 3.58 mm and 99.2%.
+
+```text
+                       20 mm        15 mm        10 mm
+planned blocks         6,068       10,571       22,641
+observed voxels    1,935,918    3,148,776    7,085,065
+mesh triangles     1,361,070    2,435,026    5,484,848
+```
+
+### The held-out residual, checked again
+
+| Voxel | Held-out residual, rms | Distance to truth, rms | Held-out median | Truth median |
+|---|---|---|---|---|
+| 20 mm | 3.23 mm | 3.91 mm | 0.36 mm | 0.50 mm |
+| 15 mm | 2.04 mm | 2.84 mm | 0.34 mm | 0.49 mm |
+| 10 mm | 1.20 mm | 1.57 mm | 0.33 mm | 0.48 mm |
+
+On the first trajectory the residual ran at 87 to 89% of the true error,
+and that section said one scene does not make a law. It does not. Here it
+runs at 72 to 83%. On exact depth it is under the true error on both
+paths, by a factor that moves with the path.
+
+### What was seen, and what is there
+
+This path sees less of the room: 386,863 of the 2,495,574 model points
+tested are observable, 15.5%, where the first path sees 20.7%. Of those,
+the share with mesh within each distance:
+
+| Voxel | 5 mm | 10 mm | 20 mm | None within 30 mm |
+|---|---|---|---|---|
+| 20 mm | 90.2% | 93.6% | 98.3% | 0.94% |
+| 15 mm | 92.7% | 94.8% | 98.8% | 0.56% |
+| 10 mm | **94.2%** | 95.5% | **99.0%** | **0.53%** |
+
+And the share with no mesh within 30 mm, by the most head-on view each
+point was given:
+
+| Most head-on view | Points | 20 mm | 15 mm | 10 mm |
+|---|---|---|---|---|
+| within 60° of the normal | 301,450 | 0.1% | 0.0% | 0.0% |
+| 60° to 70° | 50,155 | 0.7% | 0.1% | 0.0% |
+| 70° to 75° | 17,201 | 0.6% | 0.2% | 0.1% |
+| 75° to 80° | 5,738 | 1.8% | 0.7% | 0.3% |
+| 80° to 85° | 6,891 | 14.8% | 8.2% | 5.3% |
+| 85° to 90° | 5,428 | 33.1% | 25.5% | 29.9% |
+
+It is the same loss in the same place. Surface that every frame only
+glanced along, beyond 70.5°, is 8.6% of what this path saw and holds 82%
+of what the 20 mm mesh is missing, 93% at 15 mm and 99.5% at 10 mm. Of the
+353,483 points some frame saw more squarely, the 10 mm mesh lacks ten.
+
+The first path's 15 mm mesh lacked more than its 20 mm one, which that
+section put down to where glanced planes happen to fall between voxel
+centres. On this path the three voxel sizes come in order, which is what
+an accident of position would allow and a property of 15 mm would not.
+
+The manifests are `../results/icl-nuim-lr-kt1-*`.
+
+### Its noisy files
+
+The dataset publishes this trajectory with noise applied too,
+`living_room_traj1n`, and it was treated as the first one's was: same
+pipeline, judged in the frame the exact sequence fitted. Its trajectory
+file is again the exact one reprinted with different rounding, at most 11
+micrometres and 7 microradians from it over 965 poses, so the alignment is
+reused after comparing the two pose by pose.
+
+What is in the files:
+
+| | `lr kt1n` | `lr kt2n` |
+|---|---|---|
+| Distance from a noisy disparity to a whole number, median (0.25 if not quantised) | 0.028 | 0.022 |
+| Disparity error in smooth regions, median | **+0.48 levels** | +0.51 levels |
+| The same as depth, at 1.2 / 2.2 / 3.5 m | -2 / -6 / -17 mm | -3 / -7 / -17 mm |
+| Depth error over all pixels, median | 9.0 mm | 10.0 mm |
+| Pixels more than 100 mm out | 3.4% | 4.0% |
+| Pixels with no depth | 0.51% | 0.55% |
+
+The half level is not a property of one sequence. It is in both.
+
+And what it does, at 15 mm voxels. Distance to the model's tangent plane,
+with the mean signed positive on the camera's side of the true surface:
+
+| | Median | Mean | RMS | p95 | Mean signed |
+|---|---|---|---|---|---|
+| one frame of `lr kt1n` | 7.26 mm | 8.89 mm | 12.84 mm | 35.86 mm | +7.61 mm |
+| mesh from `lr kt1n` | **7.38 mm** | 7.19 mm | 8.58 mm | 14.54 mm | **+6.78 mm** |
+| mesh from `lr kt2n`, from above | 9.27 mm | 10.53 mm | 12.88 mm | 22.96 mm | +9.82 mm |
+| mesh from `lr kt1`, exact depth | 0.49 mm | 1.03 mm | 2.84 mm | 3.01 mm | +0.48 mm |
+
+The same three things happen. Fusing 483 frames leaves the surface no
+closer than one of them is, 7.4 mm against 7.3 mm at the median, because
+what they share is not noise. The mesh sits 6.8 mm on the camera's side of
+the truth. And the held-out residual, 5.85 mm at the median, is 0.79 of
+the true error where the first trajectory's was 0.76: it cannot see what
+every frame has in common.
+
+The offset is smaller here in millimetres, 6.8 against 9.8, and it should
+be: half a level is more depth the farther away it is, and this path looks
+at nearer surfaces. The median depth in its frames is 2.35 m against
+2.71 m, with an eighth of its pixels beyond 3 m where the first path has
+two fifths. (Measured once, from every twentieth frame of each.)
+
+The outliers scatter surface as before: 34,083 blocks where exact depth
+needs 10,571. Held to the same 386,863 points as
+the exact meshes, this one has 26.7% of the seen surface within 5 mm and
+92.2% within 20 mm, where the first trajectory's noisy mesh had 21.8% and
+80.0%. At a tight threshold completeness is accuracy again, and a smaller
+offset reads as more surface.
+
+The manifests are `../results/icl-nuim-lr-kt1n-15mm-*`.
+
 ## One chain per volume
 
 Each volume is planned, fused, written, meshed and scored, and each step
@@ -594,7 +805,8 @@ The full values, the fitted transform, the commit and the state of the
 working tree are in
 [`../results/icl-nuim-lr-kt2-10mm-surface.json`](../results/icl-nuim-lr-kt2-10mm-surface.json),
 with the held-out report and the completeness report for the same volume
-beside it, and the same three for 15 mm and 20 mm.
+beside it, and the same three for 15 mm and 20 mm. The second trajectory's
+are under `icl-nuim-lr-kt1-*`, chained the same way.
 
 ## What was run
 
@@ -676,8 +888,7 @@ python -m spatialforge reconstruct tsdf-block-volume-mesh \
 python tools/surface_accuracy_report.py \
   datasets/icl-kt2.vgsession datasets/icl-kt2-10mm.sftvol \
   datasets/icl-kt2-10mm.ply datasets/icl/model/living-room.ply \
-  --initial-translation -0.75 1.30 -0.79 \
-  --errors-out datasets/icl-kt2-10mm-errors.npy
+  --find-frame --errors-out datasets/icl-kt2-10mm-errors.npy
 ```
 
 ```bash
@@ -741,12 +952,15 @@ python tools/render_mesh.py datasets/icl-kt2-10mm.ply datasets/icl-both \
   --size 560 --frames 24 --sweep 24
 ```
 
-The initial translation is where the trajectory's origin sits in the
-model's frame, to the nearest few centimetres. It came from a coarse search
-(the floor height from a histogram, the rest from correlating top-down
-occupancy) and the fit does not depend on it. Started 8 cm away in two
-opposite directions, it returns the same transform to fifteen significant
-digits and the same statistics.
+`--find-frame` places the trajectory in the model before the fit refines
+it. The manifests published for this trajectory were made before that
+existed, with `--initial-translation -0.75 1.30 -0.79`, a start found by
+hand: the floor height from a histogram, the rest from correlating
+top-down occupancy. The fit does not depend on which. Started 8 cm from
+that translation in two opposite directions it returns the same transform
+to fifteen significant digits, and started from the search it returns it
+to sixteen. Every step is the same for `living_room_traj1`, with `kt1`
+for `kt2` in the names.
 
 ## What this does not show
 
@@ -766,7 +980,7 @@ digits and the same statistics.
   ICL-NUIM include tracking drift and are usually on the noisy sequences
   after aligning the reconstruction to the model. These are not the same
   experiment and should not be set beside them.
-- **Another scene.** One room, one trajectory.
+- **Another scene.** One room, two trajectories through it.
 - **Mesh filters are choices.** Dropping fragments under 200 triangles
   removes 12,030 of 7.2 million triangles at 10 mm. The volume is
   unaffected.

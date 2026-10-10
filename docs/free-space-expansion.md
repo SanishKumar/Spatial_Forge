@@ -222,9 +222,102 @@ surface plan's holds 0.10 m², and 2.24 m² as occupied in both. It is a
 desk seen from one side, not a room: 91% of that map is unknown, and no
 picture of it is worth showing.
 
+### A whole room
+
+TUM `freiburg1_room`, the same sensor carried once round an office in 45
+seconds: 676 frames fused, 15 mm voxels.
+
+<p align="center">
+  <img src="assets/tum-room-free-space-surface-plan.png" width="49%" alt="A map of an office from above, drawn from the surface plan's volume. Walls, shelves and the things standing on desks are dark. A thin pale rim follows the inside of the walls. Everything else, inside the room and out, is grey.">
+  <img src="assets/tum-room-free-space.png" width="49%" alt="The same map drawn from the expanded plan's volume. Most of the inside of the room is pale: free. A grey patch remains in the middle, around the orange line of the camera's path. Pale wedges leave the room through two openings in its walls.">
+</p>
+
+<p align="center">
+  <em>The office between 0.80 m and 1.40 m above its floor: over the desk
+  tops and under the camera. Left, from the surface plan's volume;<br>
+  right, from the same plan expanded. The grey in the middle is where the
+  person carrying the camera stood.</em>
+</p>
+
+```text
+                        surface plan      expanded
+blocks                        41,318        69,415
+observed voxels           12,205,959    23,584,793
+contributions applied    222,263,250   390,878,730
+volume                        254 MB        427 MB
+```
+
+**The mesh does not change.** 1,836,470 vertices and 3,502,836 triangles,
+the same arrays. The held-out residual is 10.4928 mm at the median where
+it was 10.4927 mm, with 97 more of 9.89 million held-out samples landing
+in observed voxels.
+
+**No camera is behind a surface, and most are somewhere nobody looked.**
+Of the 1,352 camera positions the voxel is observed free for 558, unseen
+for 794 and behind a surface for none. In the living room every camera
+stood where other frames had looked through. Here three in five did not,
+and the map shows why: the camera went once round the room facing outward,
+and the middle, where the person carrying it stood, was behind it in every
+frame.
+
+**The map is a floor plan of the room above its desks.** In a window of
+9.0 m by 7.4 m round the room, over the band in the picture:
+
+| | Free | Occupied | Unknown |
+|---|---|---|---|
+| surface plan | 3.83 m² | 4.95 m² | 58.02 m² |
+| expanded | **16.32 m²** | 4.95 m² | 45.54 m² |
+
+That band was chosen because it is the one this scan covers, and that
+needs saying. Lower the band and the map empties:
+
+| Band above the floor | Free | Occupied |
+|---|---|---|
+| 0.80 m to 1.40 m | 16.32 m² | 4.95 m² |
+| 0.30 m to 1.20 m | 6.60 m² | 11.80 m² |
+| 0.10 m to 1.80 m | 3.48 m² | 13.41 m² |
+
+Over the height of someone standing, three and a half square metres are
+known to be free. A column is free only if every voxel of it was observed,
+and this scan looked at desks and walls from chest height. It did not look
+down at the floor between them. The map says so by leaving it grey, which
+is the answer it should give, and it is not a map of where one can walk.
+
+The pale wedges leaving the room are real too. Depth that passes through
+an opening marks what is beyond it free, whatever the opening is.
+
+**It needs a level grid.** A column is a line of voxels along one of the
+volume's axes. As the first camera was held this session's z axis is 41
+degrees off the room's, and the room was imported again with
+[`--up z`](tum-import.md#a-level-session) before any of this could be
+drawn. The floor is then at -1.56 m: the first camera was 1.56 m above the
+motion-capture floor, where the depth puts the floor to within 2 cm.
+
+**The box is most of a million blocks, and the expansion is the slow
+step.** The surface plan spans 15.0 by 11.6 by 8.6 m, round an office five
+metres across, because a few far readings stretch it. The candidate box is
+930,402 blocks, 127 by 99 by 74. 63,449 of them hold an observed voxel and
+28,097 of those were not in the plan. That took 27 minutes, with other
+work running on the same machine, against under eight to fuse the
+expanded plan. On the grid tipped 41 degrees the box was 1,132,560 blocks
+and the command refused it: it listed every block of the box as approved
+or rejected and stopped at 500,000. It now counts the ones it rejects and
+writes the same plans.
+
+```bash
+python tools/free_space_map.py \
+  datasets/fr1room-level-15mm-free.sftvol \
+  docs/assets/tum-room-free-space.png \
+  --from-m -0.76 --to-m -0.16 --within -3.5 5.6 -4.9 2.5 \
+  --session datasets/freiburg1-room-level.vgsession
+```
+
+The manifests are `../results/tum-freiburg1-room-15mm.json` and
+`../results/tum-freiburg1-room-15mm-free.json`.
+
 ### What most of the box is
 
-The box for this scan is 91,800 blocks around a plan of 5,401. A few far
+The desk's box is 91,800 blocks around a plan of 5,401. A few far
 depth readings stretch it to nearly eight metres, and almost all of it is
 behind something. A block behind a wall is in the image and in front of the
 camera, so the whole-block verdicts fusion uses do not settle it, and it was
@@ -264,5 +357,15 @@ against the evaluator: no block it calls hidden receives a contribution.
   to 500,000 while every block of it was listed as approved or rejected;
   the command now counts the rejected ones and lists only what it
   approves, and writes the same plan.
+- **A map is only as good as where the scan looked.** The office above
+  is known free over a person's height for three and a half square
+  metres, because nobody pointed the camera at the floor.
+- **It needs a level grid.** Columns run along the volume's axes. A
+  session anchored to a tilted first camera has to be imported again,
+  level, and reconstructed again.
+- **It is the slow step and cannot be resumed.** Expanding the office took
+  27 minutes where fusing it took under eight, and an expansion that is
+  interrupted starts again from the first frame. Fusion keeps a
+  checkpoint; this does not.
 - **Surface only glanced at is still lost.** Expansion adds free space. It
   does not bring back the [glancing-angle loss](icl-nuim-validation.md#what-is-missing-is-what-was-only-glanced-at).

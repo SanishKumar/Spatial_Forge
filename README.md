@@ -22,11 +22,11 @@ fast path proven identical to a slower one that is easier to trust.
 
 | | |
 |---|---|
-| Against a known surface | **0.45 mm** median, 0.77 mm mean distance to ground truth at 10 mm voxels ([ICL-NUIM](#against-a-known-surface), synthetic depth, exact poses) |
+| Against a known surface | **0.45 mm** median, 0.77 mm mean distance to ground truth at 10 mm voxels; 0.48 mm and 0.77 mm on a second path through the same room ([ICL-NUIM](#against-a-known-surface), synthetic depth, exact poses) |
 | With a Kinect's noise simulated | **0.86 mm** median to ground truth at 10 mm voxels, from depth frames a median 3.2 mm off |
 | How much of what was seen | **98.4%** of the observed ground-truth surface has mesh within 20 mm, 93.3% within 5 mm; 96% of what is missing was only ever seen at a glancing angle |
-| On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels ([TUM RGB-D](#results-on-real-data)) |
-| Free space | the voxel at each of the 880 camera positions is observed free in the [expanded volume](#where-there-is-room); adding it changes no triangle of the 20 mm mesh, and adds 118 to 7.2 million at 10 mm |
+| On a real depth camera | **7.5 mm** median residual against frames never fused, at 15 mm voxels, on a desk; 10.5 mm round a [whole office](#a-whole-room), and 6 mm in either within a metre of the camera ([TUM RGB-D](#results-on-real-data)) |
+| Free space | the voxel at each of the 880 camera positions is observed free in the [expanded volume](#where-there-is-room); adding it changes no triangle of the 20 mm mesh, and adds 118 to 7.2 million at 10 mm. A real office gets a floor plan: 16.3 m² observed free above its desks |
 | Reproducible | the committed scan reconstructs to the same bytes on Linux, macOS and Windows, under Python 3.11 and 3.14, checked on every push |
 | Cost | one CPU core and NumPy: 6.3 billion voxel-observations fused in 211 s |
 
@@ -111,6 +111,40 @@ whether the working tree was clean. The method, the earlier 30 mm run it
 supersedes, and everything this does not prove are in
 [`docs/tum-validation.md`](docs/tum-validation.md).
 
+### A whole room
+
+`freiburg1_room` is the same sensor carried once round the whole office:
+676 frames fused at 15 mm into 41,318 blocks and 3.5 million triangles.
+
+<p align="center">
+  <img src="docs/assets/tum-room.png" width="80%" alt="An office reconstructed from the TUM RGB-D freiburg1_room sequence, seen from above and coloured from the scan: desks with monitors, keyboards, a laptop and papers on them, two office chairs, one with a teddy bear sitting in it, shelves against the far wall, and a wooden floor with gaps where no frame looked">
+</p>
+
+<p align="center">
+  <em>The office at 15 mm from 676 frames of a real depth camera, seen
+  from above and cropped to the room.<br>The gaps in the floor are real:
+  the camera went round once, looking at the desks and the walls.</em>
+</p>
+
+| | Desk | Whole room |
+|---|---|---|
+| Frames fused | 395 | 676 |
+| Sparse blocks | 5,401 | 41,318 |
+| Mesh triangles | 535,486 | 3,502,836 |
+| Held-out samples inside observed voxels | 99.95% | 99.84% |
+| Median held-out residual | 7.5 mm | **10.5 mm** |
+| The same, for samples within a metre | 6.1 mm | 6.4 mm |
+
+Most of the difference is distance. Half the desk's held-out samples are
+within a metre of the camera and a fifth of the room's are, and at that
+range the two read alike. The residual climbs with range in both, as this
+sensor's noise does.
+
+The room was also reconstructed twice, on grids 41 degrees apart: once in
+the frame of the first camera, which was looking down at a desk, and once
+level. The two share no voxel and agree on the residual to a hundredth of
+a millimetre, 10.49 mm in both.
+
 ## Against a known surface
 
 The TUM number is agreement between views. It cannot say how far the
@@ -159,15 +193,28 @@ Three things make the figure worth having:
   reconstruction to the model with ICP, which lets the alignment absorb
   error. Here one rigid motion is fitted to the raw depth images, and the
   mesh is judged in a frame it had no part in choosing. A test moves a mesh
-  25 mm and requires the score to get worse.
+  25 mm and requires the score to get worse. Where the fit starts can be
+  found as well, from the room's own planes; started that way or from a
+  translation given by hand, it arrives at the same alignment.
 - **The handedness is converted, not ignored.** ICL-NUIM publishes
   `fy = -480`. Dropping the sign reconstructs a mirror-image room without a
   single error. The importer refuses it; a converter rewrites the poses.
 - **It checks the other number.** On this dataset the held-out residual and
   the true error exist for the same volume: 1.50 mm against 1.69 mm RMS at
   10 mm, 3.63 against 4.15 at 20 mm. On exact depth the cross-view figure
-  TUM is limited to runs at 87 to 89% of the real one. With sensor noise
-  it does something else entirely; see below.
+  TUM is limited to runs at 87 to 89% of the real one on this path and at
+  72 to 83% on a second. With sensor noise it does something else
+  entirely; see below.
+
+One path cannot say whether its figures are the engine's or the path's, so
+the dataset's other trajectory through this room, `lr kt1`, went through
+the same commands. Its poses are anchored 1.5 m from the first's, and the
+report places it with no starting guess:
+
+| 10 mm voxels | Median | Mean | RMS | p95 | Within 10 mm |
+|---|---|---|---|---|---|
+| `lr kt2`, 440 frames | 0.45 mm | 0.77 mm | 1.69 mm | 2.34 mm | 99.2% |
+| `lr kt1`, 483 frames | 0.48 mm | 0.77 mm | 1.57 mm | 2.20 mm | 99.2% |
 
 ### With a sensor's noise
 
@@ -214,6 +261,11 @@ way agree with each other. Between them the three cases put the residual at
 0.8, 6 and 0.8 times the true error, so nothing converts one into the
 other.
 
+The dataset's noisy files for the second trajectory are the same half
+level out, +0.48, and do the same thing: a frame is 7.3 mm from the truth
+at the median and the mesh fused from 483 of them is 7.4 mm from it,
+sitting a mean 6.8 mm on the camera's side.
+
 ### How much of it is there
 
 Accuracy says the surface that was built is in the right place. It would
@@ -243,6 +295,10 @@ three cut the missing surface from 1.1% to 0.2%, and raise the RMS error
 from 1.7 mm to 4.5 mm while the median barely moves, 0.45 mm to 0.46 mm.
 Three voxels, used for every figure above, is a choice that favours
 accuracy.
+
+The second trajectory loses the same surface for the same reason. Its
+10 mm mesh has 99.0% of what was seen within 20 mm, and of the 2,033
+points with nothing within 30 mm, all but ten were only ever glanced at.
 
 Method, the three undocumented conventions of the dataset, and everything
 this does not show: [`docs/icl-nuim-validation.md`](docs/icl-nuim-validation.md).
@@ -277,6 +333,34 @@ voxel at every one of the 880 places a camera stood is one that other
 frames looked through. On the real Kinect sequence the same check finds
 476 of 790 positions in observed free space, 314 unseen, and none behind
 a surface, and there too the mesh is unchanged.
+
+The real office from further up, the same way:
+
+<p align="center">
+  <img src="docs/assets/tum-room-free-space.png" width="70%" alt="A map of an office from above, drawn from the expanded volume. Walls, shelves and the things standing on desks are dark. Most of the inside of the room is pale: free. A grey patch remains in the middle, around the orange line of the camera's path. Pale wedges leave the room through two openings in its walls.">
+</p>
+
+<p align="center">
+  <em>The office between 0.80 m and 1.40 m above its floor, from 676
+  frames of a real depth camera at 15 mm.<br>The grey in the middle is
+  where the person carrying the camera stood: it was behind the camera in
+  every frame.</em>
+</p>
+
+| Real office, 15 mm | Surface plan | Expanded |
+|---|---|---|
+| Blocks | 41,318 | 69,415 |
+| Mesh | 3,502,836 triangles | the same triangles |
+| Free area in the band | 3.83 m² | **16.32 m²** |
+| Camera positions in observed free space | 125 of 1,352 | 558 of 1,352 |
+| Camera positions behind a surface | 0 | 0 |
+
+It is a floor plan of the room above its desks and it is not more than
+that. The band is the one this scan covers. Over the height of someone
+standing, 0.10 m to 1.80 m, three and a half square metres are known free:
+the camera was pointed at desks and walls and never at the floor between
+them, and a column with one unobserved voxel is unknown. The map answers
+with grey where it should.
 
 What is observed is decided by the fusion code itself, run over a box of
 candidate blocks whose size is derived, and checked against a second
@@ -338,7 +422,8 @@ Download and extract a
 then:
 
 ```bash
-# 1. Import it into the session format
+# 1. Import it into the session format. Add --up z for a level session,
+#    which a floor plan needs and a mesh does not
 python -m spatialforge scan import-tum \
   datasets/rgbd_dataset_freiburg1_xyz datasets/fr1xyz.vgsession
 ```
@@ -520,7 +605,11 @@ Stated plainly, because the gaps matter more than the features:
 - **Free space is observed emptiness, not a route.** The expanded volume
   says where the scan looked and found nothing. It does not find the
   floor, know the size of whoever is moving, or plan a path, and a
-  column with one unobserved voxel is unknown.
+  column with one unobserved voxel is unknown. A scan that never looks
+  down leaves the floor unknown, and the real office's map shows it.
+- **Free space is slow to plan.** Expanding the office's plan took 27
+  minutes where fusing it took under eight, and unlike fusion it cannot
+  be continued after an interruption.
 
 ## Where this sits
 

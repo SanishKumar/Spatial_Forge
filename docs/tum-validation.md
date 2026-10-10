@@ -1,4 +1,4 @@
-# Real-sensor validation: TUM freiburg1_xyz
+# Real-sensor validation: TUM RGB-D
 
 Everything else in the test suite runs on data SpatialForge generated itself:
 clean noise, exact poses, nothing missing. This page records what happens on
@@ -8,7 +8,8 @@ against a surface that is known.
 
 The sequence is `rgbd_dataset_freiburg1_xyz` from the
 [TUM RGB-D benchmark](https://cvg.cit.tum.de/data/datasets/rgbd-dataset): a
-Kinect-class sensor moved around a desk, with motion-capture poses.
+Kinect-class sensor moved around a desk, with motion-capture poses. The
+same sensor carried round [a whole room](#a-whole-room) is further down.
 
 ## One reconstruction, one chain
 
@@ -180,6 +181,120 @@ same volume, digest for digest. At 10 mm the same steps take 147 s to
 fuse 2.5 billion voxel-observations and 5 s to mesh 1.3 million
 triangles.
 
+## A whole room
+
+`freiburg1_xyz` is a desk seen from one side. `freiburg1_room` is the same
+sensor carried once round the whole office.
+
+<p align="center">
+  <img src="assets/tum-room.png" width="80%" alt="An office reconstructed from the TUM RGB-D freiburg1_room sequence, seen from above and coloured from the scan: desks with monitors, keyboards, a laptop and papers on them, two office chairs, one with a teddy bear sitting in it, shelves against the far wall, and a wooden floor with gaps where no frame looked">
+</p>
+
+<p align="center">
+  <em>The office at 15 mm, 3.5 million triangles, from 676 frames. Seen
+  from above with surfaces facing away left out, and cropped to the
+  room.<br>The gaps in the floor are real: the camera went round once,
+  looking at the desks and the walls.</em>
+</p>
+
+```text
+source                 1,362 RGB, 1,360 depth, 4,887 pose records
+imported               1,352 associated RGB-D pairs, all with poses
+selected / fused       676 / 676   (frame_stride 2)
+voxel / truncation     15 mm / 45 mm
+planned blocks         41,318   (27,079 surface, 14,239 halo)
+planned voxel slots    21,154,816
+observed after fusion  12,205,959   (58%)
+contributions          222,263,250 applied of 14,300,655,616 evaluated
+mesh                   1,836,470 vertices, 3,502,836 triangles
+peak memory            0.34 GiB to fuse, 2.03 GiB to mesh
+```
+
+It was imported level, with `--up z`, which the map further down needs.
+Against the 676 frames that were not fused:
+
+```text
+held-out depth samples     9,888,272   (every 4th pixel)
+inside observed voxels     9,872,334   (99.84%)
+```
+
+| | mean signed | median abs | rms | p95 abs | within 1 voxel |
+|---|---|---|---|---|---|
+| nearest voxel | +6.4 mm | 11.3 mm | 17.5 mm | 35.8 mm | 61.5% |
+| trilinear | +6.5 mm | 10.5 mm | 16.7 mm | 34.6 mm | 64.7% |
+
+A **10.5 mm median residual** where the desk had 7.5 mm, and it is still
+agreement between views and not accuracy.
+
+Most of the difference is distance. Filed by the depth each held-out
+sample was measured at:
+
+| Range | Desk: share of samples | Median | Room: share of samples | Median |
+|---|---|---|---|---|
+| under 1 m | 52.5% | 6.1 mm | 19.5% | 6.4 mm |
+| 1 to 1.5 m | 33.0% | 8.7 mm | 36.8% | 10.5 mm |
+| 1.5 to 2 m | 6.5% | 10.6 mm | 23.1% | 12.0 mm |
+| 2 to 2.5 m | 3.5% | 12.7 mm | 11.8% | 14.3 mm |
+| 2.5 to 3 m | 2.6% | 14.8 mm | 5.6% | 14.9 mm |
+| 3 to 4 m | 1.7% | 13.8 mm | 2.4% | 14.8 mm |
+| beyond 4 m | none | | 0.7% | 27.2 mm |
+
+Within a metre the two scans read alike, and half the desk's samples are
+that close where a fifth of the room's are. The residual climbs with range
+in both, as a Kinect's depth noise does. Between one and two and a half
+metres the room reads about 1.5 mm more than the desk at the same range,
+and that part is not explained here: the room was scanned in one turn
+round it lasting 45 seconds, and nothing in this measurement separates
+the sensor from the poses. (Measured once from the two volumes with a
+scratch script. The report does not file its samples by range.)
+
+The manifest is
+[`../results/tum-freiburg1-room-15mm.json`](../results/tum-freiburg1-room-15mm.json).
+
+### The grid's orientation is not in the answer
+
+The importer normally anchors a session to its first camera. Here the
+first frame looks 41 degrees below the horizon, so that session's grid is
+tipped 41 degrees against the room. The room was reconstructed on both:
+
+| | As the camera was held | Level |
+|---|---|---|
+| planned blocks | 43,089 | 41,318 |
+| observed voxels | 12,600,224 | 12,205,959 |
+| mesh triangles | 3,495,826 | 3,502,836 |
+| held-out samples in observed voxels | 9,872,288 | 9,872,334 |
+| median residual | 10.49 mm | 10.49 mm |
+| rms | 16.73 mm | 16.73 mm |
+| p95 | 34.61 mm | 34.62 mm |
+| mean signed | +6.54 mm | +6.53 mm |
+
+Two grids with no voxel in common, and the residual agrees to a hundredth
+of a millimetre. The level one needs 4% fewer blocks, because walls and
+floor run along its axes instead of across them. The tipped run is kept as
+[`../results/tum-freiburg1-room-15mm-as-held.json`](../results/tum-freiburg1-room-15mm-as-held.json).
+
+### Where there is room in it
+
+Expanding the plan into observed free space adds 28,097 blocks and changes
+no triangle of the mesh. Between the desk tops and the camera the expanded
+volume holds 16.3 m² as free where the surface plan's holds 3.8 m². Over
+the height of someone standing it holds 3.5 m², because this scan never
+looked at the floor in the middle of the room. The map, the check that no
+camera was behind a surface, and what the map cannot say are in
+[`free-space-expansion.md`](free-space-expansion.md#a-whole-room).
+
+The picture at the head of this section is drawn by
+
+```bash
+python tools/render_mesh.py datasets/fr1room-level-15mm.ply \
+  datasets/fr1room-render --session datasets/freiburg1-room-level.vgsession \
+  --cull-back-faces --azimuth 125 --elevation 62 --frames 1 --size 1400 \
+  --colour-stride 4
+```
+
+and cropped. The mesh also holds fragments well outside the room, from
+readings through its openings, and the renderer frames all of them.
+
 ## What the first run broke, and what became of each
 
 **The planner was the bottleneck**: a per-pixel Python loop, 2 s per frame,
@@ -204,12 +319,16 @@ now a file, and the mesh and the render come from it.
 - **No absolute accuracy on this sensor.** That needs a surveyed real scene.
   The engine's own error against a known surface is measured on synthetic
   depth in [`icl-nuim-validation.md`](icl-nuim-validation.md).
-- **One sequence, one kind of scene.** A well-lit, textured desk at close
-  range. Not a corridor, a glass door, a dark room or a building.
+- **Two sequences, one sensor, one office.** A well-lit, textured desk at
+  close range and the room it stands in. Not a corridor, a glass door, a
+  dark room or a building.
 - **Half the frames, by design.** Stride 2 is what leaves frames to hold out.
   A volume fused from every frame cannot be scored this way at all.
-- **The free-space path was not run.** Coverage, cross-view resolution and
-  plan expansion carry a 262,144-outcome cap that one 640x480 frame exceeds.
+- **Free space came later, by another path.** The staged path this page
+  first named carries a 262,144-outcome cap that one 640x480 frame
+  exceeds, and remains as a reference for a fixture.
+  [`free-space-expansion.md`](free-space-expansion.md) expands both of
+  these scans with one that takes real frames.
 - **Mesh filters are choices.** The published mesh treats voxels seen fewer
   than three times as unknown and drops fragments under 200 triangles: 751
   fragments, 12,004 triangles. The volume and its score are unaffected; the
