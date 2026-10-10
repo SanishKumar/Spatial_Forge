@@ -25,11 +25,21 @@ camera cannot have been is behind a surface, so the tool looks up the voxel
 each camera was in and says how many of those are free, unseen, or, which
 would be a contradiction, occupied.
 
+The map spans every block the volume holds, and a real sensor's volume
+holds blocks far from anything: a reading through a window, a reflection.
+``--within`` draws and counts only the columns between two positions on
+each of the map's axes, in metres. It changes no column's verdict, and the
+cameras are still all looked up.
+
+The up axis is one of the volume's own. A scan whose frame is tilted
+against the room has no vertical columns to rule on; import it level
+(``scan import-tum --up``).
+
 Usage:
 
     python tools/free_space_map.py VOLUME.sftvol OUTPUT.png
         --from-m LOW --to-m HIGH [--up-axis z] [--min-weight N]
-        [--session SESSION] [--pixels-per-voxel N]
+        [--within A0 A1 B0 B1] [--session SESSION] [--pixels-per-voxel N]
 """
 
 from __future__ import annotations
@@ -151,6 +161,47 @@ def band_slab(volume, up_axis: int, low_m: float, high_m: float):
             where=seen > 0,
         )
     return values, weights, origin, across
+
+
+def window_columns(
+    columns: np.ndarray,
+    origin,
+    voxel_size_m: float,
+    within,
+):
+    """The columns between two positions on each of the map's axes.
+
+    Returns them with the slab origin moved to match. A column is kept if
+    its centre lies inside the window, which is the rule ``band_slab``
+    uses for height.
+    """
+
+    low_a, high_a, low_b, high_b = (float(value) for value in within)
+    if not (
+        all(math.isfinite(value) for value in (low_a, high_a, low_b, high_b))
+        and low_a < high_a
+        and low_b < high_b
+    ):
+        raise SystemExit(
+            "--within takes a lower and an upper position on each of the "
+            "map's two axes, finite and in that order"
+        )
+    cut = []
+    for axis, (low, high) in enumerate(((low_a, high_a), (low_b, high_b))):
+        first = math.ceil(low / voxel_size_m - 0.5) - origin[axis]
+        last = math.floor(high / voxel_size_m - 0.5) - origin[axis]
+        first = max(first, 0)
+        last = min(last, columns.shape[axis] - 1)
+        if last < first:
+            raise SystemExit(
+                "--within holds no column of the map: the volume has "
+                "nothing between those positions"
+            )
+        cut.append((first, last))
+    return (
+        columns[cut[0][0]:cut[0][1] + 1, cut[1][0]:cut[1][1] + 1],
+        [origin[0] + cut[0][0], origin[1] + cut[1][0], origin[2]],
+    )
 
 
 def camera_centres_m(session_path: Path) -> np.ndarray:
@@ -290,6 +341,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--to-m", type=float, required=True)
     parser.add_argument("--up-axis", choices=sorted(_AXES), default="z")
     parser.add_argument("--min-weight", type=positive_int, default=3)
+    parser.add_argument(
+        "--within",
+        type=float,
+        nargs=4,
+        default=None,
+        metavar=("A0", "A1", "B0", "B1"),
+        help=(
+            "Draw and count only the columns between A0 and A1 on the "
+            "map's first axis and B0 and B1 on its second, in metres."
+        ),
+    )
     parser.add_argument("--session", type=Path, default=None)
     parser.add_argument("--pixels-per-voxel", type=positive_int, default=3)
     arguments = parser.parse_args(argv)
@@ -314,6 +376,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     voxel = volume.voxel_size_m
+    if arguments.within is not None:
+        columns, origin = window_columns(
+            columns, origin, voxel, arguments.within
+        )
     column_area = voxel * voxel
     names = "xyz"
     print(

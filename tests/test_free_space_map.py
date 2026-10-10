@@ -43,6 +43,7 @@ from tools.free_space_map import (
     camera_voxel_verdicts,
     classify_columns,
     main,
+    window_columns,
 )
 
 TEST_ROOT = Path(__file__).resolve().parent
@@ -289,6 +290,70 @@ class CommandTests(unittest.TestCase):
         # The middle of the room is drawn in the colour of free space:
         # column (40, 40) of the map, four pixels to the voxel, y upward.
         self.assertEqual(tuple(pixels[320 - 162, 162]), (246, 246, 242))
+
+    def test_a_window_is_a_cut_of_the_map_and_changes_no_verdict(
+        self,
+    ) -> None:
+        _, columns, origin, _ = room_map(ROOM.expanded)
+        # The map runs from -0.32 m on x and -1.60 m on y, 40 mm a column.
+        self.assertEqual(origin[:2], [-8, -40])
+        cut, moved = window_columns(
+            columns, origin, VOXEL, (0.0, 1.0, -0.52, 0.28)
+        )
+        # Columns whose centres lie inside: 0.02 to 0.98 m, and -0.50 to
+        # 0.26 m. Every edge here falls on a column's side, and keeps the
+        # column inside it and not the one beyond.
+        self.assertEqual(cut.shape, (25, 20))
+        self.assertEqual(moved, [0, -13, origin[2]])
+        np.testing.assert_array_equal(cut, columns[8:33, 27:47])
+        # A window larger than the map is the map.
+        whole, same = window_columns(
+            columns, origin, VOXEL, (-50.0, 50.0, -50.0, 50.0)
+        )
+        np.testing.assert_array_equal(whole, columns)
+        self.assertEqual(same, list(origin))
+        for within, message in (
+            ((1.0, 0.0, -0.5, 0.3), "in that order"),
+            ((0.0, 1.0, 0.3, 0.3), "in that order"),
+            ((0.0, float("nan"), -0.5, 0.3), "in that order"),
+            ((40.0, 41.0, -0.5, 0.3), "no column of the map"),
+            ((0.001, 0.002, -0.5, 0.3), "no column of the map"),
+        ):
+            with self.subTest(within=within):
+                with self.assertRaises(SystemExit) as raised:
+                    window_columns(columns, origin, VOXEL, within)
+                self.assertIn(message, str(raised.exception))
+
+    def test_it_draws_a_window_and_counts_what_is_in_it(self) -> None:
+        _, columns, origin, _ = room_map(ROOM.expanded)
+        cut = columns[8:33, 27:47]
+        output = ROOM.root / "window.png"
+        code, text = self.run_tool(
+            str(ROOM.expanded), str(output),
+            "--from-m", str(BAND[0]), "--to-m", str(BAND[1]),
+            "--min-weight", "1", "--session", str(ROOM.session),
+            "--pixels-per-voxel", "4",
+            "--within", "0.0", "1.0", "-0.52", "0.28",
+        )
+        self.assertEqual(code, 0, text)
+        self.assertIn("map: 25 x 20 columns along x and y, 0.80 m2", text)
+        for label, kind in (
+            ("free", FREE), ("occupied", OCCUPIED), ("unknown", UNKNOWN)
+        ):
+            count = int(np.count_nonzero(cut == kind))
+            self.assertIn(f"{label}: {count} columns, ", text)
+        # Every camera is still looked up, in the window or not.
+        self.assertIn("cameras: 20 posed", text)
+        with Image.open(output) as image:
+            self.assertEqual(image.size[0], 100)
+        code, text = self.run_tool(
+            str(ROOM.expanded), str(ROOM.root / "nowhere.png"),
+            "--from-m", str(BAND[0]), "--to-m", str(BAND[1]),
+            "--within", "40", "41", "0", "1",
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("no column of the map", text)
+        self.assertFalse((ROOM.root / "nowhere.png").exists())
 
     def test_it_refuses_what_it_cannot_draw(self) -> None:
         taken = ROOM.root / "taken.png"
