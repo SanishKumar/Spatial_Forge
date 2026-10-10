@@ -3,6 +3,63 @@
 What changed between tagged versions. Numbers quoted here are the ones in
 `results/`; each manifest there records the commit it was produced from.
 
+## 0.7.0 (2026-10-10)
+
+A second trajectory, a whole real room, and what each of them needed.
+
+Measured
+
+- **A second trajectory through the living room.** ICL-NUIM `lr kt1`, 483
+  frames, the same room by another path: 0.48 mm median, 0.77 mm mean and
+  1.57 mm RMS from the truth at 10 mm, where the first has 0.45, 0.77 and
+  1.69. 99.0% of what was seen has mesh within 20 mm, and of the 2,033
+  points with none within 30 mm all but ten were only ever glanced at.
+  The held-out residual runs at 72 to 83% of the true error here and at 87
+  to 89% on the first path: under it on both, by a factor that moves.
+- **Its noisy files have the same offset.** `lr kt1n` is +0.48 disparity
+  levels nearer the camera than the exact depth; `lr kt2n` was +0.51. The
+  15 mm mesh is 7.4 mm from the truth at the median, no closer than a
+  single frame, and 6.8 mm on the camera's side.
+- **A whole real room.** TUM `freiburg1_room`, a Kinect carried once round
+  an office: 676 frames fused at 15 mm into 41,318 blocks and 3.5 million
+  triangles. The held-out residual is 10.5 mm at the median against the
+  desk's 7.5 mm, and 6.4 mm against 6.1 mm for samples within a metre:
+  most of the difference is range.
+- **The grid's orientation is not in the answer.** The same room on two
+  grids 41 degrees apart, sharing no voxel: 10.49 mm in both, and every
+  other figure within a hundredth of a millimetre.
+- **A floor plan of the real room.** Its plan expanded from 41,318 blocks
+  to 69,415. The mesh is the same mesh and the held-out residual the same
+  to a ten-thousandth of a millimetre. Between the desk tops and the
+  camera 16.32 m² is observed free where the surface plan's volume holds
+  3.83 m². Over the height of someone standing it is 3.48 m²: the scan
+  never looked at the floor in the middle of the room. Of 1,352 camera
+  positions the voxel is free for 558, unseen for 794 and behind a
+  surface for none.
+
+Added
+
+- `surface_accuracy_report.py --find-frame`: the report places a scan in
+  its ground-truth model from the room's planes, with no starting guess,
+  and the fit starts there. It refuses a scene whose surfaces do not face
+  three perpendicular ways, and one that fits the model about as well in
+  two placements. Started this way, the fit for the first trajectory
+  arrives at the alignment already published, to sixteen digits.
+- `scan import-tum --up AXIS` and `--down AXIS`: a level session, with z
+  along the dataset's up axis in place of the first camera's. The motion
+  between frames is unchanged, and so is an import that names neither.
+- `survey_tsdf_plan_expansion_streaming`: plan expansion that counts the
+  blocks it rejects instead of listing them, so the candidate box may
+  hold 8,000,000 blocks where it held 500,000. A real room's box is
+  about a million. `tsdf-block-plan-expand` uses it and writes the same
+  plans.
+- `free_space_map.py --within`: draw and count part of a map.
+
+Changed
+
+- Plan expansion gives its whole-block verdicts 65,536 blocks of the box
+  at a time.
+
 ## 0.6.0 (2026-10-09)
 
 Larger volumes, and free space on a real sensor.
