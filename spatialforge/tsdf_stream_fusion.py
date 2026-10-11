@@ -889,13 +889,37 @@ def _decode_metric_depth(
 ) -> np.ndarray:
     """Decode one frame to float64 metres, exactly as the context does."""
 
+    return _metric_depth(
+        _decode_raw_depth(session, observation, width, height),
+        depth_scale_m,
+    )
+
+
+def _decode_raw_depth(
+    session: ScanSession,
+    observation: object,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """One frame's depth samples as its file holds them, ``[row, column]``."""
+
     depth = getattr(observation, "depth", None)
     if depth is None:
         raise AssertionError("ready observation must have depth")
     depth_path = _sample_path(session, depth.data, "depth")
-    depth_m = _read_depth_array(depth_path, width, height).astype(
-        np.float64
-    ).reshape((height, width))
+    return _read_depth_array(depth_path, width, height).reshape(
+        (height, width)
+    )
+
+
+def _metric_depth(raw: np.ndarray, depth_scale_m: float) -> np.ndarray:
+    """Raw depth samples as float64 metres.
+
+    One conversion and one multiplication a sample, whatever the shape:
+    a whole frame and a tile cut from it give the same metres.
+    """
+
+    depth_m = raw.astype(np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
         np.multiply(depth_m, depth_scale_m, out=depth_m)
     return depth_m

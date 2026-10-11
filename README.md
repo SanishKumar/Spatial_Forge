@@ -585,6 +585,11 @@ A volume altered and re-digested so that it still loads is caught this
 way, and the altered block is named:
 [`docs/tsdf-lone-block.md`](docs/tsdf-lone-block.md).
 
+Add `--tiles 16` and each block is fused from the 16-pixel tiles of depth
+it reads and nothing else of the scan's depth. A block of the real office
+needs a median 112 kB of the scan's 415 MB, and comes out as the same
+bytes: [`docs/tsdf-block-evidence.md`](docs/tsdf-block-evidence.md).
+
 ## What it does not do
 
 Stated plainly, because the gaps matter more than the features:
@@ -660,11 +665,12 @@ spatialforge/     library and CLI
   tsdf_fusion_checkpoint.py  a fusion saved part way, to continue
   tsdf_stream_expansion.py   observed free space, at real scale
   tsdf_lone_block.py      one block fused by itself, to check a volume
+  tsdf_block_evidence.py  the pixels a block reads, and the block from them
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            60 test modules
+tests/            61 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -689,7 +695,7 @@ Built as the reconstruction backend for an indoor navigation project.
 
 Where it goes next is
 [a map that can be checked without rebuilding it](docs/verifiable-maps.md):
-a design that uses the repeatability, with the first of its six steps
+a design that uses the repeatability, with the first two of its six steps
 built.
 
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).

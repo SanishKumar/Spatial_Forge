@@ -53,6 +53,7 @@ from .tsdf_block_volume import (
     load_tsdf_block_volume,
     write_tsdf_block_volume,
 )
+from .tsdf_block_evidence import check_tsdf_volume_blocks_from_tiles
 from .tsdf_lone_block import (
     TsdfBlockCheckStatus,
     check_tsdf_volume_blocks,
@@ -435,6 +436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.sample,
                 arguments.seed,
                 arguments.evaluate_every_frame,
+                arguments.tiles,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1728,6 +1730,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Evaluate every ready frame against every block instead of "
             "ruling frames out by pose. Slower, and the same answer."
+        ),
+    )
+    block_check.add_argument(
+        "--tiles",
+        type=_positive_integer,
+        default=None,
+        metavar="PIXELS",
+        help=(
+            "Fuse each block from the depth tiles it reads and nothing "
+            "else of the scan's depth, with tiles this many pixels on a "
+            "side, and report how much depth that was."
         ),
     )
 
@@ -6776,8 +6789,16 @@ def _run_tsdf_block_check(
     sample: int | None,
     seed: int,
     evaluate_every_frame: bool,
+    tile_pixels: int | None = None,
 ) -> int:
+    evidence = None
     try:
+        if tile_pixels is not None and evaluate_every_frame:
+            raise TsdfError(
+                "--tiles reads only the pixels of frames that can reach a "
+                "block, so it cannot be combined with "
+                "--evaluate-every-frame"
+            )
         volume = load_tsdf_block_volume(volume_path)
         session = load_scan_session(session_path)
         named_blocks = tuple(
@@ -6799,12 +6820,19 @@ def _run_tsdf_block_check(
             raise TsdfError(
                 "name a block with --block or draw some with --sample"
             )
-        checks = check_tsdf_volume_blocks(
-            volume,
-            session,
-            blocks,
-            rule_out_by_pose=not evaluate_every_frame,
-        )
+        if tile_pixels is None:
+            checks = check_tsdf_volume_blocks(
+                volume,
+                session,
+                blocks,
+                rule_out_by_pose=not evaluate_every_frame,
+            )
+        else:
+            pairs = check_tsdf_volume_blocks_from_tiles(
+                volume, session, blocks, tile_pixels=tile_pixels
+            )
+            checks = tuple(check for check, _ in pairs)
+            evidence = tuple(gathered for _, gathered in pairs)
     except SessionValidationError as error:
         print(f"TSDF BLOCK CHECK FAILED {volume_path}", file=sys.stderr)
         for problem in error.errors:
@@ -6851,6 +6879,11 @@ def _run_tsdf_block_check(
         + ("no" if evaluate_every_frame else "yes"),
         file=sys.stdout,
     )
+    if evidence is not None:
+        print(
+            f"depth_read_from: tiles of {tile_pixels} x {tile_pixels} pixels",
+            file=sys.stdout,
+        )
     for position, check in enumerate(checks):
         lone = check.lone
         line = (
@@ -6862,6 +6895,12 @@ def _run_tsdf_block_check(
             f"observed_voxels={lone.observed_voxel_count} "
             f"contributions={lone.contributions_applied}"
         )
+        if evidence is not None:
+            line += (
+                f" frames_read={evidence[position].frames_with_tiles}"
+                f" depth_tiles={evidence[position].depth_tile_count}"
+                f" depth_bytes={evidence[position].depth_byte_count}"
+            )
         if check.status is TsdfBlockCheckStatus.DIFFERENT:
             line += f" differing_voxels={check.differing_voxels}"
         print(line, file=sys.stdout)
@@ -6881,6 +6920,22 @@ def _run_tsdf_block_check(
         f"{sum(check.lone.contributions_applied for check in checks)}",
         file=sys.stdout,
     )
+    if evidence is not None:
+        sizes = [gathered.depth_byte_count for gathered in evidence]
+        print(
+            "depth_tiles_read: "
+            f"{sum(gathered.depth_tile_count for gathered in evidence)}",
+            file=sys.stdout,
+        )
+        print(
+            f"depth_bytes_read: total={sum(sizes)} "
+            f"least={min(sizes)} most={max(sizes)}",
+            file=sys.stdout,
+        )
+        print(
+            f"scan_depth_bytes: {evidence[0].scan_depth_byte_count}",
+            file=sys.stdout,
+        )
     print(
         f"volume_sha256: {volume.artifact_digest_sha256}",
         file=sys.stdout,

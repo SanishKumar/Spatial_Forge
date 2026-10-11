@@ -32,7 +32,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Sequence
+from typing import Any, NamedTuple, Sequence
 
 import numpy as np
 
@@ -321,6 +321,23 @@ def check_tsdf_volume_blocks(
     volume is read and never written.
     """
 
+    _validate_check_inputs(volume, session)
+    return _check_against_volume(
+        volume,
+        _fuse_blocks_alone(
+            session,
+            block_indices,
+            voxel_size_m=volume.voxel_size_m,
+            truncation_m=volume.truncation_m,
+            frame_stride=volume.frame_stride,
+            rule_out_by_pose=rule_out_by_pose,
+            expected_replay_digest=volume.replay_digest_sha256,
+            expected_total_observations=volume.total_observations,
+        ),
+    )
+
+
+def _validate_check_inputs(volume: object, session: object) -> None:
     if not isinstance(volume, TsdfBlockVolume):
         raise TsdfError(
             "TSDF block check requires a loaded TsdfBlockVolume"
@@ -337,16 +354,14 @@ def check_tsdf_volume_blocks(
             f"volume was fused from session {volume.session_id!r}, not "
             f"{session.session_id!r}"
         )
-    lone_blocks = _fuse_blocks_alone(
-        session,
-        block_indices,
-        voxel_size_m=volume.voxel_size_m,
-        truncation_m=volume.truncation_m,
-        frame_stride=volume.frame_stride,
-        rule_out_by_pose=rule_out_by_pose,
-        expected_replay_digest=volume.replay_digest_sha256,
-        expected_total_observations=volume.total_observations,
-    )
+
+
+def _check_against_volume(
+    volume: TsdfBlockVolume,
+    lone_blocks: Sequence[TsdfLoneBlock],
+) -> tuple[TsdfVolumeBlockCheck, ...]:
+    """Hold blocks fused alone, by whatever path, against a volume."""
+
     rows = {block: row for row, block in enumerate(volume.block_indices)}
     checks = []
     for lone in lone_blocks:
@@ -444,21 +459,33 @@ def _validate_block_index(block_index: object) -> _BlockIndex:
     return block_index  # type: ignore[return-value]
 
 
-def _fuse_blocks_alone(
+class _LoneFusionSetup(NamedTuple):
+    """What fusing blocks alone needs before it opens a frame."""
+
+    requested: tuple[_BlockIndex, ...]
+    blocks: np.ndarray
+    voxel_size_m: float
+    truncation_m: float
+    camera: Any
+    depth_scale_m: float
+    replay: Any
+    selected: tuple[Any, ...]
+
+
+def _prepare_lone_fusion(
     session: ScanSession,
     block_indices: Sequence[_BlockIndex],
     *,
     voxel_size_m: float,
     truncation_m: float,
     frame_stride: int,
-    rule_out_by_pose: bool,
     expected_replay_digest: str | None,
     expected_total_observations: int | None,
-) -> tuple[TsdfLoneBlock, ...]:
+) -> _LoneFusionSetup:
+    """Validate the request and select the frames, as fusion selects them."""
+
     if not isinstance(session, ScanSession):
         raise TsdfError("TSDF lone block fusion requires a loaded ScanSession")
-    if not isinstance(rule_out_by_pose, bool):
-        raise TsdfError("rule_out_by_pose must be true or false")
     if isinstance(block_indices, (str, bytes)) or not isinstance(
         block_indices, Sequence
     ):
@@ -525,6 +552,48 @@ def _fuse_blocks_alone(
             "TSDF lone block fusion would exceed the uint32 voxel weight "
             "maximum"
         )
+    return _LoneFusionSetup(
+        requested=requested,
+        blocks=blocks,
+        voxel_size_m=voxel_size,
+        truncation_m=truncation,
+        camera=camera,
+        depth_scale_m=depth_scale_m,
+        replay=starting_replay,
+        selected=selected,
+    )
+
+
+def _fuse_blocks_alone(
+    session: ScanSession,
+    block_indices: Sequence[_BlockIndex],
+    *,
+    voxel_size_m: float,
+    truncation_m: float,
+    frame_stride: int,
+    rule_out_by_pose: bool,
+    expected_replay_digest: str | None,
+    expected_total_observations: int | None,
+) -> tuple[TsdfLoneBlock, ...]:
+    if not isinstance(rule_out_by_pose, bool):
+        raise TsdfError("rule_out_by_pose must be true or false")
+    setup = _prepare_lone_fusion(
+        session,
+        block_indices,
+        voxel_size_m=voxel_size_m,
+        truncation_m=truncation_m,
+        frame_stride=frame_stride,
+        expected_replay_digest=expected_replay_digest,
+        expected_total_observations=expected_total_observations,
+    )
+    requested = setup.requested
+    blocks = setup.blocks
+    voxel_size = setup.voxel_size_m
+    truncation = setup.truncation_m
+    camera = setup.camera
+    depth_scale_m = setup.depth_scale_m
+    starting_replay = setup.replay
+    selected = setup.selected
 
     sums = np.zeros((len(blocks), TSDF_BLOCK_VOXELS), dtype=TSDF_SUM_DTYPE)
     weights = np.zeros(
@@ -607,28 +676,41 @@ def _fuse_blocks_alone(
             f"cannot complete TSDF lone block fusion: {error}"
         ) from error
 
-    results = []
-    for row, block in enumerate(requested):
-        block_sums = sums[row].reshape(_BLOCK_SHAPE).copy()
-        block_weights = weights[row].reshape(_BLOCK_SHAPE).copy()
-        block_sums.setflags(write=False)
-        block_weights.setflags(write=False)
-        results.append(
-            TsdfLoneBlock(
-                session_id=session.session_id,
-                replay_digest_sha256=starting_replay.digest_sha256,
-                voxel_size_m=voxel_size,
-                truncation_m=truncation,
-                frame_stride=frame_stride,
-                block_index=block,
-                selected_observations=len(selected),
-                ready_observations=ready,
-                ruled_out_behind_camera=int(behind[row]),
-                ruled_out_outside_image=int(outside[row]),
-                evaluated_observations=int(evaluated[row]),
-                contributing_observations=int(contributing[row]),
-                tsdf_sums=block_sums,
-                weights=block_weights,
-            )
+    return tuple(
+        _lone_block(
+            session_id=session.session_id,
+            replay_digest_sha256=starting_replay.digest_sha256,
+            voxel_size_m=voxel_size,
+            truncation_m=truncation,
+            frame_stride=frame_stride,
+            block_index=block,
+            selected_observations=len(selected),
+            ready_observations=ready,
+            ruled_out_behind_camera=int(behind[row]),
+            ruled_out_outside_image=int(outside[row]),
+            evaluated_observations=int(evaluated[row]),
+            contributing_observations=int(contributing[row]),
+            flat_sums=sums[row],
+            flat_weights=weights[row],
         )
-    return tuple(results)
+        for row, block in enumerate(requested)
+    )
+
+
+def _lone_block(
+    *,
+    flat_sums: np.ndarray,
+    flat_weights: np.ndarray,
+    **described: Any,
+) -> TsdfLoneBlock:
+    """A block's 512 accumulators as an immutable ``[z, y, x]`` receipt."""
+
+    block_sums = flat_sums.reshape(_BLOCK_SHAPE).copy()
+    block_weights = flat_weights.reshape(_BLOCK_SHAPE).copy()
+    block_sums.setflags(write=False)
+    block_weights.setflags(write=False)
+    return TsdfLoneBlock(
+        tsdf_sums=block_sums,
+        weights=block_weights,
+        **described,
+    )

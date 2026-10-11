@@ -355,15 +355,43 @@ def _evaluate_ready_voxels(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Project, sample and classify any set of voxels against one frame.
 
-    Every step below is the scalar evaluator's step in the scalar
-    evaluator's order, so the float64 results are bit-identical rather than
-    merely close. In particular the world-to-camera product is written out
-    term by term instead of as a matrix product, because a fused or
+    Every step is the scalar evaluator's step in the scalar evaluator's
+    order, so the float64 results are bit-identical rather than merely
+    close. In particular the world-to-camera product is written out term
+    by term instead of as a matrix product, because a fused or
     reassociated dot product would change the last bits.
 
     The voxels are independent of one another, so the same function serves
     one block's 512 centres and a whole plan's. Every vectorised fusion
     path goes through it, which is what makes them agree by construction.
+    """
+
+    return _evaluate_ready_voxels_reading(
+        camera,
+        transform,
+        lambda row, column, alive: depth_m[row, column],
+        truncation_m,
+        world_xyz_m,
+    )
+
+
+def _evaluate_ready_voxels_reading(
+    camera: CameraCalibration,
+    transform: tuple[float, ...],
+    read_depth_m,
+    truncation_m: float,
+    world_xyz_m: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``_evaluate_ready_voxels`` with the depth image behind a reader.
+
+    The one place the evaluator touches depth is a gather of one pixel a
+    voxel. ``read_depth_m(row, column, alive)`` is that gather: it returns
+    metric depth for every voxel, and only the entries where ``alive`` is
+    set are used. The others were pinned to pixel (0, 0) to keep a gather
+    in bounds and say nothing about what the frame holds there.
+
+    A whole frame is one reader. A few tiles of a frame are another, and
+    it is this function, not a copy of it, that both go through.
     """
 
     if len(transform) != 16 or any(
@@ -462,7 +490,9 @@ def _evaluate_ready_voxels(
         # discarded immediately afterwards.
         column = np.where(alive, pixel_u, 0.0).astype(np.int64)
         row = np.where(alive, pixel_v, 0.0).astype(np.int64)
-        measured_depth_m = np.where(alive, depth_m[row, column], 0.0)
+        measured_depth_m = np.where(
+            alive, read_depth_m(row, column, alive), 0.0
+        )
         classify(
             ~(
                 np.isfinite(measured_depth_m)

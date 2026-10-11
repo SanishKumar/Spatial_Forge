@@ -1,10 +1,11 @@
 # A map that can be checked
 
-**Status: design, with the first of six steps built.** This page says what
-is to be built, why it should work, what was measured before deciding, and
-what it will not do. Each step in the plan at the end becomes real only
-when it has its own tests and its own page. Step 1 has:
-[fusing one block alone](tsdf-lone-block.md).
+**Status: design, with the first two of six steps built.** This page says
+what is to be built, why it should work, what was measured before
+deciding, and what it will not do. Each step in the plan at the end
+becomes real only when it has its own tests and its own page. Two have:
+[fusing one block alone](tsdf-lone-block.md), and
+[fusing it from the pixels it reads](tsdf-block-evidence.md).
 
 ## The idea
 
@@ -66,8 +67,13 @@ fusing the whole volume                              460 s
 
 A block needs about three thousand times less depth than the scan holds
 and about a hundredth of a second of evaluation. (Measured once with a
-scratch script, on one volume. The numbers the finished tool reports will
-replace these.)
+scratch script, on one volume, before anything was built.)
+
+The tool that now exists reports the same picture on 200 blocks of the
+same volume drawn by hash: all 200 identical, a median of 218 tiles and
+112 kB of depth a block, one part in 3,700 of the scan's. Fusing a block
+from its evidence takes about 70 ms, most of it ruling out 600 frames one
+pose at a time, which the scratch script did for all its blocks at once.
 
 ## What is committed
 
@@ -175,9 +181,11 @@ One step at a time, each pinned to a path that already exists.
    fusion: every block of the fixture volumes, to the byte, with and
    without ruling frames out by pose. On three published volumes, 600 of
    600 blocks drawn at random are the volume's bytes.
-2. **Fuse it from tiles.** The pixels a block reads, from the evaluator's
-   own arithmetic; a depth source holding only some tiles; refusal when a
-   needed pixel is missing. Pinned against step 1.
+2. **Fuse it from tiles.** *Built:*
+   [`tsdf-block-evidence.md`](tsdf-block-evidence.md). The pixels a block
+   reads, from the evaluator's own arithmetic; a depth source holding only
+   some tiles; refusal when a needed pixel is missing. Pinned against
+   step 1 on every fixture block at four tile sizes.
 3. **Commit.** The two trees and the statement, as a file. Pinned against a
    plain recomputation of the roots, and by literal digests on every
    platform.
@@ -193,7 +201,9 @@ One step at a time, each pinned to a path that already exists.
 ## Open questions
 
 - Whether tiles of 16 pixels are the right size, or whether the paths cost
-  more than the pixels they save.
+  more than the pixels they save. On the office a block reads a median
+  71 kB in 554 tiles of 8 pixels, 112 kB in 218 of 16, and 236 kB in 115
+  of 32; what each tile's path adds is not yet counted.
 - How much of a route's certificate is shared between its blocks. A long
   route may need most of the frames that look along it.
 - Whether the mesh, which is a repeatable function of the volume, should be
