@@ -50,7 +50,13 @@ from .tsdf_block_vector_fusion import (
 from .tsdf_block_mesh import extract_tsdf_block_mesh
 from .tsdf_block_volume import (
     _validate_output as _validate_tsdf_block_volume_output,
+    load_tsdf_block_volume,
     write_tsdf_block_volume,
+)
+from .tsdf_lone_block import (
+    TsdfBlockCheckStatus,
+    check_tsdf_volume_blocks,
+    sample_tsdf_volume_blocks,
 )
 from .tsdf_fusion_checkpoint import (
     load_tsdf_fusion_checkpoint,
@@ -420,6 +426,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.output,
                 arguments.min_weight,
                 arguments.min_component_triangles,
+            )
+        if arguments.reconstruct_command == "tsdf-block-check":
+            return _run_tsdf_block_check(
+                arguments.volume,
+                arguments.session,
+                arguments.block,
+                arguments.sample,
+                arguments.seed,
+                arguments.evaluate_every_frame,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1659,6 +1674,60 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Drop connected fragments with fewer triangles than this. "
             "Default 1 keeps every fragment."
+        ),
+    )
+
+    block_check = reconstruct_commands.add_parser(
+        "tsdf-block-check",
+        help="Fuse some blocks of a .sftvol alone and compare.",
+        description=(
+            "Strictly load a .sftvol and the scan it records, fuse the "
+            "blocks named or drawn each by itself, from the frames whose "
+            "pose lets them reach it, and require the bytes the volume "
+            "holds. Read-only. Exits 1 if a checked block differs from "
+            "what the scan gives."
+        ),
+    )
+    block_check.add_argument(
+        "volume",
+        type=Path,
+        help="Existing .sftvol artifact to check. Never modified.",
+    )
+    block_check.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession the volume was fused from. Never modified.",
+    )
+    block_check.add_argument(
+        "--block",
+        type=int,
+        nargs=3,
+        action="append",
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help="A block index to check. May be given more than once.",
+    )
+    block_check.add_argument(
+        "--sample",
+        type=_positive_integer,
+        default=None,
+        help=(
+            "Also check this many of the volume's blocks, drawn by hash "
+            "of --seed: the same blocks on every machine."
+        ),
+    )
+    block_check.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed of the draw. Default 0.",
+    )
+    block_check.add_argument(
+        "--evaluate-every-frame",
+        action="store_true",
+        help=(
+            "Evaluate every ready frame against every block instead of "
+            "ruling frames out by pose. Slower, and the same answer."
         ),
     )
 
@@ -6697,6 +6766,144 @@ def _run_triangle_mesh(path: Path, output: Path) -> int:
     )
     print(f"output: {report.output}", file=sys.stdout)
     print(f"output_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_block_check(
+    volume_path: Path,
+    session_path: Path,
+    named: Sequence[Sequence[int]] | None,
+    sample: int | None,
+    seed: int,
+    evaluate_every_frame: bool,
+) -> int:
+    try:
+        volume = load_tsdf_block_volume(volume_path)
+        session = load_scan_session(session_path)
+        named_blocks = tuple(
+            (int(block[0]), int(block[1]), int(block[2]))
+            for block in (named or ())
+        )
+        if len(set(named_blocks)) != len(named_blocks):
+            raise TsdfError("--block was given the same block twice")
+        sampled_blocks = (
+            ()
+            if sample is None
+            else sample_tsdf_volume_blocks(volume, sample, seed=seed)
+        )
+        already = set(named_blocks)
+        blocks = named_blocks + tuple(
+            block for block in sampled_blocks if block not in already
+        )
+        if not blocks:
+            raise TsdfError(
+                "name a block with --block or draw some with --sample"
+            )
+        checks = check_tsdf_volume_blocks(
+            volume,
+            session,
+            blocks,
+            rule_out_by_pose=not evaluate_every_frame,
+        )
+    except SessionValidationError as error:
+        print(f"TSDF BLOCK CHECK FAILED {volume_path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF BLOCK CHECK FAILED {volume_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    first = checks[0].lone
+    counts = {
+        status: sum(check.status is status for check in checks)
+        for status in TsdfBlockCheckStatus
+    }
+    seeing = [check.lone.evaluated_observations for check in checks]
+    print(f"TSDF BLOCK CHECK {volume.session_id}", file=sys.stdout)
+    print("volume: verified", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(
+        "grid: "
+        f"voxel_size_m={volume.voxel_size_m:.9f} "
+        f"truncation_m={volume.truncation_m:.9f} "
+        f"frame_stride={volume.frame_stride}",
+        file=sys.stdout,
+    )
+    print(
+        "blocks: "
+        f"in_volume={volume.block_count} "
+        f"named={len(named_blocks)} "
+        f"sampled={len(sampled_blocks)} "
+        f"sample_seed={'none' if sample is None else seed} "
+        f"checked={len(checks)}",
+        file=sys.stdout,
+    )
+    print(
+        "frames: "
+        f"selected={first.selected_observations} "
+        f"ready={first.ready_observations}",
+        file=sys.stdout,
+    )
+    print(
+        "frames_ruled_out_by_pose: "
+        + ("no" if evaluate_every_frame else "yes"),
+        file=sys.stdout,
+    )
+    for position, check in enumerate(checks):
+        lone = check.lone
+        line = (
+            f"block[{position}]: "
+            f"index={check.block_index} "
+            f"status={check.status} "
+            f"frames_seeing={lone.evaluated_observations} "
+            f"frames_contributing={lone.contributing_observations} "
+            f"observed_voxels={lone.observed_voxel_count} "
+            f"contributions={lone.contributions_applied}"
+        )
+        if check.status is TsdfBlockCheckStatus.DIFFERENT:
+            line += f" differing_voxels={check.differing_voxels}"
+        print(line, file=sys.stdout)
+    for status in TsdfBlockCheckStatus:
+        print(f"{status}: {counts[status]}", file=sys.stdout)
+    print(
+        f"frames_seeing_a_block: min={min(seeing)} max={max(seeing)}",
+        file=sys.stdout,
+    )
+    print(
+        "observed_voxels_recomputed: "
+        f"{sum(check.lone.observed_voxel_count for check in checks)}",
+        file=sys.stdout,
+    )
+    print(
+        "contributions_recomputed: "
+        f"{sum(check.lone.contributions_applied for check in checks)}",
+        file=sys.stdout,
+    )
+    print(
+        f"volume_sha256: {volume.artifact_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"replay_digest_sha256: {volume.replay_digest_sha256}",
+        file=sys.stdout,
+    )
+    print("volume_modified: no", file=sys.stdout)
+    print("session_modified: no", file=sys.stdout)
+    print("whole_volume_fused: no", file=sys.stdout)
+    different = counts[TsdfBlockCheckStatus.DIFFERENT]
+    if different:
+        print(
+            f"result: {different} of {len(checks)} checked blocks differ "
+            "from what the scan gives",
+            file=sys.stdout,
+        )
+        return 1
+    print(
+        "result: no checked block differs from what the scan gives",
+        file=sys.stdout,
+    )
     return 0
 
 

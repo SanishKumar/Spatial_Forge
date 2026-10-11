@@ -1,9 +1,10 @@
 # A map that can be checked
 
-**Status: design. Nothing on this page is implemented yet.** It says what is
-to be built, why it should work, what was measured before deciding, and
+**Status: design, with the first of six steps built.** This page says what
+is to be built, why it should work, what was measured before deciding, and
 what it will not do. Each step in the plan at the end becomes real only
-when it has its own tests and its own page.
+when it has its own tests and its own page. Step 1 has:
+[fusing one block alone](tsdf-lone-block.md).
 
 ## The idea
 
@@ -169,9 +170,11 @@ results, not a proof that nobody has done it.
 
 One step at a time, each pinned to a path that already exists.
 
-1. **Fuse one block alone.** Pinned against streaming fusion: every block
-   of the fixture volumes, to the byte, with and without ruling frames out
-   by pose.
+1. **Fuse one block alone.** *Built:*
+   [`tsdf-lone-block.md`](tsdf-lone-block.md). Pinned against streaming
+   fusion: every block of the fixture volumes, to the byte, with and
+   without ruling frames out by pose. On three published volumes, 600 of
+   600 blocks drawn at random are the volume's bytes.
 2. **Fuse it from tiles.** The pixels a block reads, from the evaluator's
    own arithmetic; a depth source holding only some tiles; refusal when a
    needed pixel is missing. Pinned against step 1.
