@@ -1,11 +1,12 @@
 # A map that can be checked
 
-**Status: design, with the first two of six steps built.** This page says
-what is to be built, why it should work, what was measured before
+**Status: design, with the first three of six steps built.** This page
+says what is to be built, why it should work, what was measured before
 deciding, and what it will not do. Each step in the plan at the end
-becomes real only when it has its own tests and its own page. Two have:
-[fusing one block alone](tsdf-lone-block.md), and
-[fusing it from the pixels it reads](tsdf-block-evidence.md).
+becomes real only when it has its own tests and its own page. Three have:
+[fusing one block alone](tsdf-lone-block.md),
+[fusing it from the pixels it reads](tsdf-block-evidence.md), and
+[committing to the scan and the map](tsdf-commitment.md).
 
 ## The idea
 
@@ -85,9 +86,11 @@ other.
 **The scan.** One leaf per frame, in replay order. A frame's leaf holds the
 root of a second tree over its depth image, cut into tiles of 16 by 16
 pixels, as the raw samples the session decodes and not as file bytes, so
-the commitment does not depend on how an image was compressed. The camera
-poses are hashed together as one table, because a checker always needs all
-of them.
+the commitment does not depend on how an image was compressed. The leaf
+holds the frame's pose beside that root. A checker always needs every
+pose, and a leaf is 177 bytes, so the frames' leaves are handed over
+whole: whoever has them recomputes the scan root, and from then on holds
+every pose and every frame's depth root.
 
 **The map.** One leaf per block, in the canonical block order, holding the
 block's index and its 6,144 bytes of sums and weights.
@@ -99,16 +102,19 @@ arithmetic is a new rule name, and the pinned digests are what notice one.
 
 ## What can be checked
 
-**One block.** Given the statement, the pose table, a block with its path
-to the map root, and the depth tiles that block's voxels project into with
-their paths to the scan root: rule out frames by pose, evaluate the rest in
-order, compare bytes. The checker computes for itself which pixels the
-block reads, and refuses a proof that leaves one out.
+**One block.** Given the statement, the frames' leaves, a block with its
+path to the map root, and the depth tiles that block's voxels project into,
+each with its path to its frame's depth root: rule out frames by pose,
+evaluate the rest in order, compare bytes. The checker computes for itself
+which pixels the block reads, and refuses a proof that leaves one out.
 
 **That a block is absent.** Blocks are in sorted order, so two neighbouring
 leaves show there is nothing between them. An absent block is unknown
 space. Leaving a block out can hide what the scan saw there, and can never
-make anything look clear.
+make anything look clear. That is as well, because this check is weaker
+than the others: a root does not say its leaves are in order, and two
+leaves cannot show that the rest are. Nothing a clear route rests on
+needs an absence. See the open questions.
 
 **A route.** A chain of grid columns, a radius and a height band, all in
 whole voxels so that which voxels are meant is not a matter of rounding.
@@ -186,9 +192,12 @@ One step at a time, each pinned to a path that already exists.
    reads, from the evaluator's own arithmetic; a depth source holding only
    some tiles; refusal when a needed pixel is missing. Pinned against
    step 1 on every fixture block at four tile sizes.
-3. **Commit.** The two trees and the statement, as a file. Pinned against a
-   plain recomputation of the roots, and by literal digests on every
-   platform.
+3. **Commit.** *Built:* [`tsdf-commitment.md`](tsdf-commitment.md). The
+   two trees and the statement, as a file. The tree is pinned to the
+   Certificate Transparency test vectors and to the RFC's definition
+   written out a second time; the roots to a recomputation by hand from
+   the session's files and the volume's bytes; the fixture's statement
+   to literal digests on every platform.
 4. **A block's proof, and a checker that has nothing else.** It reads the
    statement and the proof and no session. Then the tampering suite: a
    flipped bit, a wall moved one voxel, an obstacle removed, a depth pixel
@@ -200,10 +209,18 @@ One step at a time, each pinned to a path that already exists.
 
 ## Open questions
 
-- Whether tiles of 16 pixels are the right size, or whether the paths cost
-  more than the pixels they save. On the office a block reads a median
-  71 kB in 554 tiles of 8 pixels, 112 kB in 218 of 16, and 236 kB in 115
-  of 32; what each tile's path adds is not yet counted.
+- ~~Whether tiles of 16 pixels are the right size.~~ Counted in step 3,
+  with one path a tile: on the office a block's depth and its paths come
+  to a median 302 kB at 8 pixels, 188 kB at 16 and 267 kB at 32. Sixteen
+  stays. Paths that share their upper hashes between the tiles of one
+  frame would move this, and are not built.
+- How a block is shown to be absent to someone who holds only the root.
+  Two neighbouring leaves are enough only if the leaves are known to be
+  in order. Keeping each subtree's range of indices in its node would
+  make the order checkable along a path, at the cost of a tree that is
+  no longer the RFC's. Undecided. A clear route does not need it, since
+  every block the route touches has to be shown; a claim that somewhere
+  is unknown would.
 - How much of a route's certificate is shared between its blocks. A long
   route may need most of the frames that look along it.
 - Whether the mesh, which is a repeatable function of the volume, should be

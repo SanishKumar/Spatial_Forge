@@ -127,7 +127,8 @@ The tile size is a trade. On the office, the same 200 blocks:
 
 Smaller tiles carry less depth and there are more of them, and each will
 need its own path to a hash. Which size is cheapest once the paths are
-counted is for the next step to measure.
+counted was for the next step to measure, and
+[it is sixteen](tsdf-commitment.md#what-a-tiles-path-costs).
 
 (Measured once, on one laptop.)
 
@@ -136,7 +137,7 @@ counted is for the next step to measure.
 - **Evidence is not proof.** Nothing in it says its depth is the scan's. A
   test blanks every sample in a block's evidence and gets a different
   block with no complaint. Binding the tiles and the poses to the scan is
-  what a commitment is for, and is the next step.
+  what [a commitment](tsdf-commitment.md) is for.
 - **It is slower than whole frames here.** Checking 200 blocks of the
   office takes 47 s from tiles against 9 s from frames. Gathering runs the
   evaluator once for every block and frame, and fusing from evidence rules

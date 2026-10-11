@@ -53,7 +53,17 @@ from .tsdf_block_volume import (
     load_tsdf_block_volume,
     write_tsdf_block_volume,
 )
-from .tsdf_block_evidence import check_tsdf_volume_blocks_from_tiles
+from .tsdf_block_evidence import (
+    TSDF_DEPTH_TILE_PIXELS,
+    check_tsdf_volume_blocks_from_tiles,
+)
+from .tsdf_commitment import (
+    _state_tsdf_map,
+    _validate_statement_output,
+    check_tsdf_map_statement,
+    load_tsdf_map_statement,
+    write_tsdf_map_statement,
+)
 from .tsdf_lone_block import (
     TsdfBlockCheckStatus,
     check_tsdf_volume_blocks,
@@ -437,6 +447,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.seed,
                 arguments.evaluate_every_frame,
                 arguments.tiles,
+            )
+        if arguments.reconstruct_command == "tsdf-map-commit":
+            return _run_tsdf_map_commit(
+                arguments.volume,
+                arguments.session,
+                arguments.output,
+                arguments.tiles,
+            )
+        if arguments.reconstruct_command == "tsdf-map-commit-check":
+            return _run_tsdf_map_commit_check(
+                arguments.statement,
+                arguments.volume,
+                arguments.session,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1742,6 +1765,70 @@ def _build_parser() -> argparse.ArgumentParser:
             "else of the scan's depth, with tiles this many pixels on a "
             "side, and report how much depth that was."
         ),
+    )
+
+    map_commit = reconstruct_commands.add_parser(
+        "tsdf-map-commit",
+        help="Write the statement that commits to a .sftvol and its scan.",
+        description=(
+            "Strictly load a .sftvol and the scan it records, reduce the "
+            "scan and the volume to one Merkle root each, and write a "
+            "statement naming both roots and everything a block's bytes "
+            "depend on. The statement's SHA-256 is what a third party "
+            "holds. The output must not already exist. Fuses nothing."
+        ),
+    )
+    map_commit.add_argument(
+        "volume",
+        type=Path,
+        help="Existing .sftvol artifact to commit to. Never modified.",
+    )
+    map_commit.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession the volume was fused from. Never modified.",
+    )
+    map_commit.add_argument(
+        "output",
+        type=Path,
+        help="New .sftcommit path to write. Must not already exist.",
+    )
+    map_commit.add_argument(
+        "--tiles",
+        type=_positive_integer,
+        default=TSDF_DEPTH_TILE_PIXELS,
+        metavar="PIXELS",
+        help=(
+            "Side of the tiles each depth image is committed in. "
+            "Default %(default)s."
+        ),
+    )
+
+    map_commit_check = reconstruct_commands.add_parser(
+        "tsdf-map-commit-check",
+        help="Recompute a .sftcommit from its volume and scan, and compare.",
+        description=(
+            "Strictly load a statement, a .sftvol and a scan, commit to "
+            "the scan and the volume again, and compare with what the "
+            "statement says. Read-only. Exits 1 if anything differs. It "
+            "fuses nothing, so it says the statement is of these two and "
+            "not that the volume follows from the scan."
+        ),
+    )
+    map_commit_check.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    map_commit_check.add_argument(
+        "volume",
+        type=Path,
+        help="The .sftvol the statement is said to be of. Never modified.",
+    )
+    map_commit_check.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession the statement is said to be of. Never modified.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -6957,6 +7044,144 @@ def _run_tsdf_block_check(
         return 1
     print(
         "result: no checked block differs from what the scan gives",
+        file=sys.stdout,
+    )
+    return 0
+
+
+def _run_tsdf_map_commit(
+    volume_path: Path,
+    session_path: Path,
+    output: Path,
+    tile_pixels: int,
+) -> int:
+    try:
+        _validate_statement_output(output)
+        volume = load_tsdf_block_volume(volume_path)
+        session = load_scan_session(session_path)
+        statement, scan = _state_tsdf_map(volume, session, tile_pixels)
+        report = write_tsdf_map_statement(statement, output)
+    except SessionValidationError as error:
+        print(f"TSDF MAP COMMIT FAILED {volume_path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF MAP COMMIT FAILED {volume_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF MAP COMMIT {statement.session_id}", file=sys.stdout)
+    print("volume: verified", file=sys.stdout)
+    print("session_replay: matched", file=sys.stdout)
+    print(f"rule: {statement.rule}", file=sys.stdout)
+    print("hash: sha-256", file=sys.stdout)
+    print("tree: rfc6962", file=sys.stdout)
+    print(
+        "scan: "
+        f"frames={scan.frame_count} "
+        f"with_depth={sum(frame.has_depth for frame in scan.frames)} "
+        "with_pose="
+        f"{sum(frame.transform is not None for frame in scan.frames)} "
+        f"tile_pixels={scan.tile_pixels} "
+        f"frame_table_bytes={scan.frame_table_bytes}",
+        file=sys.stdout,
+    )
+    print(
+        f"scan_root_sha256: {statement.scan_root_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        "map: "
+        f"blocks={statement.block_count} "
+        f"voxel_size_m={statement.voxel_size_m:.9f} "
+        f"truncation_m={statement.truncation_m:.9f} "
+        f"frame_stride={statement.frame_stride}",
+        file=sys.stdout,
+    )
+    print(
+        f"map_root_sha256: {statement.map_root_sha256}",
+        file=sys.stdout,
+    )
+    print(f"statement_bytes: {report.output_bytes}", file=sys.stdout)
+    print(
+        f"statement_sha256: {report.output_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print("volume_modified: no", file=sys.stdout)
+    print("session_modified: no", file=sys.stdout)
+    print("blocks_fused: no", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_map_commit_check(
+    statement_path: Path,
+    volume_path: Path,
+    session_path: Path,
+) -> int:
+    try:
+        statement = load_tsdf_map_statement(statement_path)
+        volume = load_tsdf_block_volume(volume_path)
+        session = load_scan_session(session_path)
+        check = check_tsdf_map_statement(statement, volume, session)
+    except SessionValidationError as error:
+        print(
+            f"TSDF MAP COMMIT CHECK FAILED {statement_path}",
+            file=sys.stderr,
+        )
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(
+            f"TSDF MAP COMMIT CHECK FAILED {statement_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF MAP COMMIT CHECK {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(
+        f"statement_sha256: {check.statement_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(f"rule: {statement.rule}", file=sys.stdout)
+    print(
+        f"scan_root_stated: {statement.scan_root_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"scan_root_recomputed: {check.scan_root_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"map_root_stated: {statement.map_root_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        f"map_root_recomputed: {check.map_root_sha256}",
+        file=sys.stdout,
+    )
+    print(
+        "differences: "
+        + (", ".join(check.differences) if check.differences else "none"),
+        file=sys.stdout,
+    )
+    print("statement_modified: no", file=sys.stdout)
+    print("volume_modified: no", file=sys.stdout)
+    print("session_modified: no", file=sys.stdout)
+    print("blocks_fused: no", file=sys.stdout)
+    if not check.holds:
+        print(
+            "result: the statement is not a statement of this volume and "
+            "this scan",
+            file=sys.stdout,
+        )
+        return 1
+    print(
+        "result: the statement is a statement of this volume and this scan",
         file=sys.stdout,
     )
     return 0
