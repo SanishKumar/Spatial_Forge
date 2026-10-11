@@ -672,4 +672,8 @@ surface for accuracy and for completeness. Pose estimation, localization
 and semantic mapping are outside it.
 Built as the reconstruction backend for an indoor navigation project.
 
+Where it goes next is
+[a map that can be checked without rebuilding it](docs/verifiable-maps.md):
+a design that uses the repeatability and that nothing here implements yet.
+
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).
