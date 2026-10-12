@@ -1,14 +1,17 @@
 # A map that can be checked
 
-**Status: design, with the first five of six steps built.** This page
-says what is to be built, why it should work, what was measured before
-deciding, and what it will not do. Each step in the plan at the end
-becomes real only when it has its own tests and its own page. Five have:
+**Status: all six steps built.** This page says what was to be built,
+why it should work, what was measured before deciding, and what it does
+not do. Each step in the plan at the end has its own tests and its own
+page:
 [fusing one block alone](tsdf-lone-block.md),
 [fusing it from the pixels it reads](tsdf-block-evidence.md),
 [committing to the scan and the map](tsdf-commitment.md),
-[proving one block](tsdf-block-proof.md), and
-[certifying a route](tsdf-route-certificate.md).
+[proving one block](tsdf-block-proof.md),
+[certifying a route](tsdf-route-certificate.md), and
+[auditing a map by lot](tsdf-map-audit.md). What it all costs is on
+[one page](verifiable-map-costs.md), and what it came to is
+[below](#what-it-came-to).
 
 ## The idea
 
@@ -224,16 +227,55 @@ One step at a time, each pinned to a path that already exists.
    route checks in 3 to 7 s from a certificate of 109 to 163 MB, a fifth
    to two fifths of the scan's depth: much less of a saving than one
    block, because half the scan looks through the middle of a room.
-6. **Audit by sampling, and the measurements**: proof size and time against
-   block, route length and voxel size, beside rebuilding the whole map.
+6. **Audit by sampling, and the measurements.** *Built:*
+   [`tsdf-map-audit.md`](tsdf-map-audit.md) and
+   [`verifiable-map-costs.md`](verifiable-map-costs.md). The auditor's
+   seed and the statement's digest draw rows of the map by a rule anyone
+   can run; the answer must hold exactly those; a passed audit says how
+   many wrong blocks it would almost surely have found. The draw and the
+   bound are each worked out a second way in the tests. Before
+   measuring, the tiles of a frame were given one proof shared between
+   them in place of a path each, pinned to the RFC's own recursion.
+
+## What it came to
+
+On the real office, 69,415 blocks fused from 676 frames in 460 s:
+
+- **One block** is checked in a tenth of a second from 382 kB, a
+  thousandth of the depth its volume was fused from. All 600 blocks
+  drawn from three published volumes are verified.
+- **A map altered** in one voxel, a wall moved one voxel, an obstacle
+  removed, or a scan altered in one depth sample, one pose or one frame:
+  refuted in exactly the blocks that no longer follow, on every block of
+  a 351-block room, on all six CI platforms.
+- **A route** 3.5 m long through the middle of the room is certified
+  clear and checked in 2 to 6 s. A map with an obstacle written out of a
+  route says the route is clear, and its certificate says refuted.
+- **An audit** of 459 blocks is checked in 3 s and would catch a map one
+  part in a hundred wrong 99 times in 100. It does not find one altered
+  block, and says so.
+
+And what it did not come to:
+
+- **Many blocks are not small.** A route through open space or an audit
+  by lot is read by most of the scan's frames. Their certificates are 57
+  to 110 MB of raw depth, a seventh to a quarter of the samples the
+  volume was fused from, and about the size of those frames' own PNG
+  files. They save time and the volume, not bytes, until they are
+  compressed: zlib takes one from 84 MB to 12.
+- **Absence is not proved.** A block the map does not hold cannot be
+  shown to be missing to someone who holds only the root.
+- **The scan is taken as given.** Everything here binds a map to a scan.
+  Nothing binds the scan to the world.
 
 ## Open questions
 
 - ~~Whether tiles of 16 pixels are the right size.~~ Counted in step 3,
   with one path a tile: on the office a block's depth and its paths come
-  to a median 302 kB at 8 pixels, 188 kB at 16 and 267 kB at 32. Sixteen
-  stays. Paths that share their upper hashes between the tiles of one
-  frame would move this, and are not built.
+  to a median 302 kB at 8 pixels, 188 kB at 16 and 267 kB at 32. Measured
+  again in step 6 with one proof shared between a frame's tiles: 8-pixel
+  tiles make a block's proof 6% smaller and a route's certificate 3 to
+  10% smaller, and take half as long again to check. Sixteen stays.
 - How a block is shown to be absent to someone who holds only the root.
   Two neighbouring leaves are enough only if the leaves are known to be
   in order. Keeping each subtree's range of indices in its node would
@@ -244,9 +286,11 @@ One step at a time, each pinned to a path that already exists.
 - ~~How much of a route's certificate is shared between its blocks.~~
   Measured in step 5. The leaves are carried once and each tile once,
   and on the office the route still needs half the frames and a third of
-  their tiles. Two fifths of that certificate is tile paths, one a tile.
-  Paths that share their upper hashes would remove most of that, and
-  would also make smaller tiles worth having, since what smaller tiles
-  cost is more paths. Neither is built.
+  their tiles. Two fifths of that certificate was tile paths, one a
+  tile; step 6 replaced them with one proof a frame and they are now
+  under one part in a hundred of it.
+- Whether proofs should be compressed. A certificate is raw depth tiles
+  and compresses about seven times with zlib, which would put it well
+  under the scan's own files. Not built.
 - Whether the mesh, which is a repeatable function of the volume, should be
   committed block by block as well.

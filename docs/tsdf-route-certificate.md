@@ -51,8 +51,9 @@ surface seen. That is the rule
 - every frame's leaf, once;
 - every block the route touches, as the map holds it, with its row and its
   path to the map's root;
-- the depth tiles those blocks read, each with its path to its frame's
-  depth root, and each once however many of the blocks read it.
+- the depth tiles those blocks read, each once however many of the
+  blocks read it, with one proof shared between the tiles of each frame
+  that takes them to that frame's depth root.
 
 It is [a block's proof](tsdf-block-proof.md) for every block of the route,
 with what the proofs would repeat carried once. On the generated room, a
@@ -134,8 +135,9 @@ statement the altered blocks fail `map root`.
   straight line in whole numbers: never more than half a voxel off it,
   for hundreds of pairs of waypoints drawn at random.
 - **Block proofs.** The blocks, rows and paths of a certificate are those
-  of the single proofs of the same blocks, and its tiles are the union of
-  theirs with the same paths.
+  of the single proofs of the same blocks. Its tiles are the union of
+  theirs, tied to each frame by the one proof the scan itself gives for
+  those tiles together.
 - **Whole frames.** All 524 blocks of the room, fused at once from tiles
   gathered once for all of them, are the volume's bytes, with the same
   frames ruled out, evaluated and contributing for each block as when it
@@ -183,16 +185,18 @@ waypoints, across the open middle of the room. With a radius of 10 voxels
 it is 0.315 m wide, and in the band from 0.80 m to 1.40 m above the floor
 it is 207,600 voxels in 732 blocks. Its certificate says `clear`.
 
-| The same line | Blocks | Frames read | Tiles | Certificate | Depth | Tile paths | Made | Checked |
-|---|---|---|---|---|---|---|---|---|
-| 1 voxel wide | 204 | 304 | 124,577 | 109 MB | 64 MB | 43 MB | 24 s | 3.0 s |
-| 9 voxels wide | 420 | 330 | 154,532 | 136 MB | 79 MB | 53 MB | 26 s | 5.7 s |
-| 21 voxels wide | 732 | 352 | 183,065 | 163 MB | 94 MB | 63 MB | 30 s | 7.0 s |
-| 21 wide, 2 voxels high | 122 | 302 | 105,334 | 92 MB | 54 MB | 36 MB | 24 s | 2.5 s |
+| The same line | Blocks | Frames read | Tiles | Certificate | Checked |
+|---|---|---|---|---|---|
+| 1 voxel wide | 204 | 304 | 124,577 | 67 MB | 1.9 s |
+| 9 voxels wide | 420 | 330 | 154,532 | 84 MB | 3.2 s |
+| 21 voxels wide | 732 | 352 | 183,065 | 101 MB | 6.0 s |
+| 21 wide, 2 voxels high | 122 | 302 | 105,334 | 57 MB | 1.3 s |
+
+Making each took 24 to 30 s.
 
 **These are large.** The scan the volume was fused from holds 415 MB of
-depth, so a certificate of this line is a fifth to two fifths of it. A
-single block of the same volume was proved from one part in 950.
+depth, so a certificate of this line is a seventh to a quarter of it. A
+single block of the same volume is proved from a thousandth.
 
 The reason is where the route runs. The open middle of a room is what half
 the scan looked through: 304 of the 676 frames read some voxel of even the
@@ -204,16 +208,24 @@ are already there.
 
 A route where few frames looked is small. A line of the same width 1.45 m
 long and 2.4 m above the floor, in 330 blocks that 30 frames saw, is
-certified in 4.9 MB and checked in 0.8 s.
+certified in 4.0 MB, half of it the blocks themselves, and checked in
+about a second.
 
-What a certificate does save is time, and the volume. The check takes 3 to
-7 s and needs 1 to 5 MB of blocks; fusing the volume took 460 s and the
+What a certificate saves is time, and the volume. The check takes 1 to
+6 s and needs 1 to 5 MB of blocks; fusing the volume took 460 s and the
 volume is 427 MB.
 
-Two fifths of each certificate is tile paths, one path a tile. A frame
-that gives a certificate 500 of its 1,200 tiles gives it 500 paths that
-share most of their upper hashes. Carrying those once is not built, and
-is the first thing that would make these smaller.
+A certificate is nearly all depth: of the widest one's 101 MB, 94 MB is
+tiles, 4.5 MB blocks and 0.65 MB the hashes that tie the tiles to their
+frames. Before the tiles of a frame shared one proof, each carried its
+own path and those hashes were 62.5 MB.
+
+The tiles are raw samples. The scan's own depth images are PNG files and
+hold the same samples in about a fifth of the bytes, so beside the
+*files* of the frames this volume was fused from, about 90 MB, these
+certificates save little or nothing as they are written. Put through
+zlib, which nothing in the package does, the 84 MB certificate is 12 MB.
+[The costs page](verifiable-map-costs.md) has the rest.
 
 (Measured once, on one laptop, with scratch scripts. The line was found by
 a breadth-first search over the free-space map, which is not part of the
@@ -235,5 +247,4 @@ package.)
 - **It does not say the scan is true**, or that the poses are right.
 - **The check fuses with the same evaluator the map was fused with**, as
   for a block's proof.
-- **Tile paths are not shared**, as above.
 - **One route to a certificate.**

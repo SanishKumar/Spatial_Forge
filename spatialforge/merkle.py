@@ -22,11 +22,18 @@ The tree is built by pairing a level's nodes left to right and carrying an
 unpaired last node up unchanged, which gives the same tree as the
 definition above. That is tested against the definition itself, written
 out recursively in the test, for every size up to 130.
+
+Several leaves of one tree share most of their paths. Their *shared
+proof* is the hashes of the largest subtrees of the definition's own
+recursion that hold none of them, from left to right. With the leaves it
+gives the root, and it is never longer than their paths together and
+usually far shorter: every leaf of a tree needs none at all.
 """
 
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_left
 from typing import Sequence
 
 MERKLE_HASH_BYTES = 32
@@ -108,6 +115,69 @@ def merkle_root_from_path(
     return node
 
 
+def merkle_shared_proof_length(indices: Sequence[int], size: int) -> int:
+    """How many hashes the shared proof of these leaves holds.
+
+    ``indices`` are the leaves' places, in increasing order.
+    """
+
+    chosen = _validated_indices(indices, size)
+
+    def count(low: int, high: int, first: int, last: int) -> int:
+        if first == last:
+            return 1
+        if high - low == 1:
+            return 0
+        middle_leaf = low + _split(high - low)
+        middle = bisect_left(chosen, middle_leaf, first, last)
+        return count(low, middle_leaf, first, middle) + count(
+            middle_leaf, high, middle, last
+        )
+
+    return count(0, size, 0, len(chosen))
+
+
+def merkle_root_from_shared_proof(
+    leaf_hashes: Sequence[bytes],
+    indices: Sequence[int],
+    size: int,
+    proof: Sequence[bytes],
+) -> bytes:
+    """The root several leaves and their shared proof lead to.
+
+    ``leaf_hashes`` are the leaves at ``indices``, in the same increasing
+    order. A proof of the wrong length for those places in a tree of
+    that size is refused, since no tree could have produced it.
+    """
+
+    chosen = _validated_indices(indices, size)
+    leaves = [_validate_hash(leaf, "leaf hash") for leaf in leaf_hashes]
+    if len(leaves) != len(chosen):
+        raise ValueError("a shared proof needs one leaf hash for each place")
+    steps = [_validate_hash(step, "proof entry") for step in proof]
+    needed = merkle_shared_proof_length(chosen, size)
+    if len(steps) != needed:
+        raise ValueError(
+            f"a shared proof for {len(chosen)} leaves of {size} at "
+            f"these places holds {needed} hashes, not {len(steps)}"
+        )
+    remaining = iter(steps)
+
+    def root(low: int, high: int, first: int, last: int) -> bytes:
+        if first == last:
+            return next(remaining)
+        if high - low == 1:
+            return leaves[first]
+        middle_leaf = low + _split(high - low)
+        middle = bisect_left(chosen, middle_leaf, first, last)
+        left = root(low, middle_leaf, first, middle)
+        return merkle_node_hash(
+            left, root(middle_leaf, high, middle, last)
+        )
+
+    return root(0, size, 0, len(chosen))
+
+
 class MerkleTree:
     """A tree kept whole, so that any leaf's path can be read from it."""
 
@@ -146,6 +216,30 @@ class MerkleTree:
             index //= 2
         return tuple(path)
 
+    def shared_proof(self, indices: Sequence[int]) -> tuple[bytes, ...]:
+        """The shared proof of the leaves at ``indices``, left to right."""
+
+        chosen = _validated_indices(indices, self.size)
+        proof: list[bytes] = []
+
+        def walk(low: int, high: int, first: int, last: int) -> None:
+            if first == last:
+                # A range the definition's recursion arrives at is one
+                # node of the tree as it is kept: the one that many
+                # levels up whose first leaf is the range's.
+                level = (high - low - 1).bit_length()
+                proof.append(self._levels[level][low >> level])
+                return
+            if high - low == 1:
+                return
+            middle_leaf = low + _split(high - low)
+            middle = bisect_left(chosen, middle_leaf, first, last)
+            walk(low, middle_leaf, first, middle)
+            walk(middle_leaf, high, middle, last)
+
+        walk(0, self.size, 0, len(chosen))
+        return tuple(proof)
+
 
 def _level_above(level: tuple[bytes, ...]) -> tuple[bytes, ...]:
     above = [
@@ -167,6 +261,35 @@ def _validated(leaf_hashes: Sequence[bytes]) -> tuple[bytes, ...]:
     if isinstance(leaf_hashes, (bytes, bytearray, str)):
         raise ValueError("Merkle leaves are a sequence of hashes")
     return tuple(_validate_hash(leaf, "leaf hash") for leaf in leaf_hashes)
+
+
+def _split(count: int) -> int:
+    """The largest power of two smaller than ``count``, which is over one."""
+
+    return 1 << ((count - 1).bit_length() - 1)
+
+
+def _validated_indices(indices: Sequence[int], size: object) -> list[int]:
+    if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        raise ValueError("a Merkle tree size is a positive integer")
+    if isinstance(indices, (bytes, bytearray, str)):
+        raise ValueError("the places of leaves are a sequence of integers")
+    chosen = list(indices)
+    if not chosen:
+        raise ValueError("a shared proof is of at least one leaf")
+    previous = -1
+    for index in chosen:
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not previous < index < size
+        ):
+            raise ValueError(
+                f"the places of leaves in a tree of {size} are distinct, "
+                "in increasing order, and inside it"
+            )
+        previous = index
+    return chosen
 
 
 def _validate_position(index: object, size: object) -> None:

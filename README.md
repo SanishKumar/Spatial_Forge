@@ -623,7 +623,8 @@ python -m spatialforge reconstruct tsdf-block-proof-check \
 ```
 
 The proof holds every frame's leaf, the block with its path to the map's
-root, and the depth tiles the block reads with their paths. The check
+root, and the depth tiles the block reads, tied to their frames by one
+proof shared between the tiles of each. The check
 reads the statement and the proof and no session or volume. It ties each
 piece to the statement, fuses the block again, and says `verified`,
 `refuted` if the map's block is not what the committed scan gives, or
@@ -649,9 +650,33 @@ the depth those blocks read. The check works out the route's blocks for
 itself, fuses each again, and only then asks whether the route is clear:
 `clear`, `not clear`, `refuted` or `invalid`. A map with an obstacle
 written out of the way says its route is clear; the certificate of that
-route says `refuted`. On the real office a 3.5 m route is checked in 3 to
-7 s, from a certificate of 109 to 163 MB:
+route says `refuted`. On the real office a 3.5 m route is checked in 2 to
+6 s, from a certificate of 67 to 101 MB:
 [`docs/tsdf-route-certificate.md`](docs/tsdf-route-certificate.md).
+
+To audit a whole map by blocks drawn by lot:
+
+```bash
+python -m spatialforge reconstruct tsdf-map-audit \
+  datasets/fr1room.sftcommit datasets/fr1room.sftvol datasets/fr1room.vgsession \
+  answer.sftaudit --seed 7f3a-2026-10-12 --blocks 459
+```
+
+```bash
+python -m spatialforge reconstruct tsdf-map-audit-check \
+  datasets/fr1room.sftcommit answer.sftaudit --seed 7f3a-2026-10-12 --blocks 459
+```
+
+The seed is the auditor's, so the maker of a map cannot know which
+blocks will be asked for. The check works out the rows its seed draws,
+requires the answer to hold exactly those, and fuses each again:
+`passed`, `refuted` or `invalid`. A passed audit of 459 blocks means a
+map with one part in a hundred wrong would have been caught 99 times in
+100, and it says so. It does not find one altered block, which is what a
+route's certificate is for:
+[`docs/tsdf-map-audit.md`](docs/tsdf-map-audit.md). What all of it costs
+beside rebuilding a map:
+[`docs/verifiable-map-costs.md`](docs/verifiable-map-costs.md).
 
 ## What it does not do
 
@@ -729,15 +754,17 @@ spatialforge/     library and CLI
   tsdf_stream_expansion.py   observed free space, at real scale
   tsdf_lone_block.py      one block fused by itself, to check a volume
   tsdf_block_evidence.py  the pixels a block reads, and the block from them
-  merkle.py               RFC 6962 Merkle trees: roots and paths
+  merkle.py               RFC 6962 Merkle trees: roots, paths, shared proofs
   tsdf_commitment.py      one hash for a scan, one for a map, a statement
   tsdf_block_proof.py     one block's proof, and a check that reads no scan
   tsdf_route_certificate.py  a route through the map, certified clear
+  tsdf_map_audit.py       a map audited by blocks drawn by lot
+  tsdf_held_blocks.py     what a certificate and an audit share
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            65 test modules
+tests/            66 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -762,7 +789,7 @@ Built as the reconstruction backend for an indoor navigation project.
 
 Where it goes next is
 [a map that can be checked without rebuilding it](docs/verifiable-maps.md):
-a design that uses the repeatability, with the first five of its six
-steps built.
+a design that uses the repeatability, with all six of its steps
+built.
 
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).

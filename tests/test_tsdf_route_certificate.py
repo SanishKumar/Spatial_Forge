@@ -69,7 +69,7 @@ from spatialforge import (
     write_tsdf_map_statement,
     write_tsdf_route_certificate,
 )
-from spatialforge import tsdf_route_certificate
+from spatialforge import tsdf_held_blocks
 from spatialforge.cli import main
 from spatialforge.errors import TsdfError
 from spatialforge.session_loader import load_scan_session
@@ -93,7 +93,7 @@ from tests.test_tsdf_block_proof import (
     forge,
     frozen,
     rows_that_differ,
-    tile_of_the_scan,
+    tiles_of_the_scan,
     with_frame,
 )
 from tests.test_tsdf_block_volume import assemble, split
@@ -172,9 +172,9 @@ ROOM_BLOCKED = TsdfRoute(2, -20, -10, 2, 3, ((40, -28), (40, -11)))
 ROOM_UNKNOWN = TsdfRoute(2, -5, 5, 2, 3, ((0, 0), (5, 0)))
 
 _FORBIDDEN_TO_A_CHECK = (
-    "spatialforge.tsdf_route_certificate._gather_pooled_frames",
-    "spatialforge.tsdf_route_certificate._commit_tsdf_scan",
-    "spatialforge.tsdf_route_certificate.tsdf_volume_merkle_tree",
+    "spatialforge.tsdf_held_blocks._gather_pooled_frames",
+    "spatialforge.tsdf_held_blocks._commit_tsdf_scan",
+    "spatialforge.tsdf_held_blocks.tsdf_volume_merkle_tree",
     "spatialforge.tsdf_block_evidence.replay_session",
     "spatialforge.tsdf_commitment.replay_session",
     "spatialforge.tsdf_stream_fusion._read_depth_array",
@@ -712,13 +712,13 @@ class CertificateTests(unittest.TestCase):
                 len(certificate.tile_frames),
                 certificate.tile_count,
                 certificate.depth_byte_count,
-                certificate.tile_path_hash_count,
+                certificate.tile_proof_hash_count,
                 certificate.block_path_hash_count,
             ),
-            (26, 524, 20, 20, 204, 104_448, 741, 260),
+            (26, 524, 20, 20, 204, 104_448, 27, 260),
         )
         encoded = certificate.encoded()
-        self.assertEqual(len(encoded), 302_899)
+        self.assertEqual(len(encoded), 280_051)
         decoded = decode_tsdf_route_certificate(encoded)
         self.assertIsInstance(decoded, TsdfRouteCertificate)
         self.assertEqual(decoded.encoded(), encoded)
@@ -753,7 +753,7 @@ class CertificateTests(unittest.TestCase):
     ) -> None:
         certificate = WORK.room_blocked
         self.assertEqual(certificate.held_block_count, 12)
-        self.assertEqual(len(certificate.encoded()), 106_846)
+        self.assertEqual(len(certificate.encoded()), 104_414)
         check = check_tsdf_route_certificate(WORK.room_statement, certificate)
         self.assertIs(check.verdict, TsdfRouteVerdict.NOT_CLEAR)
         self.assertFalse(check.holds)
@@ -810,20 +810,33 @@ class CertificateTests(unittest.TestCase):
                     )
                     for tiles in proof.tile_frames:
                         of_frame = pooled.setdefault(tiles.sequence, {})
-                        for tile, path in zip(tiles.tiles.tiles, tiles.paths):
-                            of_frame[tile[:2]] = (tile[2].tobytes(), path)
+                        for tile in tiles.tiles.tiles:
+                            of_frame[tile[:2]] = tile[2].tobytes()
                 # Each tile once, however many of the blocks read it.
                 self.assertEqual(
                     {
                         tiles.sequence: {
-                            tile[:2]: (tile[2].tobytes(), path)
-                            for tile, path in zip(
-                                tiles.tiles.tiles, tiles.paths
-                            )
+                            tile[:2]: tile[2].tobytes()
+                            for tile in tiles.tiles.tiles
                         }
                         for tiles in certificate.tile_frames
                     },
                     pooled,
+                )
+                # And each frame's tiles tied to it by the one proof
+                # the scan gives for them together.
+                for tiles in certificate.tile_frames:
+                    self.assertEqual(
+                        tiles.shared_proof,
+                        tiles_of_the_scan(
+                            WORK.room.session_path,
+                            tiles.sequence,
+                            tiles.places,
+                        ).shared_proof,
+                    )
+                self.assertLess(
+                    certificate.tile_proof_hash_count,
+                    sum(proof.tile_proof_hash_count for proof in proofs),
                 )
                 self.assertLess(
                     certificate.tile_count,
@@ -1085,13 +1098,13 @@ class CertificateTests(unittest.TestCase):
                     WORK.room_statement, WORK.room_volume, other, ROOM_CLEAR
                 )
             # Or the scan is rewritten between the two readings of it.
-            real = tsdf_route_certificate._gather_pooled_frames
+            real = tsdf_held_blocks._gather_pooled_frames
 
             def gather(session, *arguments, **options):
                 return real(other, *arguments, **options)
 
             with patch(
-                "spatialforge.tsdf_route_certificate._gather_pooled_frames",
+                "spatialforge.tsdf_held_blocks._gather_pooled_frames",
                 gather,
             ):
                 with self.assertRaisesRegex(
@@ -1354,8 +1367,17 @@ class AlteredCertificateTests(unittest.TestCase):
                 ),
             ),
             "depth roots",
-            f"observation {tiles.sequence}: the tile at row {first[0]}, "
-            f"column {first[1]} does not lead to the frame's depth root",
+            f"observation {tiles.sequence}: its {tiles.tile_count} tiles "
+            "and the hashes with them do not lead to the frame's depth "
+            "root",
+        )
+        self.stopped(
+            with_tile_frame(
+                certificate,
+                0,
+                shared_proof=tiles.shared_proof[:-1] + (bytes(32),),
+            ),
+            "depth roots",
         )
 
     def test_a_certificate_that_holds_less_or_more_than_its_blocks_read(
@@ -1367,19 +1389,23 @@ class AlteredCertificateTests(unittest.TestCase):
             for position, tiles in enumerate(certificate.tile_frames)
             if 2 <= tiles.tile_count < 12
         )
+        # Each tile left out in turn, the rest truly tied to the
+        # frame: it is the blocks that find a pixel missing.
         for left_out in range(tiles.tile_count):
             with self.subTest(tile=left_out):
                 self.stopped(
-                    with_tile_frame(
+                    replace(
                         certificate,
-                        position,
-                        tiles=replace(
-                            tiles.tiles,
-                            tiles=tiles.tiles.tiles[:left_out]
-                            + tiles.tiles.tiles[left_out + 1:],
-                        ),
-                        paths=tiles.paths[:left_out]
-                        + tiles.paths[left_out + 1:],
+                        tile_frames=certificate.tile_frames[:position]
+                        + (
+                            tiles_of_the_scan(
+                                WORK.room.session_path,
+                                tiles.sequence,
+                                tiles.places[:left_out]
+                                + tiles.places[left_out + 1:],
+                            ),
+                        )
+                        + certificate.tile_frames[position + 1:],
                     ),
                     "pixels",
                     f"observation {tiles.sequence}: the block reads the "
@@ -1398,29 +1424,26 @@ class AlteredCertificateTests(unittest.TestCase):
                     f"observation {frame_tiles.sequence}: the block reads "
                     "the depth pixel",
                 )
-        columns = tiles.tiles.tile_columns
-        held = {tile[0] * columns + tile[1] for tile in tiles.tiles.tiles}
-        spare = next(place for place in range(12) if place not in held)
-        tile, path = tile_of_the_scan(
-            WORK.room.session_path, tiles.sequence, spare
-        )
-        entries = sorted(
-            list(zip(tiles.tiles.tiles, tiles.paths)) + [(tile, path)],
-            key=lambda entry: entry[0][:2],
+        spare = next(
+            place for place in range(12) if place not in tiles.places
         )
         self.stopped(
-            with_tile_frame(
+            replace(
                 certificate,
-                position,
-                tiles=replace(
-                    tiles.tiles, tiles=tuple(entry[0] for entry in entries)
-                ),
-                paths=tuple(entry[1] for entry in entries),
+                tile_frames=certificate.tile_frames[:position]
+                + (
+                    tiles_of_the_scan(
+                        WORK.room.session_path,
+                        tiles.sequence,
+                        tiles.places + (spare,),
+                    ),
+                )
+                + certificate.tile_frames[position + 1:],
             ),
             "pixels",
             f"observation {tiles.sequence}: the certificate holds the tile "
-            f"at row {tile[0]}, column {tile[1]}, and no block of the "
-            "route reads a pixel of it",
+            f"at row {spare // 4}, column {spare % 4}, and no block of "
+            "the route reads a pixel of it",
         )
 
 
@@ -1927,7 +1950,7 @@ class RouteCliTests(unittest.TestCase):
             "route: up=z band=0..0 radius=0 min_weight=2 waypoints=2\n"
             "route_metres: length=0.375 width=0.125 from=0.000 to=0.125\n"
             "certificate_holds: blocks=1 frames=2 frames_with_tiles=2 "
-            "tiles=2 tile_pixels=16 depth_bytes=16 tile_path_hashes=0 "
+            "tiles=2 tile_pixels=16 depth_bytes=16 tile_proof_hashes=0 "
             "block_path_hashes=3\n"
         )
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:

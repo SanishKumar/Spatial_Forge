@@ -62,7 +62,11 @@ from spatialforge import (
 from spatialforge import tsdf_block_proof
 from spatialforge.cli import main
 from spatialforge.errors import TsdfError
-from spatialforge.merkle import merkle_path_length, merkle_root
+from spatialforge.merkle import (
+    merkle_path_length,
+    merkle_root,
+    merkle_shared_proof_length,
+)
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_block_plan import plan_tsdf_blocks
 from spatialforge.tsdf_commitment import _statement
@@ -346,20 +350,36 @@ def frozen(array: np.ndarray) -> np.ndarray:
     return copy
 
 
-def tile_of_the_scan(session_path: Path, sequence: int, place: int):
-    """One tile of a frame and its path, cut from the scan itself."""
+def tiles_of_the_scan(session_path: Path, sequence: int, places):
+    """Some tiles of a frame with their true shared proof, from the scan.
+
+    Cut from the frame's own depth image and tied to it by its own
+    tree: whatever tiles are asked for, this is a true account of them.
+    """
 
     raw = raw_depth(session_path / "data" / "depth" / f"{sequence:06d}.pgm")
     tree = tsdf_depth_tile_tree(raw, 16)
     columns = -(-raw.shape[1] // 16)
-    tile_row, tile_column = divmod(place, columns)
-    samples = frozen(
-        raw[
-            tile_row * 16:(tile_row + 1) * 16,
-            tile_column * 16:(tile_column + 1) * 16,
-        ]
+    tiles = []
+    for place in sorted(places):
+        tile_row, tile_column = divmod(place, columns)
+        tiles.append(
+            (
+                tile_row,
+                tile_column,
+                frozen(
+                    raw[
+                        tile_row * 16:(tile_row + 1) * 16,
+                        tile_column * 16:(tile_column + 1) * 16,
+                    ]
+                ),
+            )
+        )
+    return TsdfProofFrameTiles(
+        sequence=sequence,
+        tiles=TsdfDepthTiles(raw.shape[1], raw.shape[0], 16, tuple(tiles)),
+        shared_proof=tree.shared_proof(sorted(places)),
     )
-    return (tile_row, tile_column, samples), tree.path(place)
 
 
 def rebuilt(encoded: bytes, change) -> bytes:
@@ -480,7 +500,7 @@ class ProofVerifiesTests(unittest.TestCase):
                 )
                 self.assertEqual(proof.tile_count, 2)
                 self.assertEqual(proof.depth_byte_count, 16)
-                self.assertEqual(proof.tile_path_hash_count, 0)
+                self.assertEqual(proof.tile_proof_hash_count, 0)
                 self.assertEqual(
                     proof.tsdf_sums.tobytes(),
                     WORK.volume.tsdf_sums[row].tobytes(),
@@ -650,10 +670,10 @@ class ProofVerifiesTests(unittest.TestCase):
                     self.assertEqual(other.failed_check, "statement")
             sizes[tile] = (
                 sum(proof.depth_byte_count for proof in proofs),
-                sum(proof.tile_path_hash_count for proof in proofs),
+                sum(proof.tile_proof_hash_count for proof in proofs),
             )
-        # Smaller tiles: less depth, more path. At the whole image there
-        # is no path at all.
+        # Smaller tiles: less depth, more hashes to tie them to their
+        # frames. At the whole image there are none.
         self.assertLess(sizes[1][0], sizes[5][0])
         self.assertLess(sizes[5][0], sizes[64][0])
         self.assertGreater(sizes[1][1], sizes[5][1])
@@ -688,7 +708,7 @@ class ProofVerifiesTests(unittest.TestCase):
                         TsdfProofFrameTiles(
                             sequence=1,
                             tiles=TsdfDepthTiles(2, 2, 16, (tile,)),
-                            paths=((),),
+                            shared_proof=(),
                         ),
                     ),
                 )
@@ -746,7 +766,7 @@ class ProofVerifiesTests(unittest.TestCase):
                             TsdfProofFrameTiles(
                                 sequence=0,
                                 tiles=TsdfDepthTiles(2, 2, 16, (tile,)),
-                                paths=((),),
+                                shared_proof=(),
                             ),
                         )
                         + proof.tile_frames,
@@ -938,9 +958,9 @@ class AlteredScanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
             session_path = copied(WORK.room.session_path, temporary)
             change_one_sample(session_path)
-            (tile_row, tile_column, samples), path = tile_of_the_scan(
-                session_path, 7, 6
-            )
+            ((tile_row, tile_column, samples),) = tiles_of_the_scan(
+                session_path, 7, [6]
+            ).tiles.tiles
         self.assertEqual((tile_row, tile_column), (1, 2))
         carried = 0
         for proof in WORK.room_proofs:
@@ -951,7 +971,19 @@ class AlteredScanTests(unittest.TestCase):
                 if (1, 2) not in held:
                     continue
                 place = held.index((1, 2))
-                self.assertEqual(tiles.paths[place], path)
+                # What the proof holds of this frame is what the honest
+                # scan gives for those tiles, to the byte.
+                self.assertEqual(
+                    replace(proof, tile_frames=(tiles,)).encoded(),
+                    replace(
+                        proof,
+                        tile_frames=(
+                            tiles_of_the_scan(
+                                WORK.room.session_path, 7, tiles.places
+                            ),
+                        ),
+                    ).encoded(),
+                )
                 altered = with_tile_frame(
                     proof,
                     position,
@@ -967,8 +999,9 @@ class AlteredScanTests(unittest.TestCase):
                 self.assertEqual(check.failed_check, "depth roots")
                 self.assertEqual(
                     check.detail,
-                    "observation 7: the tile at row 1, column 2 does not "
-                    "lead to the frame's depth root",
+                    f"observation 7: its {tiles.tile_count} tiles and the "
+                    "hashes with them do not lead to the frame's depth "
+                    "root",
                 )
                 carried += 1
         self.assertGreater(carried, 10)
@@ -1002,8 +1035,8 @@ class AlteredProofTests(unittest.TestCase):
         )
         self.assertLess(len(proof.tile_frames), 20)
         self.assertTrue(
-            all(len(path) in (3, 4) for tiles in proof.tile_frames
-                for path in tiles.paths)
+            all(1 <= tiles.proof_hash_count <= 8
+                for tiles in proof.tile_frames)
         )
         self.assertEqual(len(proof.block_path), 9)
 
@@ -1173,25 +1206,28 @@ class AlteredProofTests(unittest.TestCase):
         first = tiles.tiles.tiles[0]
         changed = first[2].copy()
         changed[5, 9] += 1
-        held = {tile[:2] for tile in tiles.tiles.tiles}
-        columns = tiles.tiles.tile_columns
-        length = len(tiles.paths[0])
-        # Somewhere else in the same frame that a path of this length
-        # could lead from, and that the proof does not hold.
+        # Somewhere else in the same frame, which the proof does not
+        # hold: the first tile's samples given there, among true tiles
+        # and under a true proof for those places.
         elsewhere = next(
-            divmod(place, columns)
-            for place in range(12)
-            if divmod(place, columns) not in held
-            and merkle_path_length(place, 12) == length
+            place for place in range(12) if place not in tiles.places
         )
-        moved = sorted(
-            [(*elsewhere, first[2])] + list(tiles.tiles.tiles[1:]),
-            key=lambda tile: tile[:2],
+        true_there = tiles_of_the_scan(
+            WORK.room.session_path,
+            tiles.sequence,
+            (elsewhere,) + tiles.places[1:],
         )
-        moved_paths = tuple(
-            tiles.paths[0] if tile[:2] == elsewhere
-            else tiles.paths[tiles.tiles.tiles.index(tile)]
-            for tile in moved
+        moved = replace(
+            true_there,
+            tiles=replace(
+                true_there.tiles,
+                tiles=tuple(
+                    (*tile[:2], first[2])
+                    if tile[0] * 4 + tile[1] == elsewhere
+                    else tile
+                    for tile in true_there.tiles.tiles
+                ),
+            ),
         )
         later = proof.tile_frames[position + 1]
         cases = {
@@ -1204,16 +1240,21 @@ class AlteredProofTests(unittest.TestCase):
                     + tiles.tiles.tiles[1:],
                 ),
             ),
-            "a step of a tile's path replaced": with_tile_frame(
+            "the first hash of the frame's proof replaced": with_tile_frame(
                 proof,
                 position,
-                paths=((bytes(32),) + tiles.paths[0][1:],) + tiles.paths[1:],
+                shared_proof=(bytes(32),) + tiles.shared_proof[1:],
             ),
-            "a tile said to sit elsewhere in its frame": with_tile_frame(
+            "the last hash of the frame's proof replaced": with_tile_frame(
                 proof,
                 position,
-                tiles=replace(tiles.tiles, tiles=tuple(moved)),
-                paths=moved_paths,
+                shared_proof=tiles.shared_proof[:-1] + (bytes(32),),
+            ),
+            "a tile said to sit elsewhere in its frame": replace(
+                proof,
+                tile_frames=proof.tile_frames[:position]
+                + (moved,)
+                + proof.tile_frames[position + 1:],
             ),
             "one frame's tiles given as another's": replace(
                 proof,
@@ -1230,8 +1271,8 @@ class AlteredProofTests(unittest.TestCase):
                 self.stopped(
                     altered,
                     "depth roots",
-                    r"observation \d+: the tile at row \d, column \d does "
-                    "not lead to the frame's depth root",
+                    r"observation \d+: its \d+ tiles and the hashes with "
+                    "them do not lead to the frame's depth root",
                 )
 
     def test_a_proof_that_holds_less_than_the_block_reads(self) -> None:
@@ -1241,19 +1282,24 @@ class AlteredProofTests(unittest.TestCase):
             for position, tiles in enumerate(proof.tile_frames)
             if tiles.tile_count >= 2
         )
+        # Each tile left out in turn. What is left is a true account
+        # of the tiles that remain, so it is under the frame's depth
+        # root; it is the block that finds a pixel missing.
         for left_out in range(tiles.tile_count):
             with self.subTest(tile=left_out):
                 self.stopped(
-                    with_tile_frame(
+                    replace(
                         proof,
-                        position,
-                        tiles=replace(
-                            tiles.tiles,
-                            tiles=tiles.tiles.tiles[:left_out]
-                            + tiles.tiles.tiles[left_out + 1:],
-                        ),
-                        paths=tiles.paths[:left_out]
-                        + tiles.paths[left_out + 1:],
+                        tile_frames=proof.tile_frames[:position]
+                        + (
+                            tiles_of_the_scan(
+                                WORK.room.session_path,
+                                tiles.sequence,
+                                tiles.places[:left_out]
+                                + tiles.places[left_out + 1:],
+                            ),
+                        )
+                        + proof.tile_frames[position + 1:],
                     ),
                     "pixels",
                     f"observation {tiles.sequence}: the block reads the "
@@ -1283,43 +1329,35 @@ class AlteredProofTests(unittest.TestCase):
             for position, tiles in enumerate(proof.tile_frames)
             if tiles.tile_count < 12
         )
-        columns = tiles.tiles.tile_columns
-        held = {
-            tile[0] * columns + tile[1] for tile in tiles.tiles.tiles
-        }
-        spare = next(place for place in range(12) if place not in held)
-        tile, path = tile_of_the_scan(session_path, tiles.sequence, spare)
-        entries = sorted(
-            list(zip(tiles.tiles.tiles, tiles.paths)) + [(tile, path)],
-            key=lambda entry: entry[0][:2],
+        spare = next(
+            place for place in range(12) if place not in tiles.places
         )
-        # A true tile of the right frame with its true path, which the
+        # A true tile of the right frame, truly tied to it, which the
         # block reads no pixel of.
         self.stopped(
-            with_tile_frame(
+            replace(
                 proof,
-                position,
-                tiles=replace(
-                    tiles.tiles, tiles=tuple(entry[0] for entry in entries)
-                ),
-                paths=tuple(entry[1] for entry in entries),
+                tile_frames=proof.tile_frames[:position]
+                + (
+                    tiles_of_the_scan(
+                        session_path,
+                        tiles.sequence,
+                        tiles.places + (spare,),
+                    ),
+                )
+                + proof.tile_frames[position + 1:],
             ),
             "pixels",
             f"observation {tiles.sequence}: the proof holds the tile at "
-            f"row {tile[0]}, column {tile[1]}, and the block reads no "
-            "pixel of it",
+            f"row {spare // 4}, column {spare % 4}, and the block reads "
+            "no pixel of it",
         )
         # A true tile of a frame the block reads nothing of.
         reading = {tiles.sequence for tiles in proof.tile_frames}
         unread = next(
             sequence for sequence in range(20) if sequence not in reading
         )
-        tile, path = tile_of_the_scan(session_path, unread, 5)
-        extra = TsdfProofFrameTiles(
-            sequence=unread,
-            tiles=TsdfDepthTiles(64, 48, 16, (tile,)),
-            paths=(path,),
-        )
+        extra = tiles_of_the_scan(session_path, unread, [5])
         self.stopped(
             replace(
                 proof,
@@ -1843,32 +1881,36 @@ class ProofFileTests(unittest.TestCase):
                 {"tiles": tiles.tiles.tiles},
                 "must be TsdfDepthTiles",
             ),
-            "a path too few": (
-                {"paths": tiles.paths[:-1]},
-                "one path a tile",
+            "a hash too few": (
+                {"shared_proof": tiles.shared_proof[:-1]},
+                r"tiles' shared proof here is \d hashes",
             ),
-            "paths as a list": ({"paths": list(tiles.paths)}, "one path a"),
-            "a path one step long": (
-                {"paths": (tiles.paths[0] + (bytes(32),),) + tiles.paths[1:]},
-                r"tile path here is \d hashes",
+            "a hash too many": (
+                {"shared_proof": tiles.shared_proof + (bytes(32),)},
+                r"tiles' shared proof here is \d hashes",
             ),
-            "a path of short hashes": (
+            "hashes as a list": (
+                {"shared_proof": list(tiles.shared_proof)},
+                r"tiles' shared proof here is \d hashes",
+            ),
+            "short hashes": (
                 {
-                    "paths": (
-                        tuple(step[:31] for step in tiles.paths[0]),
+                    "shared_proof": tuple(
+                        step[:31] for step in tiles.shared_proof
                     )
-                    + tiles.paths[1:]
                 },
-                r"tile path here is \d hashes",
+                r"tiles' shared proof here is \d hashes",
             ),
         }
         for name, (changes, message) in frame_cases.items():
             with self.subTest(case=name):
                 with self.assertRaisesRegex(TsdfError, message):
                     replace(tiles, **changes)
-        self.assertEqual(tiles.tile_count, len(tiles.paths))
+        self.assertEqual(tiles.tile_count, len(tiles.places))
+        self.assertEqual(tiles.proof_hash_count, len(tiles.shared_proof))
         self.assertEqual(
-            tiles.path_hash_count, sum(len(path) for path in tiles.paths)
+            tiles.proof_hash_count,
+            merkle_shared_proof_length(tiles.places, 12),
         )
         self.assertIsInstance(proof.frames[0], TsdfFrameCommitment)
 
@@ -2059,7 +2101,7 @@ class BlockProofCliTests(unittest.TestCase):
         return (
             f"block: {block} row={row} of=8\n"
             "proof_holds: frames=2 frames_with_tiles=2 tiles=2 "
-            "tile_pixels=16 depth_bytes=16 tile_path_hashes=0 "
+            "tile_pixels=16 depth_bytes=16 tile_proof_hashes=0 "
             "block_path_hashes=3\n"
         )
 

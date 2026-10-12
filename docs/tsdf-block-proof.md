@@ -24,8 +24,14 @@ This is the fourth step of [a map that can be checked](verifiable-maps.md).
 - **The block as the map holds it**: its index and its 6,144 bytes of sums
   and weights, with its path to the map's root.
 - **The depth the block reads**: for each frame it reads a pixel of, the
-  tiles holding those pixels, each with its path to that frame's depth
-  root.
+  tiles holding those pixels, and one proof shared between them that
+  takes them to that frame's depth root.
+
+The tiles a block reads of a frame lie together in the image, and tiles
+that lie together share nearly all of their paths to the root. So a frame
+carries one *shared proof*: the hashes of the largest subtrees that hold
+none of its tiles, left to right. Nine tiles in a square of three, of a
+frame's 1,200, need 17 hashes between them where nine paths need 99.
 
 It is a file, `.sftproof`:
 
@@ -39,12 +45,14 @@ the block's path       32 bytes a step
 for each frame read:   its place and how many tiles, 12 bytes
   for each tile:       its row and column, 8 bytes
                        its samples, 2 bytes each
-                       its path, 32 bytes a step
+  the tiles' shared proof, 32 bytes a hash
 ```
 
-Nothing in it has a length of its own. How many samples a tile has and how
-many steps a path has follow from the header, so the bytes can be read one
-way only, and a file with a byte missing or a byte to spare is not a proof.
+Nothing in it has a length of its own. How many samples a tile has, how
+many steps a path has and how many hashes a frame's tiles share follow
+from the header and from which tiles they are, so the bytes can be read
+one way only, and a file with a byte missing or a byte to spare is not a
+proof.
 
 ## Three verdicts
 
@@ -69,7 +77,7 @@ The check stops at the first that fails, so an invalid proof names one.
 | `shape` | It has the statement's count of frames and of blocks, its image size and its tile size. A root does not say how many leaves it is over; the statement does. |
 | `scan root` | The frames' leaves lead to the statement's scan root. From here on every pose and every depth root is the scan's. |
 | `map root` | The block's leaf and its path, at its row, lead to the statement's map root. |
-| `depth roots` | Each tile and its path, at its place in the image, lead to its own frame's depth root. |
+| `depth roots` | Each frame's tiles, at their places in the image, and the proof they share lead to that frame's depth root. |
 | `poses` | Every pose fusion would read is one fusion would accept. |
 | `pixels` | The proof holds every pixel the block reads, and no tile the block reads no pixel of. |
 | `fusion` | The block fused from the tiles is the block claimed. This is the one that says `refuted`. |
@@ -130,9 +138,9 @@ before `fusion`.
 | its count of blocks or frames, its tile size; a frame left out of the leaves and the rest moved up to hide it | `shape` |
 | a pose moved, even by the least a float can move; a pose taken away; a depth root replaced or said to be absent; two frames exchanged; a frame put in place of its neighbour | `scan root` |
 | one bit of one sum; one weight; the block's index; its row; a step of its path; another block's path; another block's accumulators | `map root` |
-| one depth sample; a step of a tile's path; a tile said to sit elsewhere in its frame; one frame's tiles given as another's; a tile cut from an altered scan; tiles of a frame that has no depth | `depth roots` |
+| one depth sample; the first or last hash of a frame's shared proof; a tile's samples given at another place in its frame; one frame's tiles given as another's; a tile cut from an altered scan; tiles of a frame that has no depth | `depth roots` |
 | a pose that is not a rigid transform, or not finite, in a scan committed that way | `poses` |
-| any one tile left out; any one frame's tiles left out; a true tile the block does not read; true tiles of a frame the block does not read, of a frame the stride skips, or of a frame with no pose | `pixels` |
+| any one tile left out, the rest truly tied to their frame; any one frame's tiles left out; a true tile the block does not read; true tiles of a frame the block does not read, of a frame the stride skips, or of a frame with no pose | `pixels` |
 
 A frame left out of the leaves without renumbering the rest is not a proof
 at all and cannot be read.
@@ -184,27 +192,31 @@ proved, written to bytes, read back and checked:
 
 | Volume | Verified | Proof, median | Mean | Largest | Of which frames' leaves | Check, a block |
 |---|---|---|---|---|---|---|
-| Kinect desk, 15 mm | 200 of 200 | 706 kB | 1,322 kB | 11.2 MB | 140 kB | 0.14 s |
-| Living room, 10 mm | 200 of 200 | 368 kB | 416 kB | 1.5 MB | 156 kB | 0.08 s |
-| Kinect office with free space, 15 mm | 200 of 200 | 437 kB | 710 kB | 3.9 MB | 239 kB | 0.13 s |
+| Kinect desk, 15 mm | 200 of 200 | 535 kB | 944 kB | 7.1 MB | 140 kB | 0.10 s |
+| Living room, 10 mm | 200 of 200 | 323 kB | 355 kB | 1.1 MB | 156 kB | 0.08 s |
+| Kinect office with free space, 15 mm | 200 of 200 | 382 kB | 558 kB | 2.6 MB | 239 kB | 0.11 s |
 
-A block of the office is checked from 437 kB, at the median, in an eighth
+A block of the office is checked from 382 kB, at the median, in a ninth
 of a second. The scan it was fused from holds 415 MB of depth and fusing
-the volume took 460 s. The step before estimated 430 kB from counts
-alone.
+the volume took 460 s.
 
-More than half of the office's median proof is the frames' leaves, which
+With a path for every tile the office's median was 437 kB, close to the
+430 kB the step before estimated from counts alone, and the desk's 706
+kB. Sharing one proof among a frame's tiles took the office's hashes
+from 77 kB to 21 kB a block and the desk's from 225 kB to 57 kB.
+
+Three fifths of the office's median proof is the frames' leaves, which
 are the same in every proof of that scan. The desk's proofs are the
 largest because its camera never leaves the desk: a block there is read
 by a hundred frames.
 
-Making the 200 proofs took 20 to 32 s a volume, after 12 to 18 s to make
+Making the 200 proofs took 21 to 27 s a volume, after 10 to 18 s to make
 the statement.
 
 Then one voxel of the desk's map was negated, in a block that was among
 the 200, the volume given new digests so that it loads, and a statement
 made of it. Of the same 200 blocks, 199 are verified and that one is
-refuted, one voxel differing, from a proof of 1.0 MB.
+refuted, one voxel differing.
 
 (Measured once, on one laptop, with a scratch script.)
 
@@ -213,11 +225,12 @@ refuted, one voxel differing, from a proof of 1.0 MB.
 - **It does not show a block is absent.** Only a block the map holds can
   be proved. See the design page's open questions.
 - **It is one block.** A verified block says nothing of the others. A
-  claim that rests on many blocks, and an audit of a whole map by
-  sampling, are the next two steps.
+  claim that rests on many blocks is a certificate's business, and a
+  whole map's is an audit's.
 - **Every proof repeats every frame's leaf.** On a long scan that is most
-  of a proof. Proofs of many blocks under one statement should carry the
-  leaves once, and do not yet.
+  of a proof. [A route's certificate](tsdf-route-certificate.md) and
+  [an audit](tsdf-map-audit.md) hold many blocks and carry the leaves
+  once.
 - **`refuted` does not say what was altered.** A map changed after fusion
   and a scan changed before committing look the same from here: the two
   that were committed do not agree.

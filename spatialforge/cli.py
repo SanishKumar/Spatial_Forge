@@ -74,6 +74,16 @@ from .tsdf_commitment import (
     load_tsdf_map_statement,
     write_tsdf_map_statement,
 )
+from .tsdf_map_audit import (
+    TSDF_MAP_AUDIT_CHECKS,
+    TsdfMapAuditVerdict,
+    _validate_audit_output,
+    audit_tsdf_map,
+    check_tsdf_map_audit,
+    load_tsdf_map_audit,
+    tsdf_audit_wrong_blocks_caught,
+    write_tsdf_map_audit,
+)
 from .tsdf_route_certificate import (
     TSDF_ROUTE_CHECKS,
     TSDF_ROUTE_MIN_WEIGHT,
@@ -512,6 +522,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_route_check(
                 arguments.statement,
                 arguments.certificate,
+            )
+        if arguments.reconstruct_command == "tsdf-map-audit":
+            return _run_tsdf_map_audit(
+                arguments.statement,
+                arguments.volume,
+                arguments.session,
+                arguments.output,
+                arguments.seed,
+                arguments.blocks,
+            )
+        if arguments.reconstruct_command == "tsdf-map-audit-check":
+            return _run_tsdf_map_audit_check(
+                arguments.statement,
+                arguments.audit,
+                arguments.seed,
+                arguments.blocks,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -2048,6 +2074,86 @@ def _build_parser() -> argparse.ArgumentParser:
         "certificate",
         type=Path,
         help="Existing .sftroute made under it. Never modified.",
+    )
+
+    map_audit = reconstruct_commands.add_parser(
+        "tsdf-map-audit",
+        help="Answer an audit of a .sftvol: the blocks a seed draws.",
+        description=(
+            "Strictly load a statement, the .sftvol and the scan it is a "
+            "statement of, draw rows of the map from the statement's "
+            "digest and a seed, and write those blocks with what a check "
+            "of each needs. The seed is the auditor's: whoever made the "
+            "map must not have been able to predict it."
+        ),
+    )
+    map_audit.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    map_audit.add_argument(
+        "volume",
+        type=Path,
+        help="The .sftvol the statement is of. Never modified.",
+    )
+    map_audit.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession the statement is of. Never modified.",
+    )
+    map_audit.add_argument(
+        "output",
+        type=Path,
+        help="New .sftaudit path to write. Must not already exist.",
+    )
+    map_audit.add_argument(
+        "--seed",
+        required=True,
+        help=(
+            "The auditor's seed: 1 to 128 letters, digits, '.', '_', ':' "
+            "or '-'."
+        ),
+    )
+    map_audit.add_argument(
+        "--blocks",
+        type=_positive_integer,
+        required=True,
+        help="How many different blocks to draw.",
+    )
+
+    map_audit_check = reconstruct_commands.add_parser(
+        "tsdf-map-audit-check",
+        help="Check a .sftaudit against a .sftcommit and your own seed.",
+        description=(
+            "Strictly load a statement and an audit and nothing else: no "
+            "session and no volume. Work out the rows your seed draws, "
+            "require the audit to hold exactly those, tie each block and "
+            "the depth it reads to the statement's roots, and fuse every "
+            "block again. Exits 0 if every block drawn is what the scan "
+            "gives, and 1 if one is refuted or the audit is invalid."
+        ),
+    )
+    map_audit_check.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    map_audit_check.add_argument(
+        "audit",
+        type=Path,
+        help="Existing .sftaudit answered under it. Never modified.",
+    )
+    map_audit_check.add_argument(
+        "--seed",
+        required=True,
+        help="The seed you asked with. Not read from the audit.",
+    )
+    map_audit_check.add_argument(
+        "--blocks",
+        type=_positive_integer,
+        required=True,
+        help="How many blocks you asked for. Not read from the audit.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -7535,7 +7641,7 @@ def _print_proof_shape(proof) -> None:
         f"tiles={proof.tile_count} "
         f"tile_pixels={proof.tile_pixels} "
         f"depth_bytes={proof.depth_byte_count} "
-        f"tile_path_hashes={proof.tile_path_hash_count} "
+        f"tile_proof_hashes={proof.tile_proof_hash_count} "
         f"block_path_hashes={len(proof.block_path)}",
         file=sys.stdout,
     )
@@ -7692,6 +7798,146 @@ def _run_tsdf_route_check(
     return 1
 
 
+def _run_tsdf_map_audit(
+    statement_path: Path,
+    volume_path: Path,
+    session_path: Path,
+    output: Path,
+    seed: str,
+    count: int,
+) -> int:
+    try:
+        _validate_audit_output(output)
+        statement = load_tsdf_map_statement(statement_path)
+        volume = load_tsdf_block_volume(volume_path)
+        session = load_scan_session(session_path)
+        audit = audit_tsdf_map(
+            statement, volume, session, seed=seed, count=count
+        )
+        report = write_tsdf_map_audit(audit, output)
+    except SessionValidationError as error:
+        print(f"TSDF MAP AUDIT FAILED {statement_path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF MAP AUDIT FAILED {statement_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF MAP AUDIT {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(f"statement_sha256: {statement.digest_sha256}", file=sys.stdout)
+    print("volume: verified", file=sys.stdout)
+    print("statement_recomputed: matched", file=sys.stdout)
+    _print_audit(audit)
+    print(f"audit_bytes: {report.output_bytes}", file=sys.stdout)
+    print(f"audit_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print("statement_modified: no", file=sys.stdout)
+    print("volume_modified: no", file=sys.stdout)
+    print("session_modified: no", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_map_audit_check(
+    statement_path: Path,
+    audit_path: Path,
+    seed: str,
+    count: int,
+) -> int:
+    try:
+        statement = load_tsdf_map_statement(statement_path)
+        audit = load_tsdf_map_audit(audit_path)
+        check = check_tsdf_map_audit(statement, audit, seed=seed, count=count)
+    except TsdfError as error:
+        print(f"TSDF MAP AUDIT CHECK FAILED {audit_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF MAP AUDIT CHECK {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(f"statement_sha256: {statement.digest_sha256}", file=sys.stdout)
+    print("audit: well formed", file=sys.stdout)
+    print(f"audit_sha256: {audit.digest_sha256}", file=sys.stdout)
+    print(f"asked: seed={seed} blocks={count}", file=sys.stdout)
+    _print_audit(audit)
+    failed = check.failed_check
+    for name in TSDF_MAP_AUDIT_CHECKS:
+        if failed is None or name in check.passed_checks:
+            outcome = "passed"
+        elif name == failed:
+            outcome = "failed"
+        else:
+            outcome = "not reached"
+        print(f"check {name}: {outcome}", file=sys.stdout)
+    if check.detail is not None:
+        print(f"detail: {check.detail}", file=sys.stdout)
+    if failed is None or failed == "fusion":
+        print(
+            "fusion: "
+            f"blocks={check.drawn_block_count} "
+            f"refuted={len(check.refuted_blocks)} "
+            f"selected={check.selected_observations} "
+            f"ready={check.ready_observations}",
+            file=sys.stdout,
+        )
+    print("session_read: no", file=sys.stdout)
+    print("volume_read: no", file=sys.stdout)
+    print("statement_modified: no", file=sys.stdout)
+    print("audit_modified: no", file=sys.stdout)
+    print(f"verdict: {check.verdict.value}", file=sys.stdout)
+    if check.verdict is TsdfMapAuditVerdict.PASSED:
+        caught = tsdf_audit_wrong_blocks_caught(
+            check.block_count, check.drawn_block_count
+        )
+        print(
+            f"bound: a map with {caught} or more of its "
+            f"{check.block_count} blocks wrong passes such an audit less "
+            "than 1 time in 100",
+            file=sys.stdout,
+        )
+        print(
+            "result: every block drawn is what the scan gives",
+            file=sys.stdout,
+        )
+        return 0
+    if check.verdict is TsdfMapAuditVerdict.REFUTED:
+        print(
+            "result: a block drawn is not what the scan gives; the map "
+            "does not follow from the scan",
+            file=sys.stdout,
+        )
+    else:
+        print(
+            "result: the audit shows nothing about the map; it failed the "
+            f"check of its {failed}",
+            file=sys.stdout,
+        )
+    return 1
+
+
+def _print_audit(audit) -> None:
+    print(
+        "draw: "
+        f"seed={audit.seed} "
+        f"blocks={audit.drawn_block_count} "
+        f"of={audit.block_count}",
+        file=sys.stdout,
+    )
+    print(
+        "audit_holds: "
+        f"frames={audit.frame_count} "
+        f"frames_with_tiles={len(audit.tile_frames)} "
+        f"tiles={audit.tile_count} "
+        f"tile_pixels={audit.tile_pixels} "
+        f"depth_bytes={audit.depth_byte_count} "
+        f"tile_proof_hashes={audit.tile_proof_hash_count} "
+        f"block_path_hashes={audit.block_path_hash_count}",
+        file=sys.stdout,
+    )
+
+
 def _print_route(certificate, voxel_size_m: float) -> None:
     route = certificate.route
     length = sum(
@@ -7723,7 +7969,7 @@ def _print_route(certificate, voxel_size_m: float) -> None:
         f"tiles={certificate.tile_count} "
         f"tile_pixels={certificate.tile_pixels} "
         f"depth_bytes={certificate.depth_byte_count} "
-        f"tile_path_hashes={certificate.tile_path_hash_count} "
+        f"tile_proof_hashes={certificate.tile_proof_hash_count} "
         f"block_path_hashes={certificate.block_path_hash_count}",
         file=sys.stdout,
     )

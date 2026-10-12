@@ -10,12 +10,19 @@ every size up to 130, and every leaf's path for every size up to 66.
 The roots are also pinned to the eight that Certificate Transparency
 publishes as test vectors, which is what says the definition written here
 is the RFC's and not a private one that merely agrees with itself.
+
+A proof shared between several leaves is held to the same definition: the
+hashes of the largest subtrees of its recursion that hold none of the
+leaves, found here from the items, for every set of leaves of every tree
+up to nine and for sets drawn at random up to seventy.
 """
 
 from __future__ import annotations
 
 import hashlib
+import random
 import unittest
+from itertools import combinations
 
 from spatialforge.merkle import (
     MERKLE_HASH_BYTES,
@@ -25,6 +32,8 @@ from spatialforge.merkle import (
     merkle_path_length,
     merkle_root,
     merkle_root_from_path,
+    merkle_root_from_shared_proof,
+    merkle_shared_proof_length,
 )
 
 # The leaves and roots of the Certificate Transparency reference test
@@ -88,6 +97,25 @@ def rfc_path(index: int, items: list[bytes]) -> list[bytes]:
     if index < k:
         return rfc_path(index, items[:k]) + [rfc_root(items[k:])]
     return rfc_path(index - k, items[k:]) + [rfc_root(items[:k])]
+
+
+def rfc_shared_proof(
+    indices: list[int], items: list[bytes], first: int = 0
+) -> list[bytes]:
+    """What several leaves share, by the recursion of ``MTH`` itself.
+
+    Where the recursion reaches a subtree holding none of the leaves it
+    stops and takes that subtree's hash. Left to right.
+    """
+
+    if not any(first <= index < first + len(items) for index in indices):
+        return [rfc_root(items)]
+    if len(items) == 1:
+        return []
+    k = split_point(len(items))
+    return rfc_shared_proof(indices, items[:k], first) + rfc_shared_proof(
+        indices, items[k:], first + k
+    )
 
 
 def items_of(count: int) -> list[bytes]:
@@ -333,6 +361,231 @@ class MerklePathTests(unittest.TestCase):
                     merkle_root_from_path(
                         hashes[index], index, 13, path + path[-1:]
                     )
+
+
+class MerkleSharedProofTests(unittest.TestCase):
+    def test_every_set_of_leaves_of_every_small_tree(self) -> None:
+        for count in range(1, 10):
+            items = items_of(count)
+            hashes = [merkle_leaf_hash(item) for item in items]
+            tree = MerkleTree(hashes)
+            for held in range(1, count + 1):
+                for chosen in combinations(range(count), held):
+                    with self.subTest(leaves=count, chosen=chosen):
+                        proof = tree.shared_proof(chosen)
+                        self.assertEqual(
+                            list(proof),
+                            rfc_shared_proof(list(chosen), items),
+                        )
+                        self.assertEqual(
+                            merkle_shared_proof_length(chosen, count),
+                            len(proof),
+                        )
+                        self.assertEqual(
+                            merkle_root_from_shared_proof(
+                                [hashes[index] for index in chosen],
+                                chosen,
+                                count,
+                                proof,
+                            ),
+                            tree.root,
+                        )
+
+    def test_sets_drawn_at_random_from_larger_trees(self) -> None:
+        draw = random.Random(6962)
+        for count in (*range(10, 71), 127, 128, 129, 1200):
+            items = [
+                place.to_bytes(2, "little") * (place % 7)
+                for place in range(count)
+            ]
+            hashes = [merkle_leaf_hash(item) for item in items]
+            tree = MerkleTree(hashes)
+            for _ in range(6):
+                chosen = sorted(
+                    draw.sample(range(count), draw.randint(1, count))
+                )
+                with self.subTest(leaves=count, held=len(chosen)):
+                    proof = tree.shared_proof(chosen)
+                    self.assertEqual(
+                        list(proof), rfc_shared_proof(chosen, items)
+                    )
+                    self.assertEqual(
+                        merkle_shared_proof_length(chosen, count), len(proof)
+                    )
+                    self.assertEqual(
+                        merkle_root_from_shared_proof(
+                            [hashes[index] for index in chosen],
+                            chosen,
+                            count,
+                            proof,
+                        ),
+                        tree.root,
+                    )
+                    # Never more than the leaves' paths one by one.
+                    self.assertLessEqual(
+                        len(proof),
+                        sum(
+                            merkle_path_length(index, count)
+                            for index in chosen
+                        ),
+                    )
+
+    def test_one_leaf_shares_with_nobody_and_all_of_them_need_nothing(
+        self,
+    ) -> None:
+        for count in (1, 2, 5, 12, 33):
+            hashes = leaves_of(count)
+            tree = MerkleTree(hashes)
+            for index in range(count):
+                with self.subTest(leaves=count, leaf=index):
+                    # The same hashes as its path, in another order: a
+                    # path climbs, and this reads left to right.
+                    self.assertEqual(
+                        sorted(tree.shared_proof([index])),
+                        sorted(tree.path(index)),
+                    )
+            self.assertEqual(tree.shared_proof(range(count)), ())
+            self.assertEqual(
+                merkle_root_from_shared_proof(
+                    hashes, range(count), count, ()
+                ),
+                tree.root,
+            )
+
+    def test_tiles_that_lie_together_share_nearly_everything(self) -> None:
+        # A frame of forty by thirty tiles, as a real one is at sixteen
+        # pixels, and a block of twenty-six by twenty of them.
+        hashes = [
+            merkle_leaf_hash(place.to_bytes(2, "little"))
+            for place in range(1200)
+        ]
+        tree = MerkleTree(hashes)
+        region = sorted(
+            row * 40 + column
+            for row in range(5, 25)
+            for column in range(7, 33)
+        )
+        self.assertEqual(len(region), 520)
+        self.assertEqual(len(tree.shared_proof(region)), 126)
+        self.assertEqual(
+            sum(merkle_path_length(place, 1200) for place in region), 5720
+        )
+        corner = sorted(
+            row * 40 + column
+            for row in range(10, 13)
+            for column in range(20, 23)
+        )
+        self.assertEqual(len(tree.shared_proof(corner)), 17)
+        self.assertEqual(
+            sum(merkle_path_length(place, 1200) for place in corner), 99
+        )
+
+    def test_a_shared_proof_leads_to_the_root_for_its_own_leaves_only(
+        self,
+    ) -> None:
+        for count in range(2, 10):
+            hashes = leaves_of(count)
+            tree = MerkleTree(hashes)
+            forged = merkle_leaf_hash(b"forged")
+            for held in range(1, count):
+                for chosen in combinations(range(count), held):
+                    proof = tree.shared_proof(chosen)
+                    leaves = [hashes[index] for index in chosen]
+                    with self.subTest(leaves=count, chosen=chosen):
+                        # Each leaf replaced in turn.
+                        for place in range(held):
+                            changed = list(leaves)
+                            changed[place] = forged
+                            self.assertNotEqual(
+                                merkle_root_from_shared_proof(
+                                    changed, chosen, count, proof
+                                ),
+                                tree.root,
+                            )
+                        # Each hash of the proof replaced in turn.
+                        for step in range(len(proof)):
+                            changed = list(proof)
+                            changed[step] = forged
+                            self.assertNotEqual(
+                                merkle_root_from_shared_proof(
+                                    leaves, chosen, count, changed
+                                ),
+                                tree.root,
+                            )
+                        # The same leaves and proof said to sit at any
+                        # other places: refused for its length, or
+                        # another root.
+                        for other in combinations(range(count), held):
+                            if other == chosen:
+                                continue
+                            if merkle_shared_proof_length(
+                                other, count
+                            ) != len(proof):
+                                with self.assertRaisesRegex(
+                                    ValueError, "a shared proof for"
+                                ):
+                                    merkle_root_from_shared_proof(
+                                        leaves, other, count, proof
+                                    )
+                                continue
+                            self.assertNotEqual(
+                                merkle_root_from_shared_proof(
+                                    leaves, other, count, proof
+                                ),
+                                tree.root,
+                            )
+
+    def test_what_is_not_a_shared_proof_is_refused(self) -> None:
+        hashes = leaves_of(7)
+        tree = MerkleTree(hashes)
+        proof = tree.shared_proof([1, 4])
+        leaves = [hashes[1], hashes[4]]
+        self.assertEqual(
+            merkle_root_from_shared_proof(leaves, [1, 4], 7, proof),
+            tree.root,
+        )
+        places = {
+            "none": [],
+            "out of order": [4, 1],
+            "one twice": [1, 1],
+            "below the first": [-1, 4],
+            "past the last": [1, 7],
+            "a flag": [True, 4],
+            "a fraction": [1.0, 4],
+            "text": "14",
+        }
+        for name, indices in places.items():
+            with self.subTest(places=name):
+                with self.assertRaisesRegex(ValueError, "leaf|leaves"):
+                    tree.shared_proof(indices)
+                with self.assertRaisesRegex(ValueError, "leaf|leaves"):
+                    merkle_shared_proof_length(indices, 7)
+                with self.assertRaisesRegex(ValueError, "leaf|leaves"):
+                    merkle_root_from_shared_proof(leaves, indices, 7, proof)
+        for size in (0, -7, True, 7.0, "7"):
+            with self.subTest(size=size):
+                with self.assertRaisesRegex(ValueError, "tree size"):
+                    merkle_shared_proof_length([1, 4], size)
+        with self.assertRaisesRegex(
+            ValueError,
+            "a shared proof for 2 leaves of 7 at these places holds "
+            f"{len(proof)} hashes, not {len(proof) - 1}",
+        ):
+            merkle_root_from_shared_proof(leaves, [1, 4], 7, proof[:-1])
+        with self.assertRaisesRegex(ValueError, "hashes, not"):
+            merkle_root_from_shared_proof(
+                leaves, [1, 4], 7, proof + proof[:1]
+            )
+        with self.assertRaisesRegex(ValueError, "one leaf hash for each"):
+            merkle_root_from_shared_proof(leaves[:1], [1, 4], 7, proof)
+        with self.assertRaisesRegex(ValueError, "leaf hash"):
+            merkle_root_from_shared_proof(
+                [hashes[1], hashes[4][:31]], [1, 4], 7, proof
+            )
+        with self.assertRaisesRegex(ValueError, "proof entry"):
+            merkle_root_from_shared_proof(
+                leaves, [1, 4], 7, (proof[0].hex(),) + proof[1:]
+            )
 
 
 class MerkleInputTests(unittest.TestCase):

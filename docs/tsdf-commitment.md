@@ -234,6 +234,12 @@ leaves are the larger half, and are the same for every block of the scan.
 (Counted with a scratch script from the evidence the last step gathers,
 once, on one volume. No proof was built to get these numbers.)
 
+That count is of one path a tile. The proofs that were built later give
+the tiles of a frame one proof shared between them, which takes most of
+the paths column away: the office's median block came to 382 kB, not 430.
+With paths that cheap, 8-pixel tiles were measured again and are 6%
+smaller for a block. Sixteen stayed.
+
 ## What it does not do
 
 - **It is not a proof.** `tsdf-map-commit-check` needs the whole volume
@@ -249,8 +255,8 @@ once, on one volume. No proof was built to get these numbers.)
   only to someone who knows every leaf is in order. A root does not say
   so. This is open in the design page.
 - **A path belongs to one tile.** Tiles of the same frame share most of
-  their paths' upper hashes. Sending those once would shrink the paths
-  column above, and is not built.
+  their paths' upper hashes. `merkle.py` has since been given a proof
+  shared between several leaves, and a block's proof uses it.
 - **The rule's name is only a name.** Nothing ties it to the code but the
   digests the suite pins.
 - **Colour, inertial samples and timestamps are not committed.** Fusion

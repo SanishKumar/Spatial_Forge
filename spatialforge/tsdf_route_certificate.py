@@ -22,8 +22,9 @@ holds the two to each other.
 
 A certificate is the route and, for every block the route touches, what a
 check of that block needs: the block with its path to the map's root, and
-the depth tiles it reads with their paths. The frames' leaves are carried
-once, and so is a tile that several blocks read. Whoever checks is given a
+the depth tiles it reads with the hashes that tie them to their frames.
+The frames' leaves are carried once, and so is a tile that several blocks
+read. Whoever checks is given a
 statement and a certificate and nothing else. They work out for themselves
 which blocks the route touches, fuse every one of them again from the
 tiles, and only then ask whether the route is clear in blocks they have
@@ -65,33 +66,9 @@ from typing import Any, Sequence
 import numpy as np
 
 from .errors import TsdfError
-from .merkle import (
-    MerkleTree,
-    merkle_leaf_hash,
-    merkle_path_length,
-    merkle_root,
-    merkle_root_from_path,
-)
 from .model import ScanSession
-from .tsdf_block_evidence import (
-    TsdfBlockFrameEvidence,
-    _fuse_blocks_from_frames,
-    _gather_pooled_frames,
-    _validate_tile_grid,
-)
 from .tsdf_block_plan import TSDF_BLOCK_RESOLUTION
-from .tsdf_block_proof import (
-    TsdfProofFrameTiles,
-    _decoded_tile_frames,
-    _encoded_tile_frames,
-    _immutable,
-    _pose_fusion_would_refuse,
-    _Reader,
-    _refuse_another_map,
-    _tiles_not_under_depth_roots,
-    _tiles_of_a_frame_not_fused,
-    _validate_path,
-)
+from .tsdf_block_proof import TsdfProofFrameTiles, _Reader
 from .tsdf_block_storage import TSDF_BLOCK_VOXELS
 from .tsdf_block_volume import (
     TsdfBlockVolume,
@@ -105,22 +82,17 @@ from .tsdf_block_volume import (
     _unique_object,
 )
 from .tsdf_commitment import (
-    _BLOCK_TAG,
-    TSDF_FRAME_LEAF_BYTES,
     TsdfFrameCommitment,
     TsdfMapStatement,
-    TsdfVolumeCommitment,
-    _block_leaf_data,
-    _commit_tsdf_scan,
-    _frame_from_leaf_data,
-    _statement,
-    _statement_differences,
     _validate_volume,
-    tsdf_depth_tile_leaf_hash,
-    tsdf_volume_merkle_tree,
 )
-from .tsdf_lone_block import _validate_block_index
-from .tsdf_stream_fusion import _is_sha256
+from .tsdf_held_blocks import (
+    _check_held_blocks,
+    _decoded_held_blocks,
+    _encoded_held_blocks,
+    _prove_held_blocks,
+    _validate_held_blocks,
+)
 
 TSDF_ROUTE_CERTIFICATE_SCHEMA = "spatialforge.tsdf-route-certificate"
 TSDF_ROUTE_CERTIFICATE_SCHEMA_VERSION = "0.1.0"
@@ -165,12 +137,7 @@ _BLOCK_SHAPE = (
 )
 _SUM_DTYPE = np.dtype("<f8")
 _WEIGHT_DTYPE = np.dtype("<u4")
-_SUM_BYTES = TSDF_BLOCK_VOXELS * _SUM_DTYPE.itemsize
-_BLOCK_LEAF_BYTES = (
-    len(_BLOCK_TAG) + 12 + _SUM_BYTES + TSDF_BLOCK_VOXELS * 4
-)
 _WAYPOINT = struct.Struct("<qq")
-_ROW = struct.Struct("<Q")
 _SCAN_CHANGED = (
     "session inputs changed while the route was certified; rerun the "
     "command"
@@ -389,127 +356,14 @@ class TsdfRouteCertificate:
     tile_frames: tuple[TsdfProofFrameTiles, ...]
 
     def __post_init__(self) -> None:
-        if not _is_sha256(self.statement_sha256):
-            raise TsdfError(
-                "TSDF route certificate statement digest is invalid"
-            )
-        _validate_tile_grid(self.width, self.height, self.tile_pixels)
-        if (
-            not isinstance(self.frames, tuple)
-            or not self.frames
-            or any(
-                not isinstance(frame, TsdfFrameCommitment)
-                for frame in self.frames
-            )
-        ):
-            raise TsdfError(
-                "a TSDF route certificate needs at least one "
-                "TsdfFrameCommitment"
-            )
-        if tuple(frame.sequence for frame in self.frames) != tuple(
-            range(len(self.frames))
-        ):
-            raise TsdfError(
-                "a TSDF route certificate must hold every frame, in replay "
-                "order"
-            )
         if not isinstance(self.route, TsdfRoute):
             raise TsdfError("a TSDF route certificate needs a TsdfRoute")
-        if (
-            isinstance(self.block_count, bool)
-            or not isinstance(self.block_count, int)
-            or self.block_count < 1
-        ):
-            raise TsdfError(
-                "TSDF route certificate block count must be a positive "
-                "integer"
-            )
-        held = len(self.block_indices) if isinstance(
-            self.block_indices, tuple
-        ) else 0
-        if not 1 <= held <= MAX_TSDF_ROUTE_BLOCKS:
-            raise TsdfError(
-                "a TSDF route certificate holds from 1 to "
-                f"{MAX_TSDF_ROUTE_BLOCKS} blocks"
-            )
-        previous = None
-        for block in self.block_indices:
-            _validate_block_index(block)
-            order = block[::-1]
-            if previous is not None and order <= previous:
-                raise TsdfError(
-                    "TSDF route certificate blocks must be distinct and in "
-                    "canonical order"
-                )
-            previous = order
-        if (
-            not isinstance(self.block_rows, tuple)
-            or len(self.block_rows) != held
-            or any(
-                isinstance(row, bool)
-                or not isinstance(row, int)
-                or not 0 <= row < self.block_count
-                for row in self.block_rows
-            )
-        ):
-            raise TsdfError(
-                "TSDF route certificate needs a row of the map for each "
-                "block"
-            )
-        for array, dtype, label in (
-            (self.tsdf_sums, _SUM_DTYPE, "sums"),
-            (self.weights, _WEIGHT_DTYPE, "weights"),
-        ):
-            if (
-                type(array) is not np.ndarray
-                or array.shape != (held, *_BLOCK_SHAPE)
-                or array.dtype != dtype
-                or array.flags.writeable
-            ):
-                raise TsdfError(
-                    f"TSDF route certificate {label} must be an immutable "
-                    f"{dtype.name} array of shape {(held, *_BLOCK_SHAPE)}"
-                )
-        if (
-            not isinstance(self.block_paths, tuple)
-            or len(self.block_paths) != held
-        ):
-            raise TsdfError(
-                "TSDF route certificate needs a path for each block"
-            )
-        for row, path in zip(self.block_rows, self.block_paths, strict=True):
-            _validate_path(
-                path, merkle_path_length(row, self.block_count), "block"
-            )
-        if not isinstance(self.tile_frames, tuple) or any(
-            not isinstance(tiles, TsdfProofFrameTiles)
-            for tiles in self.tile_frames
-        ):
-            raise TsdfError(
-                "TSDF route certificate tiles must be TsdfProofFrameTiles"
-            )
-        last = -1
-        for tiles in self.tile_frames:
-            if tiles.sequence <= last:
-                raise TsdfError(
-                    "TSDF route certificate tiles must be in increasing "
-                    "frame order"
-                )
-            last = tiles.sequence
-            if tiles.sequence >= len(self.frames):
-                raise TsdfError(
-                    "TSDF route certificate holds tiles of a frame it does "
-                    "not hold"
-                )
-            if (
-                tiles.tiles.width != self.width
-                or tiles.tiles.height != self.height
-                or tiles.tiles.tile_pixels != self.tile_pixels
-            ):
-                raise TsdfError(
-                    "TSDF route certificate tiles are not cut on its tile "
-                    "grid"
-                )
+        _validate_held_blocks(
+            self,
+            "TSDF route certificate",
+            MAX_TSDF_ROUTE_BLOCKS,
+            in_block_order=True,
+        )
 
     @property
     def frame_count(self) -> int:
@@ -528,8 +382,8 @@ class TsdfRouteCertificate:
         return sum(tiles.tiles.byte_count for tiles in self.tile_frames)
 
     @property
-    def tile_path_hash_count(self) -> int:
-        return sum(tiles.path_hash_count for tiles in self.tile_frames)
+    def tile_proof_hash_count(self) -> int:
+        return sum(tiles.proof_hash_count for tiles in self.tile_frames)
 
     @property
     def block_path_hash_count(self) -> int:
@@ -573,23 +427,7 @@ class TsdfRouteCertificate:
         pieces.extend(
             _WAYPOINT.pack(*waypoint) for waypoint in route.waypoints
         )
-        pieces.extend(frame.leaf_data() for frame in self.frames)
-        for place, (row, block, path) in enumerate(
-            zip(
-                self.block_rows,
-                self.block_indices,
-                self.block_paths,
-                strict=True,
-            )
-        ):
-            pieces.append(_ROW.pack(row))
-            pieces.append(
-                _block_leaf_data(
-                    block, self.tsdf_sums[place], self.weights[place]
-                )
-            )
-            pieces.extend(path)
-        pieces.extend(_encoded_tile_frames(self.tile_frames))
+        pieces.extend(_encoded_held_blocks(self))
         return b"".join(pieces)
 
     @property
@@ -708,90 +546,23 @@ def certify_tsdf_route(
             "clear, and a certificate cannot yet show a block is absent"
         )
 
-    tree = tsdf_volume_merkle_tree(volume)
-    committed = TsdfVolumeCommitment(
-        session_id=volume.session_id,
-        voxel_size_m=float(volume.voxel_size_m),
-        truncation_m=float(volume.truncation_m),
-        frame_stride=volume.frame_stride,
-        block_count=volume.block_count,
-        root_sha256=tree.root.hex(),
+    held = _prove_held_blocks(
+        statement, volume, session, touched, _SCAN_CHANGED
     )
-    _refuse_another_map(statement, committed)
-
-    gathered = _gather_pooled_frames(
-        session,
-        touched,
-        voxel_size_m=volume.voxel_size_m,
-        truncation_m=volume.truncation_m,
-        frame_stride=volume.frame_stride,
-        tile_pixels=statement.tile_pixels,
-    )
-    # As in a block's proof: each tile's leaf from the first reading of
-    # the scan is held to the tree of the second.
-    leaves: dict[int, dict[int, bytes]] = {}
-    for frame in gathered:
-        if frame.tiles is None:
-            continue
-        columns = frame.tiles.tile_columns
-        leaves[frame.sequence] = {
-            tile_row * columns + tile_column: tsdf_depth_tile_leaf_hash(
-                samples
-            )
-            for tile_row, tile_column, samples in frame.tiles.tiles
-        }
-    paths: dict[tuple[int, int], tuple[bytes, ...]] = {}
-
-    def keep_paths(sequence: int, frame_tree: MerkleTree) -> None:
-        for place, leaf in leaves.get(sequence, {}).items():
-            if frame_tree.leaf(place) != leaf:
-                raise TsdfError(_SCAN_CHANGED)
-            paths[sequence, place] = frame_tree.path(place)
-
-    scan = _commit_tsdf_scan(session, statement.tile_pixels, keep_paths)
-    if len(paths) != sum(len(of_frame) for of_frame in leaves.values()):
-        raise TsdfError(_SCAN_CHANGED)
-    differences = _statement_differences(
-        statement, _statement(scan, committed)
-    )
-    if differences:
-        raise TsdfError(
-            "the statement is not a statement of this volume and this "
-            "scan: " + ", ".join(differences)
-        )
-
-    tile_frames = []
-    for frame in gathered:
-        if frame.tiles is None:
-            continue
-        columns = frame.tiles.tile_columns
-        tile_frames.append(
-            TsdfProofFrameTiles(
-                sequence=frame.sequence,
-                tiles=frame.tiles,
-                paths=tuple(
-                    paths[frame.sequence, tile_row * columns + tile_column]
-                    for tile_row, tile_column, _ in frame.tiles.tiles
-                ),
-            )
-        )
-    block_rows = tuple(rows[block] for block in touched)
     return TsdfRouteCertificate(
         statement_sha256=statement.digest_sha256,
         width=statement.camera.width,
         height=statement.camera.height,
         tile_pixels=statement.tile_pixels,
-        frames=scan.frames,
+        frames=held.frames,
         block_count=volume.block_count,
         route=route,
-        block_rows=block_rows,
-        block_indices=touched,
-        tsdf_sums=_immutable(
-            volume.tsdf_sums[list(block_rows)], _SUM_DTYPE
-        ),
-        weights=_immutable(volume.weights[list(block_rows)], _WEIGHT_DTYPE),
-        block_paths=tuple(tree.path(row) for row in block_rows),
-        tile_frames=tuple(tile_frames),
+        block_rows=held.block_rows,
+        block_indices=held.block_indices,
+        tsdf_sums=held.tsdf_sums,
+        weights=held.weights,
+        block_paths=held.block_paths,
+        tile_frames=held.tile_frames,
     )
 
 
@@ -886,124 +657,17 @@ def check_tsdf_route_certificate(
             "not touch it",
         )
 
-    # scan root: the frames' leaves are the scan's.
-    scan_root = merkle_root(
-        [frame.leaf_hash() for frame in certificate.frames]
+    # From the scan's root to fusion: what every holder of blocks is
+    # held to.
+    outcome = _check_held_blocks(
+        statement,
+        certificate,
+        noun="certificate",
+        readers="block of the route",
     )
-    if scan_root.hex() != statement.scan_root_sha256:
-        return invalid(
-            "scan root", f"the frames' leaves lead to {scan_root.hex()}"
-        )
-
-    # map root: every block is the map's, at its own row.
-    for place, (row, block, path) in enumerate(
-        zip(
-            certificate.block_rows,
-            certificate.block_indices,
-            certificate.block_paths,
-            strict=True,
-        )
-    ):
-        map_root = merkle_root_from_path(
-            merkle_leaf_hash(
-                _block_leaf_data(
-                    block,
-                    certificate.tsdf_sums[place],
-                    certificate.weights[place],
-                )
-            ),
-            row,
-            certificate.block_count,
-            path,
-        )
-        if map_root.hex() != statement.map_root_sha256:
-            return invalid(
-                "map root",
-                f"block {block} and its path lead to {map_root.hex()}",
-            )
-
-    # depth roots: each tile is its frame's, at its own place.
-    wrong = _tiles_not_under_depth_roots(
-        certificate.frames, certificate.tile_frames
-    )
-    if wrong is not None:
-        return invalid("depth roots", _of_certificate(wrong))
-
-    # poses: every pose fusion would read is one it could read.
-    wrong = _pose_fusion_would_refuse(selected)
-    if wrong is not None:
-        return invalid("poses", wrong)
-
-    # pixels: the certificate holds every pixel its blocks read, and no
-    # tile none of them reads a pixel of.
-    wrong = _tiles_of_a_frame_not_fused(selected, certificate.tile_frames)
-    if wrong is not None:
-        return invalid("pixels", _of_certificate(wrong))
-    by_frame = {tiles.sequence: tiles for tiles in certificate.tile_frames}
-    tile_columns = -(-certificate.width // certificate.tile_pixels)
-    tile_rows = -(-certificate.height // certificate.tile_pixels)
-    read: dict[int, np.ndarray] = {}
-
-    def note(sequence: int, rows: np.ndarray, columns: np.ndarray) -> None:
-        grid = read.get(sequence)
-        if grid is None:
-            grid = read[sequence] = np.zeros(
-                (tile_rows, tile_columns), dtype=np.bool_
-            )
-        grid[
-            rows // certificate.tile_pixels,
-            columns // certificate.tile_pixels,
-        ] = True
-
-    try:
-        fused = _fuse_blocks_from_frames(
-            statement.camera,
-            statement.depth_scale_m,
-            statement.voxel_size_m,
-            statement.truncation_m,
-            certificate.block_indices,
-            [
-                TsdfBlockFrameEvidence(
-                    sequence=frame.sequence,
-                    transform=frame.transform,
-                    has_depth=frame.depth_root is not None,
-                    tiles=(
-                        by_frame[frame.sequence].tiles
-                        if frame.sequence in by_frame
-                        else None
-                    ),
-                )
-                for frame in selected
-            ],
-            asked=note,
-        )
-    except TsdfError as error:
-        return invalid("pixels", str(error))
-    for tiles in certificate.tile_frames:
-        grid = read.get(tiles.sequence)
-        for tile_row, tile_column, _ in tiles.tiles.tiles:
-            if grid is None or not grid[tile_row, tile_column]:
-                return invalid(
-                    "pixels",
-                    f"observation {tiles.sequence}: the certificate holds "
-                    f"the tile at row {tile_row}, column {tile_column}, "
-                    "and no block of the route reads a pixel of it",
-                )
-
-    # fusion: every block fused from the tiles is the block the map
-    # holds. Compared as bits.
-    differing = np.count_nonzero(
-        (
-            fused.sums.view(np.uint64)
-            != certificate.tsdf_sums.reshape((held, -1)).view(np.uint64)
-        )
-        | (fused.weights != certificate.weights.reshape((held, -1))),
-        axis=1,
-    )
-    refuted = tuple(
-        (certificate.block_indices[place], int(differing[place]))
-        for place in np.flatnonzero(differing).tolist()
-    )
+    if outcome.failed_check is not None:
+        return invalid(outcome.failed_check, outcome.detail)
+    refuted = outcome.refuted
     if refuted:
         return found(
             TsdfRouteVerdict.REFUTED,
@@ -1012,7 +676,7 @@ def check_tsdf_route_certificate(
             f"what the scan gives, the first of them {refuted[0][0]} in "
             f"{refuted[0][1]} of {TSDF_BLOCK_VOXELS} voxels",
             refuted_blocks=refuted,
-            ready=fused.ready_observations,
+            ready=outcome.ready_observations,
         )
 
     # clearance: in blocks now seen to follow from the scan, every
@@ -1035,14 +699,14 @@ def check_tsdf_route_certificate(
             "are at or behind a surface, the first of them voxel "
             f"{clearance.first_voxel_not_clear}",
             clearance=clearance,
-            ready=fused.ready_observations,
+            ready=outcome.ready_observations,
         )
     return found(
         TsdfRouteVerdict.CLEAR,
         None,
         None,
         clearance=clearance,
-        ready=fused.ready_observations,
+        ready=outcome.ready_observations,
     )
 
 
@@ -1161,78 +825,34 @@ def decode_tsdf_route_certificate(encoded: bytes) -> TsdfRouteCertificate:
             )
         ),
     )
-    frames = tuple(
-        _frame_from_leaf_data(reader.take(TSDF_FRAME_LEAF_BYTES, "a frame"))
-        for _ in range(reader.count(header["frames"], TSDF_FRAME_LEAF_BYTES))
-    )
-    of = header["blocks"]["of"]
-    held = reader.count(header["blocks"]["held"], _BLOCK_LEAF_BYTES)
-    if held > MAX_TSDF_ROUTE_BLOCKS:
-        raise TsdfError(
-            "a TSDF route certificate holds from 1 to "
-            f"{MAX_TSDF_ROUTE_BLOCKS} blocks"
-        )
-    block_rows = []
-    block_indices = []
-    block_paths = []
-    sums = np.empty((held, *_BLOCK_SHAPE), dtype=_SUM_DTYPE)
-    weights = np.empty((held, *_BLOCK_SHAPE), dtype=_WEIGHT_DTYPE)
-    for place in range(held):
-        (row,) = _ROW.unpack(reader.take(_ROW.size, "a block's row"))
-        if row >= of:
-            raise TsdfError(
-                "TSDF route certificate row lies outside the blocks it "
-                "counts"
-            )
-        leaf = reader.take(_BLOCK_LEAF_BYTES, "a block")
-        if not leaf.startswith(_BLOCK_TAG):
-            raise TsdfError(
-                "TSDF route certificate block does not start with its tag"
-            )
-        block_rows.append(row)
-        block_indices.append(struct.unpack_from("<3i", leaf, len(_BLOCK_TAG)))
-        sums[place] = np.frombuffer(
-            leaf,
-            dtype=_SUM_DTYPE,
-            count=TSDF_BLOCK_VOXELS,
-            offset=len(_BLOCK_TAG) + 12,
-        ).reshape(_BLOCK_SHAPE)
-        weights[place] = np.frombuffer(
-            leaf,
-            dtype=_WEIGHT_DTYPE,
-            count=TSDF_BLOCK_VOXELS,
-            offset=len(_BLOCK_TAG) + 12 + _SUM_BYTES,
-        ).reshape(_BLOCK_SHAPE)
-        block_paths.append(
-            reader.hashes(merkle_path_length(row, of), "block path")
-        )
-    sums.setflags(write=False)
-    weights.setflags(write=False)
-
     image = header["image"]
-    width, height, tile_pixels = (
-        image["width"], image["height"], image["tile_pixels"],
-    )
-    _validate_tile_grid(width, height, tile_pixels)
-    tile_frames = _decoded_tile_frames(
-        reader, header["tile_frames"], width, height, tile_pixels
+    held = _decoded_held_blocks(
+        reader,
+        frames=header["frames"],
+        of=header["blocks"]["of"],
+        held=header["blocks"]["held"],
+        tile_frames=header["tile_frames"],
+        width=image["width"],
+        height=image["height"],
+        tile_pixels=image["tile_pixels"],
+        most_blocks=MAX_TSDF_ROUTE_BLOCKS,
     )
     reader.finish()
 
     certificate = TsdfRouteCertificate(
         statement_sha256=header["statement_sha256"],
-        width=width,
-        height=height,
-        tile_pixels=tile_pixels,
-        frames=frames,
-        block_count=of,
+        width=image["width"],
+        height=image["height"],
+        tile_pixels=image["tile_pixels"],
+        frames=held.frames,
+        block_count=header["blocks"]["of"],
         route=route,
-        block_rows=tuple(block_rows),
-        block_indices=tuple(block_indices),
-        tsdf_sums=sums,
-        weights=weights,
-        block_paths=tuple(block_paths),
-        tile_frames=tile_frames,
+        block_rows=held.block_rows,
+        block_indices=held.block_indices,
+        tsdf_sums=held.tsdf_sums,
+        weights=held.weights,
+        block_paths=held.block_paths,
+        tile_frames=held.tile_frames,
     )
     if certificate.encoded() != encoded:
         raise TsdfError(
@@ -1328,10 +948,6 @@ def _clearance(
         occupied_voxels=int(np.count_nonzero(occupied)),
         first_voxel_not_clear=first,
     )
-
-
-def _of_certificate(detail: str) -> str:
-    return detail.replace("the proof holds", "the certificate holds")
 
 
 def _parse_header(header_bytes: bytes) -> dict[str, Any]:

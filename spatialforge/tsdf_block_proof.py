@@ -7,8 +7,9 @@ the scan. It carries:
 - every frame's leaf, which is every pose and every depth root, and from
   which the scan's root is recomputed;
 - the block as the map holds it, with its path to the map's root;
-- the tiles of depth the block reads, each with its path to its own
-  frame's depth root.
+- the tiles of depth the block reads, with the hashes that take each
+  frame's tiles to that frame's depth root: one proof shared between
+  the tiles of a frame, not a path for each.
 
 The check ties each of those to the statement and then fuses the block
 again from the tiles. It reads the statement and the proof. It opens no
@@ -60,6 +61,8 @@ from .merkle import (
     merkle_path_length,
     merkle_root,
     merkle_root_from_path,
+    merkle_root_from_shared_proof,
+    merkle_shared_proof_length,
 )
 from .model import ScanSession
 from .tsdf_block_evidence import (
@@ -150,15 +153,16 @@ class TsdfBlockProofVerdict(StrEnum):
 
 @dataclass(frozen=True, slots=True, eq=False)
 class TsdfProofFrameTiles:
-    """The tiles of one frame a block reads, each with its path.
+    """The tiles of one frame that are read, and what ties them to it.
 
-    ``paths`` holds one path a tile, in the order of the tiles: the
-    hashes from the tile's leaf up to the frame's depth root.
+    ``shared_proof`` is the proof the tiles share: the hashes that, with
+    the tiles' own leaves at their places, give the frame's depth root.
+    Tiles that lie together in an image share nearly all of it.
     """
 
     sequence: int
     tiles: TsdfDepthTiles
-    paths: tuple[tuple[bytes, ...], ...]
+    shared_proof: tuple[bytes, ...]
 
     def __post_init__(self) -> None:
         if (
@@ -169,30 +173,28 @@ class TsdfProofFrameTiles:
             raise TsdfError("TSDF proof tiles name an invalid frame")
         if not isinstance(self.tiles, TsdfDepthTiles):
             raise TsdfError("TSDF proof tiles must be TsdfDepthTiles")
-        if (
-            not isinstance(self.paths, tuple)
-            or len(self.paths) != self.tiles.tile_count
-        ):
-            raise TsdfError("TSDF proof tiles need one path a tile")
-        total = self.tiles.tile_rows * self.tiles.tile_columns
-        for (tile_row, tile_column, _), path in zip(
-            self.tiles.tiles, self.paths, strict=True
-        ):
-            _validate_path(
-                path,
-                merkle_path_length(
-                    tile_row * self.tiles.tile_columns + tile_column, total
-                ),
-                "tile",
-            )
+        _validate_path(
+            self.shared_proof,
+            merkle_shared_proof_length(
+                self.places,
+                self.tiles.tile_rows * self.tiles.tile_columns,
+            ),
+            "tiles' shared proof",
+        )
 
     @property
     def tile_count(self) -> int:
         return self.tiles.tile_count
 
     @property
-    def path_hash_count(self) -> int:
-        return sum(len(path) for path in self.paths)
+    def places(self) -> tuple[int, ...]:
+        """Where each tile sits among its frame's tiles, row by row."""
+
+        return _places(self.tiles)
+
+    @property
+    def proof_hash_count(self) -> int:
+        return len(self.shared_proof)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -268,7 +270,7 @@ class TsdfBlockProof:
         _validate_path(
             self.block_path,
             merkle_path_length(self.block_row, self.block_count),
-            "block",
+            "block path",
         )
         if not isinstance(self.tile_frames, tuple) or any(
             not isinstance(tiles, TsdfProofFrameTiles)
@@ -312,8 +314,8 @@ class TsdfBlockProof:
         return sum(tiles.tiles.byte_count for tiles in self.tile_frames)
 
     @property
-    def tile_path_hash_count(self) -> int:
-        return sum(tiles.path_hash_count for tiles in self.tile_frames)
+    def tile_proof_hash_count(self) -> int:
+        return sum(tiles.proof_hash_count for tiles in self.tile_frames)
 
     def block_leaf_data(self) -> bytes:
         """The bytes the map's tree holds this block as."""
@@ -469,31 +471,35 @@ def prove_tsdf_blocks(
         tile_pixels=statement.tile_pixels,
     )
     # The scan is read twice: once for the tiles, above, and once for
-    # the trees their paths come from. Each tile's leaf is kept from the
-    # first reading and held to the tree of the second, so that a scan
-    # that changed in between is refused here and not handed on as a
-    # proof that cannot hold.
+    # the trees their proofs come from. Each tile's leaf is kept from
+    # the first reading and held to the tree of the second, so that a
+    # scan that changed in between is refused here and not handed on as
+    # a proof that cannot hold.
     leaves: dict[int, dict[int, bytes]] = {}
+    wanted: dict[int, set[tuple[int, ...]]] = {}
     for evidence in gathered:
         for frame in evidence.frames:
             if frame.tiles is None:
                 continue
             of_frame = leaves.setdefault(frame.sequence, {})
-            columns = frame.tiles.tile_columns
-            for tile_row, tile_column, samples in frame.tiles.tiles:
-                place = tile_row * columns + tile_column
+            places = _places(frame.tiles)
+            wanted.setdefault(frame.sequence, set()).add(places)
+            for place, (_, _, samples) in zip(
+                places, frame.tiles.tiles, strict=True
+            ):
                 if place not in of_frame:
                     of_frame[place] = tsdf_depth_tile_leaf_hash(samples)
-    paths: dict[tuple[int, int], tuple[bytes, ...]] = {}
+    shared: dict[tuple[int, tuple[int, ...]], tuple[bytes, ...]] = {}
 
-    def keep_paths(sequence: int, frame_tree: MerkleTree) -> None:
+    def keep_proofs(sequence: int, frame_tree: MerkleTree) -> None:
         for place, leaf in leaves.get(sequence, {}).items():
             if frame_tree.leaf(place) != leaf:
                 raise TsdfError(_SCAN_CHANGED)
-            paths[sequence, place] = frame_tree.path(place)
+        for places in wanted.get(sequence, ()):
+            shared[sequence, places] = frame_tree.shared_proof(places)
 
-    scan = _commit_tsdf_scan(session, statement.tile_pixels, keep_paths)
-    if len(paths) != sum(len(of_frame) for of_frame in leaves.values()):
+    scan = _commit_tsdf_scan(session, statement.tile_pixels, keep_proofs)
+    if len(shared) != sum(len(of_frame) for of_frame in wanted.values()):
         raise TsdfError(_SCAN_CHANGED)
     differences = _statement_differences(
         statement, _statement(scan, committed)
@@ -512,15 +518,11 @@ def prove_tsdf_blocks(
         for frame in evidence.frames:
             if frame.tiles is None:
                 continue
-            columns = frame.tiles.tile_columns
             tile_frames.append(
                 TsdfProofFrameTiles(
                     sequence=frame.sequence,
                     tiles=frame.tiles,
-                    paths=tuple(
-                        paths[frame.sequence, tile_row * columns + tile_column]
-                        for tile_row, tile_column, _ in frame.tiles.tiles
-                    ),
+                    shared_proof=shared[frame.sequence, _places(frame.tiles)],
                 )
             )
         proofs.append(
@@ -880,12 +882,10 @@ def _encoded_tile_frames(
     pieces = []
     for tiles in tile_frames:
         pieces.append(_TILE_FRAME_HEAD.pack(tiles.sequence, tiles.tile_count))
-        for (tile_row, tile_column, samples), path in zip(
-            tiles.tiles.tiles, tiles.paths, strict=True
-        ):
+        for tile_row, tile_column, samples in tiles.tiles.tiles:
             pieces.append(_TILE_HEAD.pack(tile_row, tile_column))
             pieces.append(np.ascontiguousarray(samples, dtype="<u2").tobytes())
-            pieces.extend(path)
+        pieces.extend(tiles.shared_proof)
     return pieces
 
 
@@ -907,13 +907,19 @@ def _decoded_tile_frames(
             reader.take(_TILE_FRAME_HEAD.size, "a frame's tiles")
         )
         tiles = []
-        paths = []
+        places = []
         for _ in range(reader.count(tile_count, _TILE_HEAD.size)):
             tile_row, tile_column = _TILE_HEAD.unpack(
                 reader.take(_TILE_HEAD.size, "a tile")
             )
             if not (tile_row < tile_rows and tile_column < tile_columns):
                 raise TsdfError("TSDF depth tile lies outside the image")
+            place = tile_row * tile_columns + tile_column
+            if places and place <= places[-1]:
+                raise TsdfError(
+                    "TSDF depth tiles must be in increasing order"
+                )
+            places.append(place)
             shape = (
                 min(tile_pixels, height - tile_row * tile_pixels),
                 min(tile_pixels, width - tile_column * tile_pixels),
@@ -924,14 +930,6 @@ def _decoded_tile_frames(
             ).reshape(shape).astype(TSDF_DEPTH_SAMPLE_DTYPE)
             samples.setflags(write=False)
             tiles.append((tile_row, tile_column, samples))
-            paths.append(
-                reader.hashes(
-                    merkle_path_length(
-                        tile_row * tile_columns + tile_column, total
-                    ),
-                    "tile path",
-                )
-            )
         if not tiles:
             raise TsdfError(
                 f"{reader.name} names a frame and holds no tile of it"
@@ -945,7 +943,10 @@ def _decoded_tile_frames(
                     tile_pixels=tile_pixels,
                     tiles=tuple(tiles),
                 ),
-                paths=tuple(paths),
+                shared_proof=reader.hashes(
+                    merkle_shared_proof_length(places, total),
+                    "frame's shared proof",
+                ),
             )
         )
     return tuple(tile_frames)
@@ -964,22 +965,20 @@ def _tiles_not_under_depth_roots(
                 f"observation {tiles.sequence} has no depth, and the proof "
                 "holds tiles of it"
             )
-        columns = tiles.tiles.tile_columns
-        total = tiles.tiles.tile_rows * columns
-        for (tile_row, tile_column, samples), path in zip(
-            tiles.tiles.tiles, tiles.paths, strict=True
-        ):
-            if merkle_root_from_path(
-                tsdf_depth_tile_leaf_hash(samples),
-                tile_row * columns + tile_column,
-                total,
-                path,
-            ) != depth_root:
-                return (
-                    f"observation {tiles.sequence}: the tile at row "
-                    f"{tile_row}, column {tile_column} does not lead to "
-                    "the frame's depth root"
-                )
+        if merkle_root_from_shared_proof(
+            [
+                tsdf_depth_tile_leaf_hash(samples)
+                for _, _, samples in tiles.tiles.tiles
+            ],
+            tiles.places,
+            tiles.tiles.tile_rows * tiles.tiles.tile_columns,
+            tiles.shared_proof,
+        ) != depth_root:
+            return (
+                f"observation {tiles.sequence}: its {tiles.tile_count} "
+                "tiles and the hashes with them do not lead to the "
+                "frame's depth root"
+            )
     return None
 
 
@@ -1167,9 +1166,19 @@ def _validate_path(path: object, length: int, what: str) -> None:
         )
     ):
         raise TsdfError(
-            f"a TSDF proof {what} path here is {length} hashes of "
+            f"a TSDF proof's {what} here is {length} hashes of "
             f"{MERKLE_HASH_BYTES} bytes"
         )
+
+
+def _places(tiles: TsdfDepthTiles) -> tuple[int, ...]:
+    """Where each tile sits among its frame's tiles, row by row."""
+
+    columns = tiles.tile_columns
+    return tuple(
+        tile_row * columns + tile_column
+        for tile_row, tile_column, _ in tiles.tiles
+    )
 
 
 def _immutable(array: np.ndarray, dtype: np.dtype) -> np.ndarray:
