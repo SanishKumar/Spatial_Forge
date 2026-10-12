@@ -609,6 +609,27 @@ the volume's blocks. The statement is about 800 bytes, and its SHA-256
 stands for all of it. The second command recomputes it and exits 1 if
 anything differs: [`docs/tsdf-commitment.md`](docs/tsdf-commitment.md).
 
+To prove one block of the map to someone who holds only the statement:
+
+```bash
+python -m spatialforge reconstruct tsdf-block-prove \
+  datasets/fr1xyz.sftcommit datasets/fr1xyz.sftvol datasets/fr1xyz.vgsession \
+  block.sftproof --block 12 -3 40
+```
+
+```bash
+python -m spatialforge reconstruct tsdf-block-proof-check \
+  datasets/fr1xyz.sftcommit block.sftproof
+```
+
+The proof holds every frame's leaf, the block with its path to the map's
+root, and the depth tiles the block reads with their paths. The check
+reads the statement and the proof and no session or volume. It ties each
+piece to the statement, fuses the block again, and says `verified`,
+`refuted` if the map's block is not what the committed scan gives, or
+`invalid` if the proof does not hold together:
+[`docs/tsdf-block-proof.md`](docs/tsdf-block-proof.md).
+
 ## What it does not do
 
 Stated plainly, because the gaps matter more than the features:
@@ -687,11 +708,12 @@ spatialforge/     library and CLI
   tsdf_block_evidence.py  the pixels a block reads, and the block from them
   merkle.py               RFC 6962 Merkle trees: roots and paths
   tsdf_commitment.py      one hash for a scan, one for a map, a statement
+  tsdf_block_proof.py     one block's proof, and a check that reads no scan
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            63 test modules
+tests/            64 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```
@@ -716,7 +738,7 @@ Built as the reconstruction backend for an indoor navigation project.
 
 Where it goes next is
 [a map that can be checked without rebuilding it](docs/verifiable-maps.md):
-a design that uses the repeatability, with the first three of its six
+a design that uses the repeatability, with the first four of its six
 steps built.
 
 What changed in each version: [`CHANGELOG.md`](CHANGELOG.md).

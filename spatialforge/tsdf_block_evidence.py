@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, NamedTuple, Sequence
 
 import numpy as np
 
@@ -469,14 +469,62 @@ def fuse_tsdf_block_from_evidence(
         raise TsdfError(
             "TSDF block fusion from evidence requires a TsdfBlockEvidence"
         )
-    camera = evidence.camera
-    blocks = np.asarray([evidence.block_index], dtype=np.int64)
-    centres = _chunk_voxel_centres_world_m(blocks, evidence.voxel_size_m)
+    fused = _fuse_block_from_frames(
+        evidence.camera,
+        evidence.depth_scale_m,
+        evidence.voxel_size_m,
+        evidence.truncation_m,
+        evidence.block_index,
+        evidence.frames,
+    )
+    return _lone_block(
+        session_id=evidence.session_id,
+        replay_digest_sha256=evidence.replay_digest_sha256,
+        voxel_size_m=evidence.voxel_size_m,
+        truncation_m=evidence.truncation_m,
+        frame_stride=evidence.frame_stride,
+        block_index=evidence.block_index,
+        selected_observations=evidence.selected_observations,
+        **fused._asdict(),
+    )
+
+
+class _FusedFromFrames(NamedTuple):
+    """A block's accumulators, and how the frames were disposed of."""
+
+    flat_sums: np.ndarray
+    flat_weights: np.ndarray
+    ready_observations: int
+    ruled_out_behind_camera: int
+    ruled_out_outside_image: int
+    evaluated_observations: int
+    contributing_observations: int
+
+
+def _fuse_block_from_frames(
+    camera: TsdfPinholeCamera,
+    depth_scale_m: float,
+    voxel_size_m: float,
+    truncation_m: float,
+    block_index: _BlockIndex,
+    frames: Sequence[TsdfBlockFrameEvidence],
+    *,
+    asked: Callable[[int, np.ndarray, np.ndarray], None] | None = None,
+) -> _FusedFromFrames:
+    """Fuse one block from selected frames, in the order given.
+
+    This is all of fusion that a block is: nothing of a session is named
+    here. ``asked``, if given, is told the pixels each evaluated frame is
+    read at, before they are read.
+    """
+
+    blocks = np.asarray([block_index], dtype=np.int64)
+    centres = _chunk_voxel_centres_world_m(blocks, voxel_size_m)
     sums = np.zeros(TSDF_BLOCK_VOXELS, dtype=TSDF_SUM_DTYPE)
     weights = np.zeros(TSDF_BLOCK_VOXELS, dtype=TSDF_WEIGHT_DTYPE)
     ready = behind = outside = evaluated = contributing = 0
 
-    for frame in evidence.frames:
+    for frame in frames:
         if not frame.is_ready:
             continue
         if not _is_rigid_transform(frame.transform):
@@ -486,9 +534,7 @@ def fuse_tsdf_block_from_evidence(
             )
         ready += 1
         verdict = int(
-            _classify_blocks(
-                camera, frame.transform, blocks, evidence.voxel_size_m
-            )[0]
+            _classify_blocks(camera, frame.transform, blocks, voxel_size_m)[0]
         )
         if verdict == BLOCK_BEHIND_CAMERA:
             behind += 1
@@ -502,29 +548,22 @@ def fuse_tsdf_block_from_evidence(
         _, sum_deltas, weight_deltas = _evaluate_ready_voxels_reading(
             camera,
             frame.transform,
-            _tile_reader(frame, evidence.depth_scale_m),
-            evidence.truncation_m,
+            _tile_reader(frame, depth_scale_m, asked),
+            truncation_m,
             centres,
         )
         sums += sum_deltas
         weights += weight_deltas
         contributing += int(weight_deltas.any())
 
-    return _lone_block(
-        session_id=evidence.session_id,
-        replay_digest_sha256=evidence.replay_digest_sha256,
-        voxel_size_m=evidence.voxel_size_m,
-        truncation_m=evidence.truncation_m,
-        frame_stride=evidence.frame_stride,
-        block_index=evidence.block_index,
-        selected_observations=evidence.selected_observations,
+    return _FusedFromFrames(
+        flat_sums=sums,
+        flat_weights=weights,
         ready_observations=ready,
         ruled_out_behind_camera=behind,
         ruled_out_outside_image=outside,
         evaluated_observations=evaluated,
         contributing_observations=contributing,
-        flat_sums=sums,
-        flat_weights=weights,
     )
 
 
@@ -604,10 +643,16 @@ def _missing_pixel(
     )
 
 
-def _tile_reader(frame: TsdfBlockFrameEvidence, depth_scale_m: float):
+def _tile_reader(
+    frame: TsdfBlockFrameEvidence,
+    depth_scale_m: float,
+    asked: Callable[[int, np.ndarray, np.ndarray], None] | None = None,
+):
     """The gather the evaluator asks for, over one frame's tiles."""
 
     def read(row: np.ndarray, column: np.ndarray, alive: np.ndarray):
+        if asked is not None:
+            asked(frame.sequence, row[alive], column[alive])
         if frame.tiles is None:
             wanted = np.flatnonzero(alive)
             if len(wanted):

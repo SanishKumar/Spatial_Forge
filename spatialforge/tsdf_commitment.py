@@ -47,7 +47,7 @@ import struct
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -169,6 +169,41 @@ class TsdfFrameCommitment:
 
     def leaf_hash(self) -> bytes:
         return merkle_leaf_hash(self.leaf_data())
+
+
+TSDF_FRAME_LEAF_BYTES = len(_FRAME_TAG) + 9 + len(_NO_POSE) + len(_NO_DEPTH)
+
+
+def _frame_from_leaf_data(data: bytes) -> TsdfFrameCommitment:
+    """The frame a leaf's bytes say, or a refusal.
+
+    Only the bytes ``leaf_data`` writes are read back: an absent pose or
+    depth root must be zeros, and no flag may be set but the two.
+    """
+
+    if type(data) is not bytes or len(data) != TSDF_FRAME_LEAF_BYTES:
+        raise TsdfError(
+            f"a TSDF frame leaf is {TSDF_FRAME_LEAF_BYTES} bytes"
+        )
+    if not data.startswith(_FRAME_TAG):
+        raise TsdfError("a TSDF frame leaf starts with its tag")
+    sequence, flags = struct.unpack_from("<QB", data, len(_FRAME_TAG))
+    pose = data[len(_FRAME_TAG) + 9:-MERKLE_HASH_BYTES]
+    depth_root = data[-MERKLE_HASH_BYTES:]
+    if flags > 3 or sequence >= 2**63:
+        raise TsdfError("a TSDF frame leaf holds an unknown flag or place")
+    if not flags & 2 and pose != _NO_POSE:
+        raise TsdfError("a TSDF frame leaf with no pose holds one")
+    if not flags & 1 and depth_root != _NO_DEPTH:
+        raise TsdfError("a TSDF frame leaf with no depth holds a depth root")
+    frame = TsdfFrameCommitment(
+        sequence=sequence,
+        transform=struct.unpack("<16d", pose) if flags & 2 else None,
+        depth_root=depth_root if flags & 1 else None,
+    )
+    if frame.leaf_data() != data:
+        raise TsdfError("a TSDF frame leaf is not in the form it is written")
+    return frame
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -498,6 +533,20 @@ def commit_tsdf_scan(
 ) -> TsdfScanCommitment:
     """Reduce a scan to its frames' leaves. Reads every depth image."""
 
+    return _commit_tsdf_scan(session, tile_pixels, None)
+
+
+def _commit_tsdf_scan(
+    session: ScanSession,
+    tile_pixels: int,
+    visit: Callable[[int, MerkleTree], None] | None,
+) -> TsdfScanCommitment:
+    """Commit a scan, showing ``visit`` each frame's tile tree in passing.
+
+    A tree is needed again only by whoever wants a tile's path, and is
+    not kept here: a scan's trees together are as large as its depth.
+    """
+
     if not isinstance(session, ScanSession):
         raise TsdfError("TSDF scan commitment requires a loaded ScanSession")
     try:
@@ -515,12 +564,15 @@ def commit_tsdf_scan(
             )
             depth_root = None
             if getattr(observation, "depth", None) is not None:
-                depth_root = tsdf_depth_tile_tree(
+                tree = tsdf_depth_tile_tree(
                     _decode_raw_depth(
                         session, observation, camera.width, camera.height
                     ),
                     tile_pixels,
-                ).root
+                )
+                depth_root = tree.root
+                if visit is not None:
+                    visit(observation.sequence, tree)
             frames.append(
                 TsdfFrameCommitment(
                     sequence=observation.sequence,
@@ -574,13 +626,27 @@ def tsdf_volume_block_leaf_hash(volume: TsdfBlockVolume, row: int) -> bytes:
 
 def _block_leaf_hash(volume: TsdfBlockVolume, row: int) -> bytes:
     return merkle_leaf_hash(
-        b"".join(
-            (
-                _BLOCK_TAG,
-                struct.pack("<3i", *volume.block_indices[row]),
-                memoryview(np.ascontiguousarray(volume.tsdf_sums[row])),
-                memoryview(np.ascontiguousarray(volume.weights[row])),
-            )
+        _block_leaf_data(
+            volume.block_indices[row],
+            volume.tsdf_sums[row],
+            volume.weights[row],
+        )
+    )
+
+
+def _block_leaf_data(
+    block_index: tuple[int, int, int],
+    tsdf_sums: np.ndarray,
+    weights: np.ndarray,
+) -> bytes:
+    """The bytes a block's leaf is the hash of."""
+
+    return b"".join(
+        (
+            _BLOCK_TAG,
+            struct.pack("<3i", *block_index),
+            np.ascontiguousarray(tsdf_sums, dtype="<f8").tobytes(),
+            np.ascontiguousarray(weights, dtype="<u4").tobytes(),
         )
     )
 
@@ -685,27 +751,39 @@ def check_tsdf_map_statement(
         )
     scan = commit_tsdf_scan(session, tile_pixels=statement.tile_pixels)
     recomputed = _statement(scan, commit_tsdf_volume(volume))
-    differences = []
-    for label, stated, found in (
-        ("session", statement.session_id, recomputed.session_id),
-        ("fusion rule", statement.rule, recomputed.rule),
-        ("frame count", statement.frame_count, recomputed.frame_count),
-        ("camera", statement.camera, recomputed.camera),
-        ("depth scale", statement.depth_scale_m, recomputed.depth_scale_m),
-        ("scan root", statement.scan_root_sha256, recomputed.scan_root_sha256),
-        ("voxel size", statement.voxel_size_m, recomputed.voxel_size_m),
-        ("truncation", statement.truncation_m, recomputed.truncation_m),
-        ("frame stride", statement.frame_stride, recomputed.frame_stride),
-        ("block count", statement.block_count, recomputed.block_count),
-        ("map root", statement.map_root_sha256, recomputed.map_root_sha256),
-    ):
-        if stated != found:
-            differences.append(label)
     return TsdfMapStatementCheck(
         statement_digest_sha256=statement.digest_sha256,
         scan_root_sha256=recomputed.scan_root_sha256,
         map_root_sha256=recomputed.map_root_sha256,
-        differences=tuple(differences),
+        differences=_statement_differences(statement, recomputed),
+    )
+
+
+def _statement_differences(
+    stated: TsdfMapStatement,
+    found: TsdfMapStatement,
+) -> tuple[str, ...]:
+    """What one statement says that another does not, in a fixed order.
+
+    The tile size is not named: it shows in the scan root it leads to.
+    """
+
+    return tuple(
+        label
+        for label, one, other in (
+            ("session", stated.session_id, found.session_id),
+            ("fusion rule", stated.rule, found.rule),
+            ("frame count", stated.frame_count, found.frame_count),
+            ("camera", stated.camera, found.camera),
+            ("depth scale", stated.depth_scale_m, found.depth_scale_m),
+            ("scan root", stated.scan_root_sha256, found.scan_root_sha256),
+            ("voxel size", stated.voxel_size_m, found.voxel_size_m),
+            ("truncation", stated.truncation_m, found.truncation_m),
+            ("frame stride", stated.frame_stride, found.frame_stride),
+            ("block count", stated.block_count, found.block_count),
+            ("map root", stated.map_root_sha256, found.map_root_sha256),
+        )
+        if one != other
     )
 
 

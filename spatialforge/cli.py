@@ -57,6 +57,15 @@ from .tsdf_block_evidence import (
     TSDF_DEPTH_TILE_PIXELS,
     check_tsdf_volume_blocks_from_tiles,
 )
+from .tsdf_block_proof import (
+    TSDF_BLOCK_PROOF_CHECKS,
+    TsdfBlockProofVerdict,
+    _validate_proof_output,
+    check_tsdf_block_proof,
+    load_tsdf_block_proof,
+    prove_tsdf_block,
+    write_tsdf_block_proof,
+)
 from .tsdf_commitment import (
     _state_tsdf_map,
     _validate_statement_output,
@@ -460,6 +469,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.statement,
                 arguments.volume,
                 arguments.session,
+            )
+        if arguments.reconstruct_command == "tsdf-block-prove":
+            return _run_tsdf_block_prove(
+                arguments.statement,
+                arguments.volume,
+                arguments.session,
+                arguments.output,
+                arguments.block,
+            )
+        if arguments.reconstruct_command == "tsdf-block-proof-check":
+            return _run_tsdf_block_proof_check(
+                arguments.statement,
+                arguments.proof,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1829,6 +1851,69 @@ def _build_parser() -> argparse.ArgumentParser:
         "session",
         type=Path,
         help="The .vgsession the statement is said to be of. Never modified.",
+    )
+
+    block_prove = reconstruct_commands.add_parser(
+        "tsdf-block-prove",
+        help="Write the proof of one block of a .sftvol under a statement.",
+        description=(
+            "Strictly load a statement, the .sftvol and the scan it is a "
+            "statement of, and write what a check of one block needs: "
+            "every frame's leaf, the block with its path to the map's "
+            "root, and the depth tiles the block reads, each with its "
+            "path to its frame's depth root. The statement is recomputed "
+            "first. The output must not already exist."
+        ),
+    )
+    block_prove.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    block_prove.add_argument(
+        "volume",
+        type=Path,
+        help="The .sftvol the statement is of. Never modified.",
+    )
+    block_prove.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession the statement is of. Never modified.",
+    )
+    block_prove.add_argument(
+        "output",
+        type=Path,
+        help="New .sftproof path to write. Must not already exist.",
+    )
+    block_prove.add_argument(
+        "--block",
+        type=int,
+        nargs=3,
+        required=True,
+        metavar=("BX", "BY", "BZ"),
+        help="The signed block XYZ of the volume to prove.",
+    )
+
+    block_proof_check = reconstruct_commands.add_parser(
+        "tsdf-block-proof-check",
+        help="Check one block's .sftproof against a .sftcommit.",
+        description=(
+            "Strictly load a statement and a proof and nothing else: no "
+            "session and no volume. Tie the proof's frames, block and "
+            "depth tiles to the statement's two roots, fuse the block "
+            "again from the tiles, and compare. Exits 0 if the block is "
+            "verified and 1 if it is refuted or the proof is invalid."
+        ),
+    )
+    block_proof_check.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    block_proof_check.add_argument(
+        "proof",
+        type=Path,
+        help="Existing .sftproof made under it. Never modified.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -7185,6 +7270,141 @@ def _run_tsdf_map_commit_check(
         file=sys.stdout,
     )
     return 0
+
+
+def _run_tsdf_block_prove(
+    statement_path: Path,
+    volume_path: Path,
+    session_path: Path,
+    output: Path,
+    block: Sequence[int],
+) -> int:
+    try:
+        _validate_proof_output(output)
+        statement = load_tsdf_map_statement(statement_path)
+        volume = load_tsdf_block_volume(volume_path)
+        session = load_scan_session(session_path)
+        proof = prove_tsdf_block(
+            statement,
+            volume,
+            session,
+            (int(block[0]), int(block[1]), int(block[2])),
+        )
+        report = write_tsdf_block_proof(proof, output)
+    except SessionValidationError as error:
+        print(f"TSDF BLOCK PROVE FAILED {statement_path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF BLOCK PROVE FAILED {statement_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF BLOCK PROVE {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(f"statement_sha256: {statement.digest_sha256}", file=sys.stdout)
+    print("volume: verified", file=sys.stdout)
+    print("statement_recomputed: matched", file=sys.stdout)
+    _print_proof_shape(proof)
+    print(f"proof_bytes: {report.output_bytes}", file=sys.stdout)
+    print(f"proof_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    print(f"output: {report.output}", file=sys.stdout)
+    print("statement_modified: no", file=sys.stdout)
+    print("volume_modified: no", file=sys.stdout)
+    print("session_modified: no", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_block_proof_check(
+    statement_path: Path,
+    proof_path: Path,
+) -> int:
+    try:
+        statement = load_tsdf_map_statement(statement_path)
+        proof = load_tsdf_block_proof(proof_path)
+        check = check_tsdf_block_proof(statement, proof)
+    except TsdfError as error:
+        print(
+            f"TSDF BLOCK PROOF CHECK FAILED {proof_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF BLOCK PROOF CHECK {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(f"statement_sha256: {statement.digest_sha256}", file=sys.stdout)
+    print("proof: well formed", file=sys.stdout)
+    print(f"proof_sha256: {proof.digest_sha256}", file=sys.stdout)
+    _print_proof_shape(proof)
+    failed = check.failed_check
+    for name in TSDF_BLOCK_PROOF_CHECKS:
+        if failed is None or name in check.passed_checks:
+            outcome = "passed"
+        elif name == failed:
+            outcome = "failed"
+        else:
+            outcome = "not reached"
+        print(f"check {name}: {outcome}", file=sys.stdout)
+    if check.detail is not None:
+        print(f"detail: {check.detail}", file=sys.stdout)
+    if failed is None or failed == "fusion":
+        print(
+            "fusion: "
+            f"selected={check.selected_observations} "
+            f"ready={check.ready_observations} "
+            f"ruled_out_by_pose={check.ruled_out_observations} "
+            f"evaluated={check.evaluated_observations} "
+            f"contributing={check.contributing_observations} "
+            f"differing_voxels={check.differing_voxels}",
+            file=sys.stdout,
+        )
+    print("session_read: no", file=sys.stdout)
+    print("volume_read: no", file=sys.stdout)
+    print("statement_modified: no", file=sys.stdout)
+    print("proof_modified: no", file=sys.stdout)
+    print(f"verdict: {check.verdict.value}", file=sys.stdout)
+    if check.verdict is TsdfBlockProofVerdict.VERIFIED:
+        print(
+            "result: the block is the map's, and it is the block the scan "
+            "gives",
+            file=sys.stdout,
+        )
+        return 0
+    if check.verdict is TsdfBlockProofVerdict.REFUTED:
+        print(
+            "result: the block is the map's, and it is not the block the "
+            "scan gives",
+            file=sys.stdout,
+        )
+        return 1
+    print(
+        "result: the proof shows nothing about the map; it failed the "
+        f"check of its {failed}",
+        file=sys.stdout,
+    )
+    return 1
+
+
+def _print_proof_shape(proof) -> None:
+    block = proof.block_index
+    print(
+        f"block: {block[0]},{block[1]},{block[2]} "
+        f"row={proof.block_row} of={proof.block_count}",
+        file=sys.stdout,
+    )
+    print(
+        "proof_holds: "
+        f"frames={proof.frame_count} "
+        f"frames_with_tiles={len(proof.tile_frames)} "
+        f"tiles={proof.tile_count} "
+        f"tile_pixels={proof.tile_pixels} "
+        f"depth_bytes={proof.depth_byte_count} "
+        f"tile_path_hashes={proof.tile_path_hash_count} "
+        f"block_path_hashes={len(proof.block_path)}",
+        file=sys.stdout,
+    )
 
 
 def _positive_integer(value: str) -> int:
