@@ -1,13 +1,14 @@
 # A map that can be checked
 
-**Status: design, with the first four of six steps built.** This page
+**Status: design, with the first five of six steps built.** This page
 says what is to be built, why it should work, what was measured before
 deciding, and what it will not do. Each step in the plan at the end
-becomes real only when it has its own tests and its own page. Four have:
+becomes real only when it has its own tests and its own page. Five have:
 [fusing one block alone](tsdf-lone-block.md),
 [fusing it from the pixels it reads](tsdf-block-evidence.md),
-[committing to the scan and the map](tsdf-commitment.md), and
-[proving one block](tsdf-block-proof.md).
+[committing to the scan and the map](tsdf-commitment.md),
+[proving one block](tsdf-block-proof.md), and
+[certifying a route](tsdf-route-certificate.md).
 
 ## The idea
 
@@ -211,7 +212,18 @@ One step at a time, each pinned to a path that already exists.
    fusion of the altered scan disagrees on. An altered proof is stopped
    by a check the page names for each alteration, and no byte of one can
    be changed.
-5. **A route's certificate**, on the office.
+5. **A route's certificate**, on the office. *Built:*
+   [`tsdf-route-certificate.md`](tsdf-route-certificate.md). A route in
+   whole voxels, every block it touches, the frames' leaves once and each
+   depth tile once. The check works out the route's blocks itself, fuses
+   them all again, and only then asks whether the route is clear: clear,
+   not clear, refuted or invalid. Clearance is pinned to the free-space
+   map tool on 41 routes, the blocks to their single proofs and to whole
+   frames. A map with an obstacle written out of a route says the route
+   is clear and its certificate says refuted. On the office a 3.5 m
+   route checks in 3 to 7 s from a certificate of 109 to 163 MB, a fifth
+   to two fifths of the scan's depth: much less of a saving than one
+   block, because half the scan looks through the middle of a room.
 6. **Audit by sampling, and the measurements**: proof size and time against
    block, route length and voxel size, beside rebuilding the whole map.
 
@@ -229,9 +241,12 @@ One step at a time, each pinned to a path that already exists.
   no longer the RFC's. Undecided. A clear route does not need it, since
   every block the route touches has to be shown; a claim that somewhere
   is unknown would.
-- How much of a route's certificate is shared between its blocks. A long
-  route may need most of the frames that look along it. A block's proof
-  repeats every frame's leaf, which is most of a small proof; a
-  certificate of many blocks should carry the leaves once.
+- ~~How much of a route's certificate is shared between its blocks.~~
+  Measured in step 5. The leaves are carried once and each tile once,
+  and on the office the route still needs half the frames and a third of
+  their tiles. Two fifths of that certificate is tile paths, one a tile.
+  Paths that share their upper hashes would remove most of that, and
+  would also make smaller tiles worth having, since what smaller tiles
+  cost is more paths. Neither is built.
 - Whether the mesh, which is a repeatable function of the volume, should be
   committed block by block as well.

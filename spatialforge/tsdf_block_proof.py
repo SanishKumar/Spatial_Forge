@@ -349,18 +349,7 @@ class TsdfBlockProof:
         pieces.extend(frame.leaf_data() for frame in self.frames)
         pieces.append(self.block_leaf_data())
         pieces.extend(self.block_path)
-        for tiles in self.tile_frames:
-            pieces.append(
-                _TILE_FRAME_HEAD.pack(tiles.sequence, tiles.tile_count)
-            )
-            for (tile_row, tile_column, samples), path in zip(
-                tiles.tiles.tiles, tiles.paths, strict=True
-            ):
-                pieces.append(_TILE_HEAD.pack(tile_row, tile_column))
-                pieces.append(
-                    np.ascontiguousarray(samples, dtype="<u2").tobytes()
-                )
-                pieces.extend(path)
+        pieces.extend(_encoded_tile_frames(self.tile_frames))
         return b"".join(pieces)
 
     @property
@@ -646,60 +635,21 @@ def check_tsdf_block_proof(
         )
 
     # depth roots: each tile is its frame's, at its own place.
-    for tiles in proof.tile_frames:
-        depth_root = proof.frames[tiles.sequence].depth_root
-        if depth_root is None:
-            return invalid(
-                "depth roots",
-                f"observation {tiles.sequence} has no depth, and the proof "
-                "holds tiles of it",
-            )
-        columns = tiles.tiles.tile_columns
-        total = tiles.tiles.tile_rows * columns
-        for (tile_row, tile_column, samples), path in zip(
-            tiles.tiles.tiles, tiles.paths, strict=True
-        ):
-            if merkle_root_from_path(
-                tsdf_depth_tile_leaf_hash(samples),
-                tile_row * columns + tile_column,
-                total,
-                path,
-            ) != depth_root:
-                return invalid(
-                    "depth roots",
-                    f"observation {tiles.sequence}: the tile at row "
-                    f"{tile_row}, column {tile_column} does not lead to "
-                    "the frame's depth root",
-                )
+    wrong = _tiles_not_under_depth_roots(proof.frames, proof.tile_frames)
+    if wrong is not None:
+        return invalid("depth roots", wrong)
 
-    # poses: every pose fusion would read is one it could read. A frame
-    # with depth is fused and needs a rigid pose; one without is only
-    # looked at.
-    for frame in selected:
-        if frame.transform is None:
-            continue
-        if not all(math.isfinite(value) for value in frame.transform) or (
-            frame.depth_root is not None
-            and not _is_rigid_transform(frame.transform)
-        ):
-            return invalid(
-                "poses",
-                f"observation {frame.sequence} is committed with a pose "
-                "that is not a rigid transform; this scan cannot be fused",
-            )
+    # poses: every pose fusion would read is one it could read.
+    wrong = _pose_fusion_would_refuse(selected)
+    if wrong is not None:
+        return invalid("poses", wrong)
 
     # pixels: the proof holds every pixel the block reads, and no tile
     # the block reads no pixel of.
     held = {tiles.sequence: tiles for tiles in proof.tile_frames}
-    taken = {frame.sequence for frame in selected}
-    for tiles in proof.tile_frames:
-        frame = proof.frames[tiles.sequence]
-        if tiles.sequence not in taken or frame.transform is None:
-            return invalid(
-                "pixels",
-                f"observation {tiles.sequence} is not fused, and the proof "
-                "holds tiles of it",
-            )
+    wrong = _tiles_of_a_frame_not_fused(selected, proof.tile_frames)
+    if wrong is not None:
+        return invalid("pixels", wrong)
     asked: dict[int, set[int]] = {}
 
     def note(sequence: int, rows: np.ndarray, columns: np.ndarray) -> None:
@@ -898,13 +848,61 @@ def decode_tsdf_block_proof(encoded: bytes) -> TsdfBlockProof:
         image["width"], image["height"], image["tile_pixels"],
     )
     _validate_tile_grid(width, height, tile_pixels)
+    tile_frames = _decoded_tile_frames(
+        reader, header["tile_frames"], width, height, tile_pixels
+    )
+    reader.finish()
+
+    proof = TsdfBlockProof(
+        statement_sha256=header["statement_sha256"],
+        width=width,
+        height=height,
+        tile_pixels=tile_pixels,
+        frames=frames,
+        block_count=blocks,
+        block_row=row,
+        block_index=block_index,
+        tsdf_sums=sums,
+        weights=weights,
+        block_path=block_path,
+        tile_frames=tile_frames,
+    )
+    if proof.encoded() != encoded:
+        raise TsdfError("TSDF block proof is not in the form it is written")
+    return proof
+
+
+def _encoded_tile_frames(
+    tile_frames: Sequence[TsdfProofFrameTiles],
+) -> list[bytes]:
+    """Frames' tiles as a proof's bytes hold them, in pieces."""
+
+    pieces = []
+    for tiles in tile_frames:
+        pieces.append(_TILE_FRAME_HEAD.pack(tiles.sequence, tiles.tile_count))
+        for (tile_row, tile_column, samples), path in zip(
+            tiles.tiles.tiles, tiles.paths, strict=True
+        ):
+            pieces.append(_TILE_HEAD.pack(tile_row, tile_column))
+            pieces.append(np.ascontiguousarray(samples, dtype="<u2").tobytes())
+            pieces.extend(path)
+    return pieces
+
+
+def _decoded_tile_frames(
+    reader: "_Reader",
+    count: int,
+    width: int,
+    height: int,
+    tile_pixels: int,
+) -> tuple[TsdfProofFrameTiles, ...]:
+    """``count`` frames' tiles, read from where the reader stands."""
+
     tile_rows = -(-height // tile_pixels)
     tile_columns = -(-width // tile_pixels)
     total = tile_rows * tile_columns
     tile_frames = []
-    for _ in range(
-        reader.count(header["tile_frames"], _TILE_FRAME_HEAD.size)
-    ):
+    for _ in range(reader.count(count, _TILE_FRAME_HEAD.size)):
         sequence, tile_count = _TILE_FRAME_HEAD.unpack(
             reader.take(_TILE_FRAME_HEAD.size, "a frame's tiles")
         )
@@ -936,7 +934,7 @@ def decode_tsdf_block_proof(encoded: bytes) -> TsdfBlockProof:
             )
         if not tiles:
             raise TsdfError(
-                "TSDF block proof names a frame and holds no tile of it"
+                f"{reader.name} names a frame and holds no tile of it"
             )
         tile_frames.append(
             TsdfProofFrameTiles(
@@ -950,40 +948,104 @@ def decode_tsdf_block_proof(encoded: bytes) -> TsdfBlockProof:
                 paths=tuple(paths),
             )
         )
-    reader.finish()
+    return tuple(tile_frames)
 
-    proof = TsdfBlockProof(
-        statement_sha256=header["statement_sha256"],
-        width=width,
-        height=height,
-        tile_pixels=tile_pixels,
-        frames=frames,
-        block_count=blocks,
-        block_row=row,
-        block_index=block_index,
-        tsdf_sums=sums,
-        weights=weights,
-        block_path=block_path,
-        tile_frames=tuple(tile_frames),
-    )
-    if proof.encoded() != encoded:
-        raise TsdfError("TSDF block proof is not in the form it is written")
-    return proof
+
+def _tiles_not_under_depth_roots(
+    frames: Sequence[TsdfFrameCommitment],
+    tile_frames: Sequence[TsdfProofFrameTiles],
+) -> str | None:
+    """What is wrong with the first tile that is not its frame's, if any."""
+
+    for tiles in tile_frames:
+        depth_root = frames[tiles.sequence].depth_root
+        if depth_root is None:
+            return (
+                f"observation {tiles.sequence} has no depth, and the proof "
+                "holds tiles of it"
+            )
+        columns = tiles.tiles.tile_columns
+        total = tiles.tiles.tile_rows * columns
+        for (tile_row, tile_column, samples), path in zip(
+            tiles.tiles.tiles, tiles.paths, strict=True
+        ):
+            if merkle_root_from_path(
+                tsdf_depth_tile_leaf_hash(samples),
+                tile_row * columns + tile_column,
+                total,
+                path,
+            ) != depth_root:
+                return (
+                    f"observation {tiles.sequence}: the tile at row "
+                    f"{tile_row}, column {tile_column} does not lead to "
+                    "the frame's depth root"
+                )
+    return None
+
+
+def _pose_fusion_would_refuse(
+    selected: Sequence[TsdfFrameCommitment],
+) -> str | None:
+    """What is wrong with the first pose fusion could not read, if any.
+
+    A frame with depth is fused and needs a rigid pose; one without is
+    only looked at.
+    """
+
+    for frame in selected:
+        if frame.transform is None:
+            continue
+        if not all(math.isfinite(value) for value in frame.transform) or (
+            frame.depth_root is not None
+            and not _is_rigid_transform(frame.transform)
+        ):
+            return (
+                f"observation {frame.sequence} is committed with a pose "
+                "that is not a rigid transform; this scan cannot be fused"
+            )
+    return None
+
+
+def _tiles_of_a_frame_not_fused(
+    selected: Sequence[TsdfFrameCommitment],
+    tile_frames: Sequence[TsdfProofFrameTiles],
+) -> str | None:
+    """Tiles held of a frame the stride skips, or one with no pose."""
+
+    fused = {
+        frame.sequence for frame in selected if frame.transform is not None
+    }
+    for tiles in tile_frames:
+        if tiles.sequence not in fused:
+            return (
+                f"observation {tiles.sequence} is not fused, and the proof "
+                "holds tiles of it"
+            )
+    return None
 
 
 class _Reader:
-    """A place in a proof's bytes, moved only forwards."""
+    """A place in a proof's bytes, moved only forwards.
 
-    __slots__ = ("_encoded", "_at")
+    ``name`` is what the bytes are meant to be, for its refusals.
+    """
 
-    def __init__(self, encoded: bytes, at: int) -> None:
+    __slots__ = ("_encoded", "_at", "name")
+
+    def __init__(
+        self,
+        encoded: bytes,
+        at: int,
+        name: str = "TSDF block proof",
+    ) -> None:
         self._encoded = encoded
         self._at = at
+        self.name = name
 
     def take(self, length: int, what: str) -> bytes:
         end = self._at + length
         if end > len(self._encoded):
-            raise TsdfError(f"TSDF block proof is truncated inside {what}")
+            raise TsdfError(f"{self.name} is truncated inside {what}")
         taken = self._encoded[self._at:end]
         self._at = end
         return taken
@@ -993,7 +1055,7 @@ class _Reader:
 
         if stated * least_bytes_each > len(self._encoded) - self._at:
             raise TsdfError(
-                "TSDF block proof counts more than its bytes can hold"
+                f"{self.name} counts more than its bytes can hold"
             )
         return stated
 
@@ -1005,7 +1067,7 @@ class _Reader:
     def finish(self) -> None:
         if self._at != len(self._encoded):
             raise TsdfError(
-                "TSDF block proof holds "
+                f"{self.name} holds "
                 f"{len(self._encoded) - self._at} bytes after its end"
             )
 

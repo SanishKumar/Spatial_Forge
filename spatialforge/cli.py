@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -72,6 +73,18 @@ from .tsdf_commitment import (
     check_tsdf_map_statement,
     load_tsdf_map_statement,
     write_tsdf_map_statement,
+)
+from .tsdf_route_certificate import (
+    TSDF_ROUTE_CHECKS,
+    TSDF_ROUTE_MIN_WEIGHT,
+    TsdfRoute,
+    TsdfRouteVerdict,
+    _validate_certificate_output,
+    certify_tsdf_route,
+    check_tsdf_route_certificate,
+    load_tsdf_route_certificate,
+    measure_tsdf_route,
+    write_tsdf_route_certificate,
 )
 from .tsdf_lone_block import (
     TsdfBlockCheckStatus,
@@ -482,6 +495,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_tsdf_block_proof_check(
                 arguments.statement,
                 arguments.proof,
+            )
+        if arguments.reconstruct_command == "tsdf-route-certify":
+            return _run_tsdf_route_certify(
+                arguments.statement,
+                arguments.volume,
+                arguments.session,
+                arguments.output,
+                arguments.up_axis,
+                arguments.band,
+                arguments.radius,
+                arguments.min_weight,
+                arguments.through,
+            )
+        if arguments.reconstruct_command == "tsdf-route-check":
+            return _run_tsdf_route_check(
+                arguments.statement,
+                arguments.certificate,
             )
         if arguments.reconstruct_command == "tsdf-auto":
             return _run_auto_tsdf(
@@ -1914,6 +1944,110 @@ def _build_parser() -> argparse.ArgumentParser:
         "proof",
         type=Path,
         help="Existing .sftproof made under it. Never modified.",
+    )
+
+    route_certify = reconstruct_commands.add_parser(
+        "tsdf-route-certify",
+        help="Write the certificate of a route through a .sftvol.",
+        description=(
+            "Strictly load a statement, the .sftvol and the scan it is a "
+            "statement of, and write what a check of a route needs: the "
+            "route, every frame's leaf, every block the route touches "
+            "with its path to the map's root, and the depth tiles those "
+            "blocks read with their paths. A route is stated in whole "
+            "voxels: columns on the two axes that are not up, a radius, "
+            "and a band of heights. The certificate is written whether "
+            "the route is clear or not; the check says which."
+        ),
+    )
+    route_certify.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    route_certify.add_argument(
+        "volume",
+        type=Path,
+        help="The .sftvol the statement is of. Never modified.",
+    )
+    route_certify.add_argument(
+        "session",
+        type=Path,
+        help="The .vgsession the statement is of. Never modified.",
+    )
+    route_certify.add_argument(
+        "output",
+        type=Path,
+        help="New .sftroute path to write. Must not already exist.",
+    )
+    route_certify.add_argument(
+        "--up-axis",
+        choices=("x", "y", "z"),
+        default="z",
+        help="Which of the volume's axes is up. Defaults to z.",
+    )
+    route_certify.add_argument(
+        "--band",
+        type=int,
+        nargs=2,
+        required=True,
+        metavar=("FIRST", "LAST"),
+        help=(
+            "The first and last voxel index on the up axis that the "
+            "route must be clear at."
+        ),
+    )
+    route_certify.add_argument(
+        "--radius",
+        type=int,
+        default=0,
+        help="How many voxels to either side of its line the route is.",
+    )
+    route_certify.add_argument(
+        "--min-weight",
+        type=_positive_integer,
+        default=TSDF_ROUTE_MIN_WEIGHT,
+        help=(
+            "Observations a voxel needs to count as observed. Defaults "
+            f"to {TSDF_ROUTE_MIN_WEIGHT}."
+        ),
+    )
+    route_certify.add_argument(
+        "--through",
+        type=int,
+        nargs=2,
+        action="append",
+        required=True,
+        metavar=("A", "B"),
+        help=(
+            "A column the route passes through: voxel indices on the two "
+            "axes that are not up, in x, y, z order. Repeat it; columns "
+            "are joined by straight runs in the order given."
+        ),
+    )
+
+    route_check = reconstruct_commands.add_parser(
+        "tsdf-route-check",
+        help="Check a route's .sftroute against a .sftcommit.",
+        description=(
+            "Strictly load a statement and a certificate and nothing "
+            "else: no session and no volume. Work out the blocks the "
+            "route touches, tie each and the depth they read to the "
+            "statement's roots, fuse every block again, and only then "
+            "ask whether the route is clear. Exits 0 if it is, and 1 if "
+            "it is not, if a block is refuted, or if the certificate is "
+            "invalid."
+        ),
+    )
+    route_check.add_argument(
+        "statement",
+        type=Path,
+        help="Existing .sftcommit statement. Never modified.",
+    )
+    route_check.add_argument(
+        "certificate",
+        type=Path,
+        help="Existing .sftroute made under it. Never modified.",
     )
 
     auto_tsdf = reconstruct_commands.add_parser(
@@ -7403,6 +7537,194 @@ def _print_proof_shape(proof) -> None:
         f"depth_bytes={proof.depth_byte_count} "
         f"tile_path_hashes={proof.tile_path_hash_count} "
         f"block_path_hashes={len(proof.block_path)}",
+        file=sys.stdout,
+    )
+
+
+def _run_tsdf_route_certify(
+    statement_path: Path,
+    volume_path: Path,
+    session_path: Path,
+    output: Path,
+    up_axis: str,
+    band: Sequence[int],
+    radius: int,
+    min_weight: int,
+    through: Sequence[Sequence[int]],
+) -> int:
+    try:
+        _validate_certificate_output(output)
+        route = TsdfRoute(
+            up_axis=("x", "y", "z").index(up_axis),
+            band_first=int(band[0]),
+            band_last=int(band[1]),
+            radius=int(radius),
+            min_weight=int(min_weight),
+            waypoints=tuple(
+                (int(column[0]), int(column[1])) for column in through
+            ),
+        )
+        statement = load_tsdf_map_statement(statement_path)
+        volume = load_tsdf_block_volume(volume_path)
+        session = load_scan_session(session_path)
+        certificate = certify_tsdf_route(statement, volume, session, route)
+        said, _ = measure_tsdf_route(volume, route)
+        report = write_tsdf_route_certificate(certificate, output)
+    except SessionValidationError as error:
+        print(f"TSDF ROUTE CERTIFY FAILED {statement_path}", file=sys.stderr)
+        for problem in error.errors:
+            print(f"- {problem}", file=sys.stderr)
+        return 2
+    except (TsdfError, SessionReplayError) as error:
+        print(f"TSDF ROUTE CERTIFY FAILED {statement_path}", file=sys.stderr)
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF ROUTE CERTIFY {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(f"statement_sha256: {statement.digest_sha256}", file=sys.stdout)
+    print("volume: verified", file=sys.stdout)
+    print("statement_recomputed: matched", file=sys.stdout)
+    _print_route(certificate, statement.voxel_size_m)
+    print(
+        "map_says: "
+        f"{'clear' if said.is_clear else 'not clear'} "
+        f"unobserved_voxels={said.unobserved_voxels} "
+        f"occupied_voxels={said.occupied_voxels}",
+        file=sys.stdout,
+    )
+    print(f"certificate_bytes: {report.output_bytes}", file=sys.stdout)
+    print(
+        f"certificate_sha256: {report.output_digest_sha256}",
+        file=sys.stdout,
+    )
+    print(f"output: {report.output}", file=sys.stdout)
+    print("statement_modified: no", file=sys.stdout)
+    print("volume_modified: no", file=sys.stdout)
+    print("session_modified: no", file=sys.stdout)
+    return 0
+
+
+def _run_tsdf_route_check(
+    statement_path: Path,
+    certificate_path: Path,
+) -> int:
+    try:
+        statement = load_tsdf_map_statement(statement_path)
+        certificate = load_tsdf_route_certificate(certificate_path)
+        check = check_tsdf_route_certificate(statement, certificate)
+    except TsdfError as error:
+        print(
+            f"TSDF ROUTE CHECK FAILED {certificate_path}",
+            file=sys.stderr,
+        )
+        print(f"- {error}", file=sys.stderr)
+        return 2
+
+    print(f"TSDF ROUTE CHECK {statement.session_id}", file=sys.stdout)
+    print("statement: valid", file=sys.stdout)
+    print(f"statement_sha256: {statement.digest_sha256}", file=sys.stdout)
+    print("certificate: well formed", file=sys.stdout)
+    print(
+        f"certificate_sha256: {certificate.digest_sha256}",
+        file=sys.stdout,
+    )
+    _print_route(certificate, statement.voxel_size_m)
+    failed = check.failed_check
+    for name in TSDF_ROUTE_CHECKS:
+        if failed is None or name in check.passed_checks:
+            outcome = "passed"
+        elif name == failed:
+            outcome = "failed"
+        else:
+            outcome = "not reached"
+        print(f"check {name}: {outcome}", file=sys.stdout)
+    if check.detail is not None:
+        print(f"detail: {check.detail}", file=sys.stdout)
+    if failed is None or failed in ("fusion", "clearance"):
+        print(
+            "fusion: "
+            f"blocks={check.block_count} "
+            f"refuted={len(check.refuted_blocks)} "
+            f"selected={check.selected_observations} "
+            f"ready={check.ready_observations}",
+            file=sys.stdout,
+        )
+    if check.clearance is not None:
+        print(
+            "clearance: "
+            f"columns={check.clearance.column_count} "
+            f"voxels={check.clearance.voxel_count} "
+            f"unobserved={check.clearance.unobserved_voxels} "
+            f"occupied={check.clearance.occupied_voxels}",
+            file=sys.stdout,
+        )
+    print("session_read: no", file=sys.stdout)
+    print("volume_read: no", file=sys.stdout)
+    print("statement_modified: no", file=sys.stdout)
+    print("certificate_modified: no", file=sys.stdout)
+    print(f"verdict: {check.verdict.value}", file=sys.stdout)
+    if check.verdict is TsdfRouteVerdict.CLEAR:
+        print(
+            "result: every block the route touches is what the scan "
+            "gives, and the route is clear",
+            file=sys.stdout,
+        )
+        return 0
+    if check.verdict is TsdfRouteVerdict.NOT_CLEAR:
+        print(
+            "result: every block the route touches is what the scan "
+            "gives, and the route is not clear",
+            file=sys.stdout,
+        )
+    elif check.verdict is TsdfRouteVerdict.REFUTED:
+        print(
+            "result: where the route runs, the map is not what the scan "
+            "gives",
+            file=sys.stdout,
+        )
+    else:
+        print(
+            "result: the certificate shows nothing about the map or the "
+            f"route; it failed the check of its {failed}",
+            file=sys.stdout,
+        )
+    return 1
+
+
+def _print_route(certificate, voxel_size_m: float) -> None:
+    route = certificate.route
+    length = sum(
+        math.hypot(to_a - a, to_b - b)
+        for (a, b), (to_a, to_b) in zip(route.waypoints, route.waypoints[1:])
+    )
+    print(
+        "route: "
+        f"up={('x', 'y', 'z')[route.up_axis]} "
+        f"band={route.band_first}..{route.band_last} "
+        f"radius={route.radius} "
+        f"min_weight={route.min_weight} "
+        f"waypoints={len(route.waypoints)}",
+        file=sys.stdout,
+    )
+    print(
+        "route_metres: "
+        f"length={length * voxel_size_m:.3f} "
+        f"width={(2 * route.radius + 1) * voxel_size_m:.3f} "
+        f"from={route.band_first * voxel_size_m:.3f} "
+        f"to={(route.band_last + 1) * voxel_size_m:.3f}",
+        file=sys.stdout,
+    )
+    print(
+        "certificate_holds: "
+        f"blocks={certificate.held_block_count} "
+        f"frames={certificate.frame_count} "
+        f"frames_with_tiles={len(certificate.tile_frames)} "
+        f"tiles={certificate.tile_count} "
+        f"tile_pixels={certificate.tile_pixels} "
+        f"depth_bytes={certificate.depth_byte_count} "
+        f"tile_path_hashes={certificate.tile_path_hash_count} "
+        f"block_path_hashes={certificate.block_path_hash_count}",
         file=sys.stdout,
     )
 

@@ -35,6 +35,7 @@ import numpy as np
 
 from .errors import PointCloudError, SessionReplayError, TsdfError
 from .model import ScanSession
+from .point_cloud import _validate_reconstruction_contract
 from .replay import replay_session
 from .tsdf_block_contributions import _evaluate_ready_voxels_reading
 from .tsdf_block_storage import (
@@ -57,11 +58,13 @@ from .tsdf_replay_depth_context import (
     _classify_observation,
     _is_rigid_transform,
     _prepared_transform,
+    _validate_context_camera,
 )
 from .tsdf_stream_fusion import (
     BLOCK_BEHIND_CAMERA,
     BLOCK_EVALUATE,
     BLOCK_OUTSIDE_IMAGE,
+    STREAM_FUSION_CHUNK_BLOCKS,
     _chunk_voxel_centres_world_m,
     _classify_blocks,
     _decode_raw_depth,
@@ -643,6 +646,148 @@ def _missing_pixel(
     )
 
 
+class _FusedBlocksFromFrames(NamedTuple):
+    """Many blocks' accumulators, and how each block's frames went."""
+
+    sums: np.ndarray
+    weights: np.ndarray
+    ready_observations: int
+    ruled_out: np.ndarray
+    evaluated: np.ndarray
+    contributing: np.ndarray
+
+
+def _fuse_blocks_from_frames(
+    camera: TsdfPinholeCamera,
+    depth_scale_m: float,
+    voxel_size_m: float,
+    truncation_m: float,
+    block_indices: Sequence[_BlockIndex],
+    frames: Sequence[TsdfBlockFrameEvidence],
+    *,
+    asked: Callable[[int, np.ndarray, np.ndarray], None] | None = None,
+) -> _FusedBlocksFromFrames:
+    """Fuse several blocks from frames whose tiles they share.
+
+    Each frame holds one set of tiles for all the blocks, and is taken
+    once: the blocks it cannot reach are ruled out together and the rest
+    are evaluated a run at a time, as fusion of a volume does. A block
+    comes out as it does from ``_fuse_block_from_frames`` alone, which a
+    test requires of every block. A pixel no tile holds is a refusal.
+    """
+
+    blocks = np.asarray(block_indices, dtype=np.int64).reshape((-1, 3))
+    sums = np.zeros((len(blocks), TSDF_BLOCK_VOXELS), dtype=TSDF_SUM_DTYPE)
+    weights = np.zeros(
+        (len(blocks), TSDF_BLOCK_VOXELS), dtype=TSDF_WEIGHT_DTYPE
+    )
+    ruled_out = np.zeros(len(blocks), dtype=np.int64)
+    evaluated = np.zeros(len(blocks), dtype=np.int64)
+    contributing = np.zeros(len(blocks), dtype=np.int64)
+    ready = 0
+
+    for frame in frames:
+        if not frame.is_ready:
+            continue
+        if not _is_rigid_transform(frame.transform):
+            raise TsdfError(
+                "TSDF block fusion from evidence requires a rigid "
+                f"T_world_camera for observation {frame.sequence}"
+            )
+        ready += 1
+        verdicts = _classify_blocks(
+            camera, frame.transform, blocks, voxel_size_m
+        )
+        visible = np.flatnonzero(verdicts == BLOCK_EVALUATE)
+        ruled_out += verdicts != BLOCK_EVALUATE
+        if not len(visible):
+            continue
+        evaluated[visible] += 1
+        read = _canvas_reader(frame, depth_scale_m, asked)
+        for first in range(0, len(visible), STREAM_FUSION_CHUNK_BLOCKS):
+            rows = visible[first:first + STREAM_FUSION_CHUNK_BLOCKS]
+            _, sum_deltas, weight_deltas = _evaluate_ready_voxels_reading(
+                camera,
+                frame.transform,
+                read,
+                truncation_m,
+                _chunk_voxel_centres_world_m(blocks[rows], voxel_size_m),
+            )
+            given = weight_deltas.reshape((len(rows), TSDF_BLOCK_VOXELS))
+            sums[rows] += sum_deltas.reshape((len(rows), TSDF_BLOCK_VOXELS))
+            weights[rows] += given
+            contributing[rows] += given.any(axis=1)
+
+    return _FusedBlocksFromFrames(
+        sums=sums,
+        weights=weights,
+        ready_observations=ready,
+        ruled_out=ruled_out,
+        evaluated=evaluated,
+        contributing=contributing,
+    )
+
+
+def _canvas_reader(
+    frame: TsdfBlockFrameEvidence,
+    depth_scale_m: float,
+    asked: Callable[[int, np.ndarray, np.ndarray], None] | None = None,
+):
+    """The gather the evaluator asks for, over one frame's tiles laid out.
+
+    ``_tile_reader`` looks each tile up, which suits the few tiles one
+    block reads. Many blocks read many tiles of a frame many times, so
+    here the tiles are laid on an image the frame's size, once, with a
+    note of which tiles are there. A pixel of a tile that is not there
+    is refused exactly as ``_tile_reader`` refuses it.
+    """
+
+    tiles = frame.tiles
+    laid: list[np.ndarray] = []
+
+    def read(row: np.ndarray, column: np.ndarray, alive: np.ndarray):
+        wanted = np.flatnonzero(alive)
+        rows = row[wanted]
+        columns = column[wanted]
+        if asked is not None:
+            asked(frame.sequence, rows, columns)
+        depth_m = np.zeros(len(row), dtype=np.float64)
+        if not len(wanted):
+            return depth_m
+        if tiles is None:
+            raise TsdfError(_missing_pixel(frame.sequence, rows, columns, 0))
+        side = tiles.tile_pixels
+        if not laid:
+            canvas = np.zeros(
+                (tiles.height, tiles.width), dtype=TSDF_DEPTH_SAMPLE_DTYPE
+            )
+            there = np.zeros(
+                (tiles.tile_rows, tiles.tile_columns), dtype=np.bool_
+            )
+            for tile_row, tile_column, samples in tiles.tiles:
+                canvas[
+                    tile_row * side:tile_row * side + samples.shape[0],
+                    tile_column * side:tile_column * side + samples.shape[1],
+                ] = samples
+                there[tile_row, tile_column] = True
+            laid.extend((canvas, there))
+        canvas, there = laid
+        held = there[rows // side, columns // side]
+        if not held.all():
+            raise TsdfError(
+                _missing_pixel(
+                    frame.sequence,
+                    rows,
+                    columns,
+                    int(np.flatnonzero(~held)[0]),
+                )
+            )
+        depth_m[wanted] = _metric_depth(canvas[rows, columns], depth_scale_m)
+        return depth_m
+
+    return read
+
+
 def _tile_reader(
     frame: TsdfBlockFrameEvidence,
     depth_scale_m: float,
@@ -819,6 +964,118 @@ def _gather_blocks_evidence(
         )
         for row, block in enumerate(setup.requested)
     )
+
+
+def _gather_pooled_frames(
+    session: ScanSession,
+    block_indices: Sequence[_BlockIndex],
+    *,
+    voxel_size_m: float,
+    truncation_m: float,
+    frame_stride: int,
+    tile_pixels: int,
+) -> tuple[TsdfBlockFrameEvidence, ...]:
+    """Every selected frame, with the tiles any of the blocks reads.
+
+    The evidence of many blocks at once, with each tile held once
+    however many blocks read it. A frame is opened if its pose lets it
+    reach some block, and is read once for all of them.
+    """
+
+    if not isinstance(session, ScanSession):
+        raise TsdfError("gathering tiles requires a loaded ScanSession")
+    try:
+        calibration, depth_scale_m = _validate_reconstruction_contract(
+            session
+        )
+    except PointCloudError as error:
+        raise TsdfError(str(error)) from error
+    _validate_context_camera(calibration)
+    camera = TsdfPinholeCamera(
+        width=calibration.width,
+        height=calibration.height,
+        fx=float(calibration.fx),
+        fy=float(calibration.fy),
+        cx=float(calibration.cx),
+        cy=float(calibration.cy),
+    )
+    _validate_tile_grid(camera.width, camera.height, tile_pixels)
+    blocks = np.asarray(block_indices, dtype=np.int64).reshape((-1, 3))
+    frames = []
+    try:
+        starting = replay_session(session)
+        for observation in starting.observations[::frame_stride]:
+            status = _classify_observation(observation)
+            transform = _prepared_transform(observation, status)
+            tiles = None
+            if status is TsdfReplayDepthStatus.READY:
+                if transform is None or not _is_rigid_transform(transform):
+                    raise TsdfError(
+                        "TSDF block evidence requires a rigid "
+                        "T_world_camera for observation "
+                        f"{observation.sequence}"
+                    )
+                visible = np.flatnonzero(
+                    _classify_blocks(camera, transform, blocks, voxel_size_m)
+                    == BLOCK_EVALUATE
+                )
+                if len(visible):
+                    raw = _decode_raw_depth(
+                        session, observation, camera.width, camera.height
+                    )
+                    if int(raw.min()) < 0 or int(raw.max()) > np.iinfo(
+                        TSDF_DEPTH_SAMPLE_DTYPE
+                    ).max:
+                        raise TsdfError(
+                            f"observation {observation.sequence} holds a "
+                            "depth sample that does not fit 16 bits"
+                        )
+                    depth_m = _metric_depth(raw, depth_scale_m)
+                    asked: list[tuple[np.ndarray, np.ndarray]] = []
+
+                    def note(row, column, alive, depth_m=depth_m):
+                        asked.append((row[alive], column[alive]))
+                        return depth_m[row, column]
+
+                    for first in range(
+                        0, len(visible), STREAM_FUSION_CHUNK_BLOCKS
+                    ):
+                        rows = visible[
+                            first:first + STREAM_FUSION_CHUNK_BLOCKS
+                        ]
+                        _evaluate_ready_voxels_reading(
+                            camera,
+                            transform,
+                            note,
+                            truncation_m,
+                            _chunk_voxel_centres_world_m(
+                                blocks[rows], voxel_size_m
+                            ),
+                        )
+                    tiles = _cut_tiles(
+                        raw,
+                        np.concatenate([rows for rows, _ in asked]),
+                        np.concatenate([columns for _, columns in asked]),
+                        tile_pixels,
+                    )
+            frames.append(
+                TsdfBlockFrameEvidence(
+                    sequence=observation.sequence,
+                    transform=transform,
+                    has_depth=getattr(observation, "depth", None) is not None,
+                    tiles=tiles,
+                )
+            )
+        if replay_session(session).digest_sha256 != starting.digest_sha256:
+            raise TsdfError(
+                "session inputs changed while TSDF block evidence was "
+                "gathered; rerun the command"
+            )
+    except (TsdfError, SessionReplayError):
+        raise
+    except PointCloudError as error:
+        raise TsdfError(str(error)) from error
+    return tuple(frames)
 
 
 def _pixels_read(
