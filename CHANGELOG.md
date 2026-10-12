@@ -3,6 +3,103 @@
 What changed between tagged versions. Numbers quoted here are the ones in
 `results/`; each manifest there records the commit it was produced from.
 
+## 0.8.0 (2026-10-12)
+
+A map that can be checked without rebuilding it.
+
+The engine gives the same bytes on every platform, which until now was a
+standard of care. This version uses it. A scan and the map fused from it
+are each reduced to one hash, and one block of the map can then be checked
+by someone who holds only those hashes: they are sent the few pieces of
+the scan that block reads, fuse it again, and compare. A route through
+the map and an audit of the whole of it are built on that. The design, in
+six steps, is [`docs/verifiable-maps.md`](docs/verifiable-maps.md).
+
+The figures below are not in `results/`. They were measured once with
+scratch scripts, as the pages that carry them say.
+
+Measured
+
+- **One block from a thousandth of the scan.** On the real office, 69,415
+  blocks fused from 676 frames, a block's proof is 382 kB at the median
+  where the depth its volume was fused from is 415 MB, and it is checked
+  in a tenth of a second where fusing the volume took 460 s. Of 600
+  blocks drawn from three published volumes, 600 are verified.
+- **What was altered is what is refuted.** On a generated room of 351
+  blocks, every block was proved and checked after each of seven
+  alterations: one bit of the map, a wall moved one voxel, an obstacle
+  removed, one depth sample, one frame dropped, two frames exchanged, one
+  pose moved a millimetre. Each time the blocks refuted are exactly the
+  blocks that no longer follow from the scan, by the same count of
+  voxels, and every other block is verified.
+- **A proof cannot be bent.** A proof altered under an honest statement
+  is stopped by a named check and reads as neither a verified block nor
+  a refuted one. One bit changed in each of a proof's 7,009 bytes never
+  does either.
+- **A route.** A line 3.54 m long through the middle of the office,
+  0.80 m to 1.40 m above its floor, is certified clear and checked in 1
+  to 6 s. A map with an obstacle written out of a route says the route is
+  clear, the free-space map drawn from it shows it free, and the route's
+  certificate says refuted, in exactly the blocks that were altered.
+- **An audit.** 459 blocks drawn by the auditor's seed are checked in 3
+  to 6 s and would catch a map one part in a hundred wrong 99 times in
+  100. A map with one block altered passes most audits, and the page says
+  so.
+- **Many blocks are not small.** A route through open space and an audit
+  by lot are read by most of a scan's frames. Their files are 57 to 174
+  MB of raw depth tiles, a seventh to seven tenths of the samples the
+  volume was fused from and about the size of those frames' own PNG
+  files. They save the time of fusing and the need to hold the volume,
+  not bytes. zlib takes one from 84 MB to 12; nothing here compresses a
+  proof.
+- **Sixteen-pixel tiles.** With a path for every tile a block's depth and
+  paths came to 302 kB at 8 pixels, 188 kB at 16 and 267 kB at 32. With
+  one proof shared between a frame's tiles, 8 pixels is 3 to 10% smaller
+  than 16 and takes half as long again to check.
+
+Added
+
+- `reconstruct tsdf-block-check`: fuse blocks of a volume alone, from
+  the frames whose pose lets them reach each, and compare with the
+  volume. With `--tiles`, from the depth tiles each block reads and
+  nothing else of the scan's depth.
+- `reconstruct tsdf-map-commit` and `tsdf-map-commit-check`: a statement
+  of about 800 bytes naming an RFC 6962 Merkle root for the scan, one for
+  the map, and everything else a block's bytes depend on. Written as
+  `.sftcommit`.
+- `reconstruct tsdf-block-prove` and `tsdf-block-proof-check`: one
+  block's proof, `.sftproof`, and a check that reads the statement and
+  the proof and no session or volume. It says `verified`, `refuted` or
+  `invalid`.
+- `reconstruct tsdf-route-certify` and `tsdf-route-check`: a route in
+  whole voxels with every block it touches, `.sftroute`. The check works
+  out the route's blocks itself, fuses them again, and only then asks
+  whether the route is clear: `clear`, `not clear`, `refuted` or
+  `invalid`.
+- `reconstruct tsdf-map-audit` and `tsdf-map-audit-check`: blocks drawn
+  by lot from the auditor's seed, `.sftaudit`. `passed`, `refuted` or
+  `invalid`, with how few wrong blocks a passed audit would almost surely
+  have found.
+- `spatialforge/merkle.py`: RFC 6962 trees, paths, and a proof shared
+  between several leaves, held to the Certificate Transparency test
+  vectors and to the RFC's definition written out a second time.
+- Eight pages: the design, one for each of its six steps, and
+  [`docs/verifiable-map-costs.md`](docs/verifiable-map-costs.md).
+
+Changed
+
+- The voxel evaluator reads depth through one reader, so that a whole
+  frame and a few tiles of it are the same arithmetic. Every digest
+  pinned before this version is unchanged.
+
+Not done, and said on the pages
+
+- Showing that a block is absent from a map.
+- Binding a scan to the world. Everything here binds a map to a scan.
+- Compressing proofs.
+- A checker that is a separate small program. The check is this package,
+  given only a statement and a proof.
+
 ## 0.7.0 (2026-10-10)
 
 A second trajectory, a whole real room, and what each of them needed.
