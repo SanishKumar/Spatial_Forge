@@ -19,6 +19,10 @@ reads nothing else. It works out which blocks the route touches, fuses
 every one of them again from the depth the certificate carries, and only
 then asks whether the route is clear. It exits 0 if it is.
 
+`--packed` on the first writes the same certificate inside a zlib stream,
+about a seventh the size on a real route, and the second reads either:
+[packing a proof](tsdf-proof-pack.md).
+
 This is the fifth step of [a map that can be checked](verifiable-maps.md).
 
 ## What a route is
@@ -190,7 +194,7 @@ it is 207,600 voxels in 732 blocks. Its certificate says `clear`.
 | 1 voxel wide | 204 | 304 | 124,577 | 67 MB | 1.9 s |
 | 9 voxels wide | 420 | 330 | 154,532 | 84 MB | 3.2 s |
 | 21 voxels wide | 732 | 352 | 183,065 | 101 MB | 6.0 s |
-| 21 wide, 2 voxels high | 122 | 302 | 105,334 | 57 MB | 1.3 s |
+| 21 wide, 2 voxels high | 122 | 302 | 105,334 | 56 MB | 1.3 s |
 
 Making each took 24 to 30 s.
 
@@ -223,8 +227,9 @@ own path and those hashes were 62.5 MB.
 The tiles are raw samples. The scan's own depth images are PNG files and
 hold the same samples in about a fifth of the bytes, so beside the
 *files* of the frames this volume was fused from, about 90 MB, these
-certificates save little or nothing as they are written. Put through
-zlib, which nothing in the package does, the 84 MB certificate is 12 MB.
+certificates save little or nothing as they are written. Written with
+`--packed` the four are 9 to 15 MB, which is
+[its own page](tsdf-proof-pack.md).
 [The costs page](verifiable-map-costs.md) has the rest.
 
 (Measured once, on one laptop, with scratch scripts. The line was found by

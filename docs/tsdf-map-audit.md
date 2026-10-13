@@ -18,6 +18,9 @@ run by the auditor, with the [statement](tsdf-commitment.md), the answer,
 and their own seed and count. It reads no session and no volume, and exits
 0 if every block drawn is what the scan gives.
 
+`--packed` on the first writes the same answer inside a zlib stream, and
+the second reads either: [packing a proof](tsdf-proof-pack.md).
+
 This is the sixth step of [a map that can be checked](verifiable-maps.md).
 
 ## The draw

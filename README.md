@@ -674,8 +674,25 @@ requires the answer to hold exactly those, and fuses each again:
 map with one part in a hundred wrong would have been caught 99 times in
 100, and it says so. It does not find one altered block, which is what a
 route's certificate is for:
-[`docs/tsdf-map-audit.md`](docs/tsdf-map-audit.md). What all of it costs
-beside rebuilding a map:
+[`docs/tsdf-map-audit.md`](docs/tsdf-map-audit.md).
+
+All three files hold depth as raw samples, and a certificate or an
+audit is nearly all depth. `--packed` on any of the three writing
+commands puts the same bytes inside a zlib stream:
+
+```bash
+python -m spatialforge reconstruct tsdf-map-audit \
+  datasets/fr1room.sftcommit datasets/fr1room.sftvol datasets/fr1room.vgsession \
+  answer.sftaudit --seed 7f3a-2026-10-12 --blocks 459 --packed
+```
+
+The checks read either kind of file and say the same of both. A packed
+file need not be the same bytes on every machine, so a proof is still
+named by the SHA-256 of what it unpacks to. On the real office a 3.5 m
+route's certificate goes from 84 MB to 12 and the audit from 110 MB to
+19, a seventh and a fifth of the depth files of the frames the volume
+was fused from: [`docs/tsdf-proof-pack.md`](docs/tsdf-proof-pack.md).
+What all of it costs beside rebuilding a map:
 [`docs/verifiable-map-costs.md`](docs/verifiable-map-costs.md).
 
 ## What it does not do
@@ -760,11 +777,12 @@ spatialforge/     library and CLI
   tsdf_route_certificate.py  a route through the map, certified clear
   tsdf_map_audit.py       a map audited by blocks drawn by lot
   tsdf_held_blocks.py     what a certificate and an audit share
+  tsdf_proof_pack.py      a proof packed for carrying, in a zlib stream
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
 tools/            reproducible scoring and rendering scripts
-tests/            66 test modules
+tests/            67 test modules
 results/          generated result manifests, one per published run
 docs/             format specs, algorithm notes, validation reports
 ```

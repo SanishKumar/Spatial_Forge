@@ -500,6 +500,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.session,
                 arguments.output,
                 arguments.block,
+                arguments.packed,
             )
         if arguments.reconstruct_command == "tsdf-block-proof-check":
             return _run_tsdf_block_proof_check(
@@ -517,6 +518,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.radius,
                 arguments.min_weight,
                 arguments.through,
+                arguments.packed,
             )
         if arguments.reconstruct_command == "tsdf-route-check":
             return _run_tsdf_route_check(
@@ -531,6 +533,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 arguments.output,
                 arguments.seed,
                 arguments.blocks,
+                arguments.packed,
             )
         if arguments.reconstruct_command == "tsdf-map-audit-check":
             return _run_tsdf_map_audit_check(
@@ -1949,6 +1952,14 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar=("BX", "BY", "BZ"),
         help="The signed block XYZ of the volume to prove.",
     )
+    block_prove.add_argument(
+        "--packed",
+        action="store_true",
+        help=(
+            "Write the proof packed: the same bytes inside a zlib stream. "
+            "It is checked as the same proof."
+        ),
+    )
 
     block_proof_check = reconstruct_commands.add_parser(
         "tsdf-block-proof-check",
@@ -2051,6 +2062,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "are joined by straight runs in the order given."
         ),
     )
+    route_certify.add_argument(
+        "--packed",
+        action="store_true",
+        help=(
+            "Write the certificate packed: the same bytes inside a zlib "
+            "stream. It is checked as the same certificate."
+        ),
+    )
 
     route_check = reconstruct_commands.add_parser(
         "tsdf-route-check",
@@ -2120,6 +2139,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_positive_integer,
         required=True,
         help="How many different blocks to draw.",
+    )
+    map_audit.add_argument(
+        "--packed",
+        action="store_true",
+        help=(
+            "Write the audit packed: the same bytes inside a zlib stream. "
+            "It is checked as the same audit."
+        ),
     )
 
     map_audit_check = reconstruct_commands.add_parser(
@@ -7518,6 +7545,7 @@ def _run_tsdf_block_prove(
     session_path: Path,
     output: Path,
     block: Sequence[int],
+    packed: bool,
 ) -> int:
     try:
         _validate_proof_output(output)
@@ -7530,7 +7558,7 @@ def _run_tsdf_block_prove(
             session,
             (int(block[0]), int(block[1]), int(block[2])),
         )
-        report = write_tsdf_block_proof(proof, output)
+        report = write_tsdf_block_proof(proof, output, packed=packed)
     except SessionValidationError as error:
         print(f"TSDF BLOCK PROVE FAILED {statement_path}", file=sys.stderr)
         for problem in error.errors:
@@ -7547,8 +7575,11 @@ def _run_tsdf_block_prove(
     print("volume: verified", file=sys.stdout)
     print("statement_recomputed: matched", file=sys.stdout)
     _print_proof_shape(proof)
-    print(f"proof_bytes: {report.output_bytes}", file=sys.stdout)
-    print(f"proof_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    print(f"proof_bytes: {report.unpacked_bytes}", file=sys.stdout)
+    print(
+        f"proof_sha256: {report.unpacked_digest_sha256}", file=sys.stdout
+    )
+    _print_packed(report)
     print(f"output: {report.output}", file=sys.stdout)
     print("statement_modified: no", file=sys.stdout)
     print("volume_modified: no", file=sys.stdout)
@@ -7627,6 +7658,11 @@ def _run_tsdf_block_proof_check(
     return 1
 
 
+def _print_packed(report) -> None:
+    if report.packed:
+        print(f"packed_bytes: {report.output_bytes}", file=sys.stdout)
+
+
 def _print_proof_shape(proof) -> None:
     block = proof.block_index
     print(
@@ -7657,6 +7693,7 @@ def _run_tsdf_route_certify(
     radius: int,
     min_weight: int,
     through: Sequence[Sequence[int]],
+    packed: bool,
 ) -> int:
     try:
         _validate_certificate_output(output)
@@ -7675,7 +7712,9 @@ def _run_tsdf_route_certify(
         session = load_scan_session(session_path)
         certificate = certify_tsdf_route(statement, volume, session, route)
         said, _ = measure_tsdf_route(volume, route)
-        report = write_tsdf_route_certificate(certificate, output)
+        report = write_tsdf_route_certificate(
+            certificate, output, packed=packed
+        )
     except SessionValidationError as error:
         print(f"TSDF ROUTE CERTIFY FAILED {statement_path}", file=sys.stderr)
         for problem in error.errors:
@@ -7699,11 +7738,12 @@ def _run_tsdf_route_certify(
         f"occupied_voxels={said.occupied_voxels}",
         file=sys.stdout,
     )
-    print(f"certificate_bytes: {report.output_bytes}", file=sys.stdout)
+    print(f"certificate_bytes: {report.unpacked_bytes}", file=sys.stdout)
     print(
-        f"certificate_sha256: {report.output_digest_sha256}",
+        f"certificate_sha256: {report.unpacked_digest_sha256}",
         file=sys.stdout,
     )
+    _print_packed(report)
     print(f"output: {report.output}", file=sys.stdout)
     print("statement_modified: no", file=sys.stdout)
     print("volume_modified: no", file=sys.stdout)
@@ -7805,6 +7845,7 @@ def _run_tsdf_map_audit(
     output: Path,
     seed: str,
     count: int,
+    packed: bool,
 ) -> int:
     try:
         _validate_audit_output(output)
@@ -7814,7 +7855,7 @@ def _run_tsdf_map_audit(
         audit = audit_tsdf_map(
             statement, volume, session, seed=seed, count=count
         )
-        report = write_tsdf_map_audit(audit, output)
+        report = write_tsdf_map_audit(audit, output, packed=packed)
     except SessionValidationError as error:
         print(f"TSDF MAP AUDIT FAILED {statement_path}", file=sys.stderr)
         for problem in error.errors:
@@ -7831,8 +7872,9 @@ def _run_tsdf_map_audit(
     print("volume: verified", file=sys.stdout)
     print("statement_recomputed: matched", file=sys.stdout)
     _print_audit(audit)
-    print(f"audit_bytes: {report.output_bytes}", file=sys.stdout)
-    print(f"audit_sha256: {report.output_digest_sha256}", file=sys.stdout)
+    print(f"audit_bytes: {report.unpacked_bytes}", file=sys.stdout)
+    print(f"audit_sha256: {report.unpacked_digest_sha256}", file=sys.stdout)
+    _print_packed(report)
     print(f"output: {report.output}", file=sys.stdout)
     print("statement_modified: no", file=sys.stdout)
     print("volume_modified: no", file=sys.stdout)

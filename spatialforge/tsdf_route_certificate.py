@@ -93,6 +93,10 @@ from .tsdf_held_blocks import (
     _prove_held_blocks,
     _validate_held_blocks,
 )
+from .tsdf_proof_pack import (
+    _unpacked_if_packed,
+    pack_tsdf_proof_bytes,
+)
 
 TSDF_ROUTE_CERTIFICATE_SCHEMA = "spatialforge.tsdf-route-certificate"
 TSDF_ROUTE_CERTIFICATE_SCHEMA_VERSION = "0.1.0"
@@ -437,12 +441,21 @@ class TsdfRouteCertificate:
 
 @dataclass(frozen=True, slots=True)
 class TsdfRouteCertificateReport:
-    """What writing a certificate produced."""
+    """What writing a certificate produced.
+
+    ``output_bytes`` and ``output_digest_sha256`` are the file's as it
+    was written. If it was packed they are of the packed bytes, which
+    need not be the same on every machine; ``unpacked_bytes`` and
+    ``unpacked_digest_sha256`` are of what it carries, which are.
+    """
 
     output: Path
     output_bytes: int
     output_digest_sha256: str
     certificate: TsdfRouteCertificate
+    packed: bool
+    unpacked_bytes: int
+    unpacked_digest_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -713,18 +726,27 @@ def check_tsdf_route_certificate(
 def write_tsdf_route_certificate(
     certificate: TsdfRouteCertificate,
     output: str | Path,
+    *,
+    packed: bool = False,
 ) -> TsdfRouteCertificateReport:
-    """Write a certificate as a ``.sftroute`` file. Never over a file."""
+    """Write a certificate as a ``.sftroute`` file. Never over a file.
+
+    ``packed`` writes the same bytes inside a zlib stream. The file is
+    read back as the same certificate either way.
+    """
 
     if not isinstance(certificate, TsdfRouteCertificate):
         raise TsdfError("writing requires a TsdfRouteCertificate")
     output_path = _validate_certificate_output(output)
+    if not isinstance(packed, bool):
+        raise TsdfError("packed must be true or false")
     encoded = certificate.encoded()
     if len(encoded) > MAX_TSDF_ROUTE_CERTIFICATE_BYTES:
         raise TsdfError(
             "TSDF route certificate exceeds the maximum of "
             f"{MAX_TSDF_ROUTE_CERTIFICATE_BYTES} bytes"
         )
+    written = pack_tsdf_proof_bytes(encoded) if packed else encoded
     temporary_path: Path | None = None
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -735,7 +757,7 @@ def write_tsdf_route_certificate(
         )
         temporary_path = Path(temporary_name)
         with open(descriptor, "wb", closefd=True) as output_file:
-            output_file.write(encoded)
+            output_file.write(written)
         try:
             os.link(temporary_path, output_path)
         except FileExistsError as error:
@@ -757,9 +779,12 @@ def write_tsdf_route_certificate(
                 pass
     return TsdfRouteCertificateReport(
         output=output_path,
-        output_bytes=len(encoded),
-        output_digest_sha256=hashlib.sha256(encoded).hexdigest(),
+        output_bytes=len(written),
+        output_digest_sha256=hashlib.sha256(written).hexdigest(),
         certificate=certificate,
+        packed=packed,
+        unpacked_bytes=len(encoded),
+        unpacked_digest_sha256=hashlib.sha256(encoded).hexdigest(),
     )
 
 
@@ -784,7 +809,9 @@ def load_tsdf_route_certificate(path: str | Path) -> TsdfRouteCertificate:
             "TSDF route certificate exceeds the maximum of "
             f"{MAX_TSDF_ROUTE_CERTIFICATE_BYTES} bytes"
         )
-    return decode_tsdf_route_certificate(encoded)
+    return decode_tsdf_route_certificate(
+        _unpacked_if_packed(encoded, MAX_TSDF_ROUTE_CERTIFICATE_BYTES)
+    )
 
 
 def decode_tsdf_route_certificate(encoded: bytes) -> TsdfRouteCertificate:

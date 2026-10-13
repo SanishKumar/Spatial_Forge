@@ -21,10 +21,13 @@ that are not part of the package. Sizes are exact and times are not.
 | fusing it | 79 s | 211 s | 460 s |
 | **the statement** | 800 bytes | 797 bytes | 803 bytes |
 | **one block's proof**, median of 200 | 535 kB | 323 kB | 382 kB |
+| the same, packed | 179 kB | 198 kB | 214 kB |
 | checking it | 0.11 s | 0.08 s | 0.10 s |
 | **an audit of 459 blocks** | 174 MB | 73 MB | 110 MB |
+| the same, packed | 25 MB | 32 MB | 19 MB |
 | checking it | 5.8 s | 2.8 s | 3.0 s |
 | **a 3.5 m route**, 0.135 m wide | | | 84 MB |
+| the same, packed | | | 12 MB |
 | checking it | | | 3 to 5 s |
 
 The fusing times are the ones each volume's own page records.
@@ -40,8 +43,8 @@ tiles of all 676 frames and comes to a quarter of the scan's depth. On
 the desk, where the camera never leaves and every frame sees most of the
 volume, it comes to seven tenths. A route through the open middle of a
 room is the same story, told on the route's own page. Those are counts of
-raw samples on both sides, and the last section of this page says what
-that leaves out.
+raw samples on both sides. [Packed](#packed), and beside the scan as it
+is kept, the same files are a different size.
 
 What nothing here needs is the volume. A checker holds 800 bytes and is
 sent the blocks in question, 6 kB each.
@@ -87,7 +90,7 @@ The line through the office of the route's own page, in the band from
 | 1 voxel wide | 204 | 304 | 67 MB | 1.9 s |
 | 9 voxels wide | 420 | 330 | 84 MB | 3.2 s |
 | 21 voxels wide | 732 | 352 | 101 MB | 6.0 s |
-| 21 wide, 2 voxels high | 122 | 302 | 57 MB | 1.3 s |
+| 21 wide, 2 voxels high | 122 | 302 | 56 MB | 1.3 s |
 
 Half a metre of route already needs a third of the scan's frames, each
 for under a tenth of its tiles. After that a certificate grows with the
@@ -148,6 +151,40 @@ office:
 Three to ten percent smaller, for half as long again to check and nearly
 twice as long to commit. Sixteen stays.
 
+## Packed
+
+Every size above this section is of a file as written, with depth as raw
+16-bit samples, and "the scan's depth" counts samples too. A scan is not
+kept that way: its depth images are PNG files. So the comparison that
+matters is between files, and
+[any of the three can be written packed](tsdf-proof-pack.md), inside a
+zlib stream.
+
+| | Kinect desk, 15 mm | Living room, 10 mm | Kinect office with free space, 15 mm |
+|---|---|---|---|
+| depth PNGs of the frames fused | 48 MB | 83 MB | 89 MB |
+| their samples through zlib, estimated | 29 MB | 77 MB | 49 MB |
+| **an audit of 459 blocks**, packed | 25.4 MB | 32.3 MB | 19.0 MB |
+| **the 3.5 m route**, 1 voxel wide, packed | | | 9.8 MB |
+| 9 voxels wide | | | 12.1 MB |
+| 21 voxels wide | | | 14.5 MB |
+| 21 wide, 2 voxels high | | | 8.9 MB |
+| **one block's proof**, median, packed | 179 kB | 198 kB | 214 kB |
+
+As written, the office's audit and routes are about the size of its
+frames' own files and save no bytes. Packed they are a tenth to a fifth
+of those files. The files flatter that, because zlib alone makes the
+same Kinect samples smaller than the datasets' PNG files do; against the
+frames packed the same way they are a fifth to two fifths.
+
+The desk's audit is nearly nine tenths of its frames packed the same
+way. Nearly every frame of the desk sees most of the volume, and no
+packing changes what an audit by lot has to read.
+
+The second row was estimated from every tenth of those frames. Packing
+the office's 84 MB certificate took 1.5 s, and reading a packed file
+took up to 0.2 s longer than reading it unpacked.
+
 ## What these numbers are not
 
 - **Not tuned.** Checking a block spends most of its time ruling out
@@ -155,11 +192,6 @@ twice as long to commit. Sixteen stays.
 - **Not a network measurement.** Sizes are of the files. Nothing was sent
   anywhere.
 - **Not many scans.** Two real scans and one synthetic room, one route.
-- **Not compressed, and this matters.** Depth tiles are raw 16-bit
-  samples, and "the scan's depth" above counts samples too. The office
-  scan's own depth images are PNG files: 179 MB for all 1,352 frames,
-  about 90 MB for the 676 its volume was fused from, a fifth of their
-  samples. Beside those files, an audit of 110 MB or a route of 84 MB as
-  written saves nothing in bytes. Put through zlib at its default level
-  the 84 MB certificate is 12 MB and the 4.0 MB one is 0.8 MB. Nothing
-  in the package compresses a proof.
+- **Not the best a codec could do.** Packing is zlib at its default
+  level, and packed sizes are this machine's zlib. Nothing was compared
+  with a codec made for depth.

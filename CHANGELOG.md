@@ -46,12 +46,12 @@ Measured
   100. A map with one block altered passes most audits, and the page says
   so.
 - **Many blocks are not small.** A route through open space and an audit
-  by lot are read by most of a scan's frames. Their files are 57 to 174
+  by lot are read by most of a scan's frames. Their files are 56 to 174
   MB of raw depth tiles, a seventh to seven tenths of the samples the
-  volume was fused from and about the size of those frames' own PNG
-  files. They save the time of fusing and the need to hold the volume,
-  not bytes. zlib takes one from 84 MB to 12; nothing here compresses a
-  proof.
+  volume was fused from. On the office that is about the size of those
+  frames' own PNG files, and on the desk over three times it. They save
+  the time of fusing and the need to hold the volume, not bytes. zlib
+  takes one from 84 MB to 12; nothing here compresses a proof.
 - **Sixteen-pixel tiles.** With a path for every tile a block's depth and
   paths came to 302 kB at 8 pixels, 188 kB at 16 and 267 kB at 32. With
   one proof shared between a frame's tiles, 8 pixels is 3 to 10% smaller

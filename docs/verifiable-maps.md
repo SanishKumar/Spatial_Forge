@@ -11,7 +11,8 @@ page:
 [certifying a route](tsdf-route-certificate.md), and
 [auditing a map by lot](tsdf-map-audit.md). What it all costs is on
 [one page](verifiable-map-costs.md), and what it came to is
-[below](#what-it-came-to).
+[below](#what-it-came-to). Since then a proof can be
+[written packed](tsdf-proof-pack.md).
 
 ## The idea
 
@@ -258,11 +259,12 @@ On the real office, 69,415 blocks fused from 676 frames in 460 s:
 And what it did not come to:
 
 - **Many blocks are not small.** A route through open space or an audit
-  by lot is read by most of the scan's frames. Their certificates are 57
+  by lot is read by most of the scan's frames. Their certificates are 56
   to 110 MB of raw depth, a seventh to a quarter of the samples the
   volume was fused from, and about the size of those frames' own PNG
-  files. They save time and the volume, not bytes, until they are
-  compressed: zlib takes one from 84 MB to 12.
+  files. As written they save time and the volume, not bytes.
+  [Packed](tsdf-proof-pack.md), which was built after the six steps,
+  they are 9 to 19 MB, a tenth to a fifth of those files.
 - **Absence is not proved.** A block the map does not hold cannot be
   shown to be missing to someone who holds only the root.
 - **The scan is taken as given.** Everything here binds a map to a scan.
@@ -289,8 +291,12 @@ And what it did not come to:
   their tiles. Two fifths of that certificate was tile paths, one a
   tile; step 6 replaced them with one proof a frame and they are now
   under one part in a hundred of it.
-- Whether proofs should be compressed. A certificate is raw depth tiles
-  and compresses about seven times with zlib, which would put it well
-  under the scan's own files. Not built.
+- ~~Whether proofs should be compressed.~~ Built after the six steps:
+  [`tsdf-proof-pack.md`](tsdf-proof-pack.md). `--packed` writes a proof,
+  a certificate or an audit inside a zlib stream, and the checks read
+  either. Kinect certificates and audits pack about seven times and
+  rendered depth about twice. A proof is still named by the SHA-256 of
+  its unpacked bytes, because the same proof need not pack to the same
+  bytes on every machine.
 - Whether the mesh, which is a repeatable function of the volume, should be
   committed block by block as well.

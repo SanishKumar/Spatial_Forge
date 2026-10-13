@@ -82,6 +82,10 @@ from .tsdf_held_blocks import (
     _prove_held_blocks,
     _validate_held_blocks,
 )
+from .tsdf_proof_pack import (
+    _unpacked_if_packed,
+    pack_tsdf_proof_bytes,
+)
 from .tsdf_stream_fusion import _is_sha256
 
 TSDF_MAP_AUDIT_SCHEMA = "spatialforge.tsdf-map-audit"
@@ -216,12 +220,21 @@ class TsdfMapAudit:
 
 @dataclass(frozen=True, slots=True)
 class TsdfMapAuditReport:
-    """What writing an audit produced."""
+    """What writing an audit produced.
+
+    ``output_bytes`` and ``output_digest_sha256`` are the file's as it
+    was written. If it was packed they are of the packed bytes, which
+    need not be the same on every machine; ``unpacked_bytes`` and
+    ``unpacked_digest_sha256`` are of what it carries, which are.
+    """
 
     output: Path
     output_bytes: int
     output_digest_sha256: str
     audit: TsdfMapAudit
+    packed: bool
+    unpacked_bytes: int
+    unpacked_digest_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,18 +550,27 @@ def check_tsdf_map_audit(
 def write_tsdf_map_audit(
     audit: TsdfMapAudit,
     output: str | Path,
+    *,
+    packed: bool = False,
 ) -> TsdfMapAuditReport:
-    """Write an audit as a ``.sftaudit`` file. Never over a file."""
+    """Write an audit as a ``.sftaudit`` file. Never over a file.
+
+    ``packed`` writes the same bytes inside a zlib stream. The file is
+    read back as the same audit either way.
+    """
 
     if not isinstance(audit, TsdfMapAudit):
         raise TsdfError("writing requires a TsdfMapAudit")
     output_path = _validate_audit_output(output)
+    if not isinstance(packed, bool):
+        raise TsdfError("packed must be true or false")
     encoded = audit.encoded()
     if len(encoded) > MAX_TSDF_MAP_AUDIT_BYTES:
         raise TsdfError(
             "TSDF map audit exceeds the maximum of "
             f"{MAX_TSDF_MAP_AUDIT_BYTES} bytes"
         )
+    written = pack_tsdf_proof_bytes(encoded) if packed else encoded
     temporary_path: Path | None = None
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -559,7 +581,7 @@ def write_tsdf_map_audit(
         )
         temporary_path = Path(temporary_name)
         with open(descriptor, "wb", closefd=True) as output_file:
-            output_file.write(encoded)
+            output_file.write(written)
         try:
             os.link(temporary_path, output_path)
         except FileExistsError as error:
@@ -579,9 +601,12 @@ def write_tsdf_map_audit(
                 pass
     return TsdfMapAuditReport(
         output=output_path,
-        output_bytes=len(encoded),
-        output_digest_sha256=hashlib.sha256(encoded).hexdigest(),
+        output_bytes=len(written),
+        output_digest_sha256=hashlib.sha256(written).hexdigest(),
         audit=audit,
+        packed=packed,
+        unpacked_bytes=len(encoded),
+        unpacked_digest_sha256=hashlib.sha256(encoded).hexdigest(),
     )
 
 
@@ -604,7 +629,9 @@ def load_tsdf_map_audit(path: str | Path) -> TsdfMapAudit:
             "TSDF map audit exceeds the maximum of "
             f"{MAX_TSDF_MAP_AUDIT_BYTES} bytes"
         )
-    return decode_tsdf_map_audit(encoded)
+    return decode_tsdf_map_audit(
+        _unpacked_if_packed(encoded, MAX_TSDF_MAP_AUDIT_BYTES)
+    )
 
 
 def decode_tsdf_map_audit(encoded: bytes) -> TsdfMapAudit:

@@ -102,6 +102,10 @@ from .tsdf_commitment import (
     tsdf_volume_merkle_tree,
 )
 from .tsdf_lone_block import _validate_block_index
+from .tsdf_proof_pack import (
+    _unpacked_if_packed,
+    pack_tsdf_proof_bytes,
+)
 from .tsdf_replay_depth_context import _is_rigid_transform
 from .tsdf_stream_fusion import _is_sha256
 
@@ -361,12 +365,21 @@ class TsdfBlockProof:
 
 @dataclass(frozen=True, slots=True)
 class TsdfBlockProofReport:
-    """What writing a proof produced."""
+    """What writing a proof produced.
+
+    ``output_bytes`` and ``output_digest_sha256`` are the file's as it
+    was written. If it was packed they are of the packed bytes, which
+    need not be the same on every machine; ``unpacked_bytes`` and
+    ``unpacked_digest_sha256`` are of what it carries, which are.
+    """
 
     output: Path
     output_bytes: int
     output_digest_sha256: str
     proof: TsdfBlockProof
+    packed: bool
+    unpacked_bytes: int
+    unpacked_digest_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -725,18 +738,27 @@ def check_tsdf_block_proof(
 def write_tsdf_block_proof(
     proof: TsdfBlockProof,
     output: str | Path,
+    *,
+    packed: bool = False,
 ) -> TsdfBlockProofReport:
-    """Write a proof as a ``.sftproof`` file. Never over an existing file."""
+    """Write a proof as a ``.sftproof`` file. Never over an existing file.
+
+    ``packed`` writes the same bytes inside a zlib stream. The file is
+    read back as the same proof either way.
+    """
 
     if not isinstance(proof, TsdfBlockProof):
         raise TsdfError("writing requires a TsdfBlockProof")
     output_path = _validate_proof_output(output)
+    if not isinstance(packed, bool):
+        raise TsdfError("packed must be true or false")
     encoded = proof.encoded()
     if len(encoded) > MAX_TSDF_BLOCK_PROOF_BYTES:
         raise TsdfError(
             "TSDF block proof exceeds the maximum of "
             f"{MAX_TSDF_BLOCK_PROOF_BYTES} bytes"
         )
+    written = pack_tsdf_proof_bytes(encoded) if packed else encoded
     temporary_path: Path | None = None
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -747,7 +769,7 @@ def write_tsdf_block_proof(
         )
         temporary_path = Path(temporary_name)
         with open(descriptor, "wb", closefd=True) as output_file:
-            output_file.write(encoded)
+            output_file.write(written)
         try:
             os.link(temporary_path, output_path)
         except FileExistsError as error:
@@ -767,9 +789,12 @@ def write_tsdf_block_proof(
                 pass
     return TsdfBlockProofReport(
         output=output_path,
-        output_bytes=len(encoded),
-        output_digest_sha256=hashlib.sha256(encoded).hexdigest(),
+        output_bytes=len(written),
+        output_digest_sha256=hashlib.sha256(written).hexdigest(),
         proof=proof,
+        packed=packed,
+        unpacked_bytes=len(encoded),
+        unpacked_digest_sha256=hashlib.sha256(encoded).hexdigest(),
     )
 
 
@@ -792,7 +817,9 @@ def load_tsdf_block_proof(path: str | Path) -> TsdfBlockProof:
             "TSDF block proof exceeds the maximum of "
             f"{MAX_TSDF_BLOCK_PROOF_BYTES} bytes"
         )
-    return decode_tsdf_block_proof(encoded)
+    return decode_tsdf_block_proof(
+        _unpacked_if_packed(encoded, MAX_TSDF_BLOCK_PROOF_BYTES)
+    )
 
 
 def decode_tsdf_block_proof(encoded: bytes) -> TsdfBlockProof:

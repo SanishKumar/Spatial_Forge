@@ -15,6 +15,9 @@ The first needs the volume and the scan, and writes a proof. The second is
 given the statement and the proof and reads nothing else: no session and no
 volume. It exits 0 if the block is verified.
 
+`--packed` on the first writes the same proof inside a zlib stream, and
+the second reads either: [packing a proof](tsdf-proof-pack.md).
+
 This is the fourth step of [a map that can be checked](verifiable-maps.md).
 
 ## What a proof holds

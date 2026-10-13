@@ -112,6 +112,13 @@ from .tsdf_map_audit import (
     tsdf_audit_wrong_blocks_caught,
     write_tsdf_map_audit,
 )
+from .tsdf_proof_pack import (
+    TSDF_PACKED_PROOF_MAGIC,
+    TSDF_PROOF_PACK_LEVEL,
+    pack_tsdf_proof_bytes,
+    tsdf_proof_bytes_are_packed,
+    unpack_tsdf_proof_bytes,
+)
 from .tsdf_route_certificate import (
     MAX_TSDF_ROUTE_BLOCKS,
     MAX_TSDF_ROUTE_CERTIFICATE_BYTES,
@@ -358,6 +365,9 @@ __all__ = [
     "load_tsdf_map_audit",
     "tsdf_audit_wrong_blocks_caught",
     "write_tsdf_map_audit",
+    "pack_tsdf_proof_bytes",
+    "tsdf_proof_bytes_are_packed",
+    "unpack_tsdf_proof_bytes",
     "certify_tsdf_route",
     "check_tsdf_route_certificate",
     "decode_tsdf_route_certificate",
@@ -439,6 +449,8 @@ __all__ = [
     "TSDF_FUSION_RULE",
     "TSDF_MAP_AUDIT_CHECKS",
     "MAX_TSDF_MAP_AUDIT_BLOCKS",
+    "TSDF_PACKED_PROOF_MAGIC",
+    "TSDF_PROOF_PACK_LEVEL",
     "TSDF_ROUTE_CHECKS",
     "TSDF_ROUTE_MIN_WEIGHT",
     "MAX_TSDF_ROUTE_BLOCKS",
