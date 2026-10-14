@@ -631,17 +631,17 @@ piece to the statement, fuses the block again, and says `verified`,
 `invalid` if the proof does not hold together:
 [`docs/tsdf-block-proof.md`](docs/tsdf-block-proof.md).
 
-The same proof can be checked by a second program, one file that needs
-nothing but Python's standard library:
+The same proof, or a route's certificate, can be checked by a second
+program, one file that needs nothing but Python's standard library:
 
 ```bash
-python checker/check_block_proof.py datasets/fr1xyz.sftcommit block.sftproof
+python checker/check.py datasets/fr1xyz.sftcommit block.sftproof
 ```
 
-It fuses the block another way, looking at every voxel of every frame
-where the package first rules frames out, and has to agree with the
-package to the bit. It does, on every proof the tests make and on 600
-blocks of three real volumes:
+It fuses blocks another way, looking at every voxel of every frame where
+the package first rules frames out, and has to agree with the package to
+the bit. It does, on every proof and certificate the tests make, on 600
+blocks of three real volumes and on three routes through the real office:
 [`docs/stand-alone-checker.md`](docs/stand-alone-checker.md).
 
 To certify that a route through the map is clear:
@@ -794,7 +794,7 @@ spatialforge/     library and CLI
   tsdf_block_mesh.py      sparse meshing
   tsdf.py, mesh.py        dense reference integrator and mesher
   tum_importer.py         TUM RGB-D -> session format
-checker/          a block proof's check in the standard library alone
+checker/          a proof's or a route's check, in the standard library alone
 tools/            reproducible scoring and rendering scripts
 tests/            68 test modules
 results/          generated result manifests, one per published run

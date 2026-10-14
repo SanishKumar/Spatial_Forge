@@ -251,5 +251,7 @@ package.)
   frame could see.
 - **It does not say the scan is true**, or that the poses are right.
 - **The check fuses with the same evaluator the map was fused with**, as
-  for a block's proof.
+  for a block's proof. [A second check](stand-alone-checker.md), in the
+  standard library alone, reads certificates too and works the route out
+  for itself.
 - **One route to a certificate.**

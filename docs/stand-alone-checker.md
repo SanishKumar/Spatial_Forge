@@ -1,21 +1,24 @@
 # A checker that stands alone
 
-[A block's proof](tsdf-block-proof.md) is checked by the package that
-made it, with the evaluator that fused the map. Its own page said what
-that leaves open: the check is this package, and a mistake in the
-evaluator would be in both. `checker/check_block_proof.py` is a second
-check of the same proofs, in one file that imports nothing but Python's
-standard library:
+[A block's proof](tsdf-block-proof.md) and
+[a route's certificate](tsdf-route-certificate.md) are checked by the
+package that made them, with the evaluator that fused the map. The
+proof's page said what that leaves open: the check is this package, and
+a mistake in the evaluator would be in both. `checker/check.py` is a
+second check of the same files, in one file that imports nothing but
+Python's standard library:
 
 ```powershell
-python checker/check_block_proof.py scan.sftcommit block.sftproof
+python checker/check.py scan.sftcommit block.sftproof
+python checker/check.py scan.sftcommit way.sftroute
 ```
 
-It needs no numpy and no SpatialForge, and its tests run it in an
-interpreter that can load neither. It exits 0 if the block is verified,
-1 if it is refuted or the proof is invalid, and 2 if a file cannot be
-read as a statement or a proof. A [packed proof](tsdf-proof-pack.md) is
-read as the proof it carries.
+It tells a proof from a certificate by its first bytes. It needs no numpy
+and no SpatialForge, and its tests run it in an interpreter that can load
+neither. It exits 0 if the block is verified or the route is clear, 1 for
+any other verdict, and 2 if a file cannot be read as a statement, a proof
+or a certificate. A [packed](tsdf-proof-pack.md) file is read as what it
+carries.
 
 ```text
 BLOCK PROOF CHECK, STANDARD LIBRARY ONLY
@@ -150,6 +153,106 @@ that the package's own checks did not look at the rule, and checked a
 block under any statement by the one arithmetic they have. They now fail
 at `statement` too, and the tests hold the two to it.
 
+## A route's certificate
+
+```text
+ROUTE CERTIFICATE CHECK, STANDARD LIBRARY ONLY
+statement_sha256: 7b771f1ef5ff5249f48cf29affdbce16df2349f02b67cf7d9accf4884414e780
+certificate_sha256: a755eb4b31d49fdc3a2011d288044fd4657d39be2a998a0a938074fbc59cf30f
+packed: no
+route: up=z band=0..0 radius=0 min_weight=2 waypoints=2
+blocks: held=1 of=8
+check statement: passed
+check shape: passed
+check route: passed
+check scan root: passed
+check map root: passed
+check depth roots: passed
+check poses: passed
+check pixels: passed
+check fusion: passed
+check clearance: passed
+fusion: ready=2 read=2 contributing=2 refuted_blocks=0
+clearance: columns=4 voxels=4 unobserved=0 occupied=0
+verdict: clear
+```
+
+A certificate holds its blocks as a block's proof holds its one, with
+the frames' leaves and each tile once, and the checker checks them as it
+checks a block, all at once, with two checks more: `route` after
+`shape`, and `clearance` last. The verdicts are the four of
+[the route's page](tsdf-route-certificate.md#four-verdicts). What the
+checker has to work out for itself is the route, and the route is all
+integers:
+
+```text
+line      each waypoint joined to the next by Bresenham's line:
+            run_a = |to_a - a|,  run_b = |to_b - b|,  error = run_a - run_b
+            until (a, b) is (to_a, to_b):
+              doubled = 2 error
+              if doubled > -run_b:  error -= run_b, and a steps toward to_a
+              if doubled <  run_a:  error += run_a, and b steps toward to_b
+              (a, b) is the line's next column
+disc      every (da, db) with da² + db² <= radius²
+columns   every column of the line moved by every offset of the disc,
+          each once
+blocks    every (a // 8, b // 8) of the columns, at every level from
+          band_first // 8 to band_last // 8, in order of z, then y, then x
+```
+
+`//` rounds down, so column -1 is in block -1. The blocks worked out
+have to be the blocks the certificate holds, in that order. Then, in
+blocks seen to follow from the scan, a voxel of the route in the band is
+*unobserved* if its weight is below the route's count of observations,
+and *occupied* if it is not and its sum is not above zero. The voxel
+named first is the least in z, then y, then x.
+
+What a route may state is bounded before any of it is worked out, and a
+file past these bounds is not a certificate: a band within 2^30 of zero
+holding at least one voxel, a radius of 0 to 64, a count of observations
+from 1 to 2^32 - 1, and 1 to 4,096 waypoints, each within 2^30 of zero,
+each unlike the one before, joined by a line of at most 65,536 columns.
+Two bounds are on what the route comes to, and a certificate past either
+is `invalid` at `route`: at most 4,000,000 columns of the line times
+offsets of the disc, and at most 65,536 blocks.
+
+In the file, the header names the route but for its waypoints, here for
+the clear route above:
+
+```json
+{
+  "blocks": {
+    "held": 1,
+    "of": 8
+  },
+  "frames": 2,
+  "image": {
+    "height": 2,
+    "tile_pixels": 16,
+    "width": 2
+  },
+  "route": {
+    "band_first": 0,
+    "band_last": 0,
+    "min_weight": 2,
+    "radius": 0,
+    "up_axis": "z",
+    "waypoints": 2
+  },
+  "schema": "spatialforge.tsdf-route-certificate",
+  "schema_version": "0.1.0",
+  "statement_sha256": "7b771f1ef5ff5249f48cf29affdbce16df2349f02b67cf7d9accf4884414e780",
+  "tile_frames": 2
+}
+```
+
+The waypoints follow it, two signed 8-byte integers each, then the
+frames' leaves, then each block's row as an unsigned 8-byte integer
+before its leaf and path, then the tiles as a proof holds them. Of the
+header's numbers, `band_first` and `band_last` may be negative, down to
+-2^30, and `radius` and `tile_frames` may be zero. Every other is at
+least one.
+
 ## What it is pinned to
 
 Every test runs both checks on the same bytes and requires the same
@@ -175,12 +278,35 @@ voxels.
   committed with a stretched pose and with an endless one: `poses`, in
   both. A proof named for a statement made under another rule:
   `statement`, in both.
+- **Routes.** The fixture's three routes, clear, into a wall and across
+  four blocks, and twelve through the room's free space, two of them
+  the certificate's own tests' and ten drawn at random: the same
+  verdict, the same blocks refuted, the same frames counted, and the
+  same columns, voxels, unobserved and occupied, and first voxel not
+  clear.
+- **Every one-bit change of a certificate.** One bit in each of the
+  7,189 bytes of the fixture's clear one, as the route's own page counts
+  them: 569 not a certificate, 19 `statement`, one `shape`, 22 `route`,
+  320 `scan root`, 6,241 `map root`, 16 `depth roots`, and one that asks
+  for three observations where the route asked two, which makes it a
+  certificate of another route that is not clear.
+- **Maps and scans altered along routes.** The fixture's three routes
+  through its forged map, and two routes through the room after each of
+  one bit flipped, a wall moved, an obstacle removed, a blocked way
+  written out as clear, a sample raised, a frame dropped, two frames
+  exchanged and a pose moved: judged alike, `refuted` among them.
+- **What a route is held to.** A certificate with its first or eighth
+  block left out, one whose route is too wide for its length to be
+  swept, one whose band is too deep, and one with a frame's tiles left
+  out: `route` four times and `pixels` once, in both. One named for a
+  statement under another rule: `statement`, in both.
 - **Standing alone.** The file's imports are read from its source, and
   they are hashlib, json, math, re, struct, sys and zlib, all of the
   standard library. It is run by an interpreter started with `-I -S`,
   which loads no site packages and not the directory it is in, and in
-  which `import numpy` and `import spatialforge` both fail. Its output
-  is held to the lines above.
+  which `import numpy` and `import spatialforge` both fail. It checks a
+  proof and a certificate there, and its output is held to the lines
+  above.
 
 ## On real volumes
 
@@ -197,12 +323,29 @@ Every one of the 600 is the same verdict with the same frames counted.
 Looking at every voxel of every frame in plain Python costs a block a
 quarter of a second, about twice what the package takes.
 
-(Measured once, on one laptop, with a scratch script.)
+Three routes through the office, certified and checked by both:
+
+| Route | Blocks | Frames read | Certificate | Both say | Package | Checker |
+|---|---|---|---|---|---|---|
+| near the ceiling, 1.45 m, 21 voxels wide | 330 | 30 | 4.0 MB | clear | 1.4 s | 91 s |
+| through the middle, 3.5 m, 1 voxel wide | 204 | 304 | 67 MB | clear | 3.9 s | 62 s |
+| the same, 9 voxels wide | 420 | 330 | 84 MB | clear | 5.7 s | 126 s |
+
+All three are the same verdict, the same frames counted and the same
+voxels of the route, in both. A route is where looking at every voxel of
+every frame costs. The route near the ceiling crosses 330 blocks that 30
+of the 676 frames see: the package rules the others out by each block's
+corners, and the checker evaluates every voxel in all of them, 65 times
+as long. Through the middle of the room, which half the frames see, it
+takes 16 to 22 times as long.
+
+(Measured once, on one laptop, with scratch scripts.)
 
 ## What it does not do
 
-- **It checks block proofs only.** A route's certificate and an audit
-  hold blocks the same way, but the checker does not read them.
+- **It checks block proofs and route certificates, not audits.** An
+  audit holds its blocks as a certificate does, and draws them by lot;
+  the checker does not read one yet.
 - **It is not another author or another language.** It was written by
   the package's author, in Python, with doubles that round as the
   package's do. It is independent in what it runs, not in who wrote it,
@@ -211,5 +354,7 @@ quarter of a second, about twice what the package takes.
   rule and agree show that the rule is what both compute. Whether a map
   fused by it is a good map is
   [another page](tum-validation.md)'s question.
-- **It is slower**, about twice the package's time a block, because
-  it looks at every voxel of every frame in plain Python.
+- **It is slower**: about twice the package's time on a block, and 16
+  to 65 times on the office's routes, because it looks at every voxel
+  of every frame in plain Python where the package first rules out the
+  frames that cannot see a block.

@@ -1,8 +1,8 @@
-"""The stand-alone checker, held to the package's check of the same proofs.
+"""The stand-alone checker, held to the package's check of the same files.
 
-``checker/check_block_proof.py`` checks a block's proof with nothing but
-Python's standard library, from the documents. Three things are claimed
-of it.
+``checker/check.py`` checks a block's proof or a route's certificate with
+nothing but Python's standard library, from the documents. Three things
+are claimed of it.
 
 It stands alone. It imports nothing but the standard library, and it is
 run here by an interpreter told to load nothing else: no site packages,
@@ -15,7 +15,11 @@ one bit of a proof, the two give the same verdict, fail the same check,
 and count the same frames and the same differing voxels. Where proofs
 are made to fail the two checks one-bit changes never reach, a pixel
 left out, a tile to spare and a pose that is not rigid, they fail them
-alike.
+alike. The same is asked of route certificates: of clear routes and of
+routes into walls and into space nobody saw, of every one-bit change of
+a certificate, of maps altered along a route and of altered scans, and
+of certificates that leave a block out or state a route too large to
+work out.
 
 And it fuses another way. The package rules frames out by the corners of
 the block before it looks at a voxel. The checker looks at every voxel of
@@ -28,6 +32,7 @@ import ast
 import hashlib
 import importlib.util
 import io
+import random
 import shutil
 import subprocess
 import sys
@@ -40,10 +45,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from spatialforge import (
+    TsdfRoute,
+    certify_tsdf_route,
     check_tsdf_block_proof,
+    check_tsdf_route_certificate,
     commit_tsdf_scan,
     commit_tsdf_volume,
     decode_tsdf_block_proof,
+    decode_tsdf_route_certificate,
+    load_tsdf_block_plan,
     load_tsdf_block_volume,
     pack_tsdf_proof_bytes,
     prove_tsdf_blocks,
@@ -51,11 +61,16 @@ from spatialforge import (
     write_tsdf_block_proof,
     write_tsdf_block_volume,
     write_tsdf_map_statement,
+    write_tsdf_route_certificate,
 )
 from spatialforge.errors import TsdfError
 from spatialforge.merkle import merkle_root
 from spatialforge.session_loader import load_scan_session
 from spatialforge.tsdf_commitment import _statement
+from spatialforge.tsdf_expanded_plan import write_tsdf_expanded_block_plan
+from spatialforge.tsdf_stream_expansion import (
+    propose_tsdf_plan_expansion_streaming,
+)
 
 from tests.heavy_fixtures import shared_room_case
 from tests.test_tsdf_block_evidence import fused
@@ -77,15 +92,37 @@ from tests.test_tsdf_block_proof import (
 )
 from tests.test_tsdf_block_volume import assemble, split
 from tests.test_tsdf_commitment import copied
+from tests.test_tsdf_route_certificate import (
+    FIXTURE_CLEAR,
+    FIXTURE_CLEAR_SHA256,
+    FIXTURE_FOUR,
+    FIXTURE_WALL,
+    ROOM_BLOCKED,
+    ROOM_CLEAR,
+    say_the_way_is_clear,
+    without_block,
+)
 
 TEST_ROOT = Path(__file__).resolve().parent
-CHECKER = TEST_ROOT.parent / "checker" / "check_block_proof.py"
+CHECKER = TEST_ROOT.parent / "checker" / "check.py"
 FIXTURE = TEST_ROOT / "fixtures" / "minimal.vgsession"
 FIXTURE_STATEMENT_SHA256 = (
     "7b771f1ef5ff5249f48cf29affdbce16df2349f02b67cf7d9accf4884414e780"
 )
 FORGED_STATEMENT_SHA256 = (
     "ffc316e93e4602857282cde9225207e7027a53578b4af5de83cdec42d1f87883"
+)
+ROUTE_CHECKS = (
+    "statement",
+    "shape",
+    "route",
+    "scan root",
+    "map root",
+    "depth roots",
+    "poses",
+    "pixels",
+    "fusion",
+    "clearance",
 )
 CHECKS = (
     "statement",
@@ -139,6 +176,45 @@ def checker_says(statement_bytes: bytes, encoded: bytes) -> tuple:
     )
 
 
+def package_route_says(statement, encoded: bytes) -> tuple:
+    try:
+        certificate = decode_tsdf_route_certificate(encoded)
+    except TsdfError:
+        return ("not a certificate",)
+    check = check_tsdf_route_certificate(statement, certificate)
+    clearance = check.clearance
+    return (
+        check.verdict.value,
+        check.failed_check,
+        tuple(check.refuted_blocks),
+        check.ready_observations,
+        None
+        if clearance is None
+        else (
+            clearance.column_count,
+            clearance.voxel_count,
+            clearance.unobserved_voxels,
+            clearance.occupied_voxels,
+            clearance.first_voxel_not_clear,
+        ),
+    )
+
+
+def checker_route_says(statement_bytes: bytes, encoded: bytes) -> tuple:
+    try:
+        certificate = ALONE.Certificate(encoded)
+    except ALONE.Unreadable:
+        return ("not a certificate",)
+    outcome = ALONE.check_route(ALONE.Statement(statement_bytes), certificate)
+    return (
+        outcome.verdict,
+        outcome.failed_check,
+        tuple(outcome.refuted),
+        outcome.ready,
+        outcome.clearance,
+    )
+
+
 def setUpModule() -> None:
     global WORK
     root = Path(tempfile.mkdtemp(dir=TEST_ROOT))
@@ -167,6 +243,19 @@ def setUpModule() -> None:
     room_proofs = prove_tsdf_blocks(
         room_statement, room_volume, room.session, room_volume.block_indices
     )
+    # The room with its free space, which routes are certified through.
+    expanded_path = root / "room-expanded.sftplan"
+    write_tsdf_expanded_block_plan(
+        room.plan,
+        propose_tsdf_plan_expansion_streaming(room.plan, room.session),
+        expanded_path,
+    )
+    free_storage, free_receipt = fused(
+        load_tsdf_block_plan(expanded_path), room.session
+    )
+    free_volume_path = root / "room-free.sftvol"
+    write_tsdf_block_volume(free_storage, free_receipt, free_volume_path)
+    free_volume = load_tsdf_block_volume(free_volume_path)
     # The smallest block that some frames reach and some do not, with a
     # frame it reads two tiles of.
     subject = min(
@@ -197,6 +286,9 @@ def setUpModule() -> None:
         room_statement=room_statement,
         room_proofs=room_proofs,
         subject=subject,
+        free_volume_path=free_volume_path,
+        free_volume=free_volume,
+        free_statement=state_tsdf_map(free_volume, room.session),
     )
 
 
@@ -255,6 +347,22 @@ class StandsAloneTests(unittest.TestCase):
             ran.stdout.replace("\r\n", "\n"),
             verified_output(),
         )
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            way = Path(temporary) / "way.sftroute"
+            write_tsdf_route_certificate(
+                certify_tsdf_route(
+                    WORK.statement, WORK.volume, WORK.session, FIXTURE_CLEAR
+                ),
+                way,
+            )
+            ran = subprocess.run(
+                [*bare, str(CHECKER), str(WORK.statement_path), str(way)],
+                cwd=TEST_ROOT.parent,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual((ran.returncode, ran.stderr), (0, ""))
+        self.assertEqual(ran.stdout.replace("\r\n", "\n"), clear_output())
 
 
 def verified_output() -> str:
@@ -267,6 +375,21 @@ def verified_output() -> str:
         + "".join(f"check {name}: passed\n" for name in CHECKS)
         + "fusion: ready=2 read=2 contributing=2 differing_voxels=0\n"
         "verdict: verified\n"
+    )
+
+
+def clear_output() -> str:
+    return (
+        "ROUTE CERTIFICATE CHECK, STANDARD LIBRARY ONLY\n"
+        f"statement_sha256: {FIXTURE_STATEMENT_SHA256}\n"
+        f"certificate_sha256: {FIXTURE_CLEAR_SHA256}\n"
+        "packed: no\n"
+        "route: up=z band=0..0 radius=0 min_weight=2 waypoints=2\n"
+        "blocks: held=1 of=8\n"
+        + "".join(f"check {name}: passed\n" for name in ROUTE_CHECKS)
+        + "fusion: ready=2 read=2 contributing=2 refuted_blocks=0\n"
+        "clearance: columns=4 voxels=4 unobserved=0 occupied=0\n"
+        "verdict: clear\n"
     )
 
 
@@ -501,6 +624,206 @@ class AgreementTests(unittest.TestCase):
                     ALONE.unpacked(wrong)
 
 
+class RouteAgreementTests(unittest.TestCase):
+    def agree(self, statement, certificates) -> Counter:
+        statement_bytes = statement.encoded()
+        verdicts: Counter = Counter()
+        for certificate in certificates:
+            encoded = (
+                certificate
+                if isinstance(certificate, bytes)
+                else certificate.encoded()
+            )
+            said = package_route_says(statement, encoded)
+            self.assertEqual(
+                checker_route_says(statement_bytes, encoded), said
+            )
+            verdicts[said[:2]] += 1
+        return verdicts
+
+    def test_every_route_is_judged_alike(self) -> None:
+        verdicts = self.agree(
+            WORK.statement,
+            [
+                certify_tsdf_route(
+                    WORK.statement, WORK.volume, WORK.session, route
+                )
+                for route in (FIXTURE_CLEAR, FIXTURE_WALL, FIXTURE_FOUR)
+            ],
+        )
+        self.assertEqual(
+            dict(verdicts),
+            {("clear", None): 2, ("not clear", "clearance"): 1},
+        )
+        # Through the room, the routes the certificate's own tests use,
+        # and routes drawn at random through what the room holds.
+        draw = random.Random(7)
+        routes = [
+            certify_tsdf_route(
+                WORK.free_statement, WORK.free_volume, WORK.room.session, route
+            )
+            for route in (ROOM_CLEAR, ROOM_BLOCKED)
+        ]
+        while len(routes) < 12:
+            first = draw.randrange(-8, 8)
+            route = TsdfRoute(
+                2,
+                first,
+                first + draw.randrange(0, 6),
+                draw.randrange(0, 4),
+                draw.randrange(1, 5),
+                tuple(
+                    (draw.randrange(0, 60), draw.randrange(-30, 25))
+                    for _ in range(draw.randrange(1, 4))
+                ),
+            )
+            try:
+                routes.append(
+                    certify_tsdf_route(
+                        WORK.free_statement,
+                        WORK.free_volume,
+                        WORK.room.session,
+                        route,
+                    )
+                )
+            except TsdfError:
+                continue
+        verdicts = self.agree(WORK.free_statement, routes)
+        self.assertEqual(sum(verdicts.values()), 12)
+        self.assertIn(("clear", None), verdicts)
+        self.assertIn(("not clear", "clearance"), verdicts)
+
+    def test_every_one_bit_change_of_a_certificate_is_judged_alike(
+        self,
+    ) -> None:
+        encoded = certify_tsdf_route(
+            WORK.statement, WORK.volume, WORK.session, FIXTURE_CLEAR
+        ).encoded()
+        changed = []
+        for position in range(len(encoded)):
+            one = bytearray(encoded)
+            one[position] ^= 1 << (position % 8)
+            changed.append(bytes(one))
+        # As the certificate's own tests count them.
+        self.assertEqual(
+            dict(self.agree(WORK.statement, changed)),
+            {
+                ("not a certificate",): 569,
+                ("invalid", "statement"): 19,
+                ("invalid", "shape"): 1,
+                ("invalid", "route"): 22,
+                ("invalid", "scan root"): 320,
+                ("invalid", "map root"): 6241,
+                ("invalid", "depth roots"): 16,
+                ("not clear", "clearance"): 1,
+            },
+        )
+
+    def test_altered_maps_and_scans_are_judged_alike(self) -> None:
+        routes = (ROOM_CLEAR, ROOM_BLOCKED)
+        verdicts = self.agree(
+            WORK.forged_statement,
+            [
+                certify_tsdf_route(
+                    WORK.forged_statement, WORK.forged, WORK.session, route
+                )
+                for route in (FIXTURE_CLEAR, FIXTURE_WALL, FIXTURE_FOUR)
+            ],
+        )
+        true_bytes = WORK.free_volume_path.read_bytes()
+        for name, edit in (
+            ("one bit flipped", flip_a_bit),
+            ("a wall moved one voxel", move_the_far_wall),
+            ("an obstacle removed", remove_the_box),
+            ("a blocked way said clear", say_the_way_is_clear(ROOM_BLOCKED)),
+        ):
+            with self.subTest(alteration=name):
+                with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+                    path = Path(temporary) / "altered.sftvol"
+                    path.write_bytes(forge(true_bytes, edit))
+                    altered = load_tsdf_block_volume(path)
+                statement = state_tsdf_map(altered, WORK.room.session)
+                verdicts += self.agree(
+                    statement,
+                    [
+                        certify_tsdf_route(
+                            statement, altered, WORK.room.session, route
+                        )
+                        for route in routes
+                    ],
+                )
+        committed = commit_tsdf_volume(WORK.free_volume)
+        for name, alter in (
+            ("one depth sample changed", change_one_sample),
+            ("a frame dropped", drop_a_frame),
+            ("two frames exchanged", exchange_two_frames),
+            ("a pose nudged", nudge_a_pose),
+        ):
+            with self.subTest(alteration=name):
+                with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+                    session_path = copied(WORK.room.session_path, temporary)
+                    alter(session_path)
+                    session = load_scan_session(session_path)
+                    statement = _statement(
+                        commit_tsdf_scan(session), committed
+                    )
+                    certificates = [
+                        certify_tsdf_route(
+                            statement, WORK.free_volume, session, route
+                        )
+                        for route in routes
+                    ]
+                verdicts += self.agree(statement, certificates)
+        self.assertEqual(sum(verdicts.values()), 3 + 8 * 2)
+        self.assertIn(("refuted", "fusion"), verdicts)
+        self.assertIn(("clear", None), verdicts)
+
+    def test_the_route_and_its_tiles_are_held_to_alike(self) -> None:
+        certificate = certify_tsdf_route(
+            WORK.free_statement,
+            WORK.free_volume,
+            WORK.room.session,
+            ROOM_CLEAR,
+        )
+        self.assertEqual(
+            dict(
+                self.agree(
+                    WORK.free_statement,
+                    [
+                        without_block(certificate, 0),
+                        without_block(certificate, 7),
+                        # A route too wide for its length to be swept.
+                        replace(
+                            certificate,
+                            route=TsdfRoute(2, -5, 5, 64, 3, ((0, 0),
+                                                              (40_000, 0))),
+                        ),
+                        # A band so deep it touches too many blocks.
+                        replace(
+                            certificate,
+                            route=replace(
+                                ROOM_CLEAR, band_first=-(2**30),
+                                band_last=2**30,
+                            ),
+                        ),
+                        replace(
+                            certificate,
+                            tile_frames=certificate.tile_frames[1:],
+                        ),
+                    ],
+                )
+            ),
+            {("invalid", "route"): 4, ("invalid", "pixels"): 1},
+        )
+        # And a statement made under another rule.
+        other = replace(WORK.free_statement, rule=ANOTHER_RULE)
+        named = replace(certificate, statement_sha256=other.digest_sha256)
+        self.assertEqual(
+            dict(self.agree(other, [named])),
+            {("invalid", "statement"): 1},
+        )
+
+
 class StatementTests(unittest.TestCase):
     def test_a_statement_is_read_as_strictly_as_the_package_reads_it(
         self,
@@ -667,6 +990,54 @@ class CommandTests(unittest.TestCase):
             code, printed, errors = self.run_checker(str(proof))
             self.assertEqual((code, printed), (2, ""))
             self.assertIn("usage:", errors)
+
+    def test_what_the_command_says_of_a_route(self) -> None:
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            folder = Path(temporary)
+            way = folder / "way.sftroute"
+            write_tsdf_route_certificate(
+                certify_tsdf_route(
+                    WORK.statement, WORK.volume, WORK.session, FIXTURE_CLEAR
+                ),
+                way,
+                packed=True,
+            )
+            code, printed, errors = self.run_checker(
+                str(WORK.statement_path), str(way)
+            )
+            self.assertEqual((code, errors), (0, ""))
+            self.assertEqual(
+                printed, clear_output().replace("packed: no", "packed: yes")
+            )
+
+            wall = folder / "wall.sftroute"
+            write_tsdf_route_certificate(
+                certify_tsdf_route(
+                    WORK.statement, WORK.volume, WORK.session, FIXTURE_WALL
+                ),
+                wall,
+            )
+            code, printed, errors = self.run_checker(
+                str(WORK.statement_path), str(wall)
+            )
+        self.assertEqual((code, errors), (1, ""))
+        self.assertEqual(
+            printed.splitlines()[4:],
+            [
+                "route: up=z band=0..0 radius=0 min_weight=2 waypoints=2",
+                "blocks: held=2 of=8",
+            ]
+            + [f"check {name}: passed" for name in ROUTE_CHECKS[:-1]]
+            + [
+                "check clearance: failed",
+                "detail: 0 of 6 voxels of the route were observed fewer "
+                "than 2 times and 3 are at or behind a surface, the first "
+                "of them voxel (8, 0, 0)",
+                "fusion: ready=2 read=2 contributing=2 refuted_blocks=0",
+                "clearance: columns=6 voxels=6 unobserved=0 occupied=3",
+                "verdict: not clear",
+            ],
+        )
 
 
 if __name__ == "__main__":

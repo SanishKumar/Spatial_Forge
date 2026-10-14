@@ -274,9 +274,10 @@ And what it did not come to:
 - **The check was the package.** It fused a block again with the
   evaluator that fused the map. [A second check](stand-alone-checker.md),
   built after the six steps in one file of the standard library alone,
-  fuses another way and agrees with it on every proof the tests make and
-  on 600 blocks of real volumes. It checks block proofs, not routes or
-  audits, and it was written by the same hand.
+  fuses another way and agrees with it on every proof and certificate
+  the tests make, on 600 blocks of real volumes and on three routes
+  through the real office. It checks block proofs and route
+  certificates, not audits, and it was written by the same hand.
 
 ## Open questions
 
