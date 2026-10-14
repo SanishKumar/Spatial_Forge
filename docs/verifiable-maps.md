@@ -12,7 +12,9 @@ page:
 [auditing a map by lot](tsdf-map-audit.md). What it all costs is on
 [one page](verifiable-map-costs.md), and what it came to is
 [below](#what-it-came-to). Since then a proof can be
-[written packed](tsdf-proof-pack.md).
+[written packed](tsdf-proof-pack.md), and checked by
+[a second program](stand-alone-checker.md) that needs only Python's
+standard library.
 
 ## The idea
 
@@ -269,6 +271,12 @@ And what it did not come to:
   shown to be missing to someone who holds only the root.
 - **The scan is taken as given.** Everything here binds a map to a scan.
   Nothing binds the scan to the world.
+- **The check was the package.** It fused a block again with the
+  evaluator that fused the map. [A second check](stand-alone-checker.md),
+  built after the six steps in one file of the standard library alone,
+  fuses another way and agrees with it on every proof the tests make and
+  on 600 blocks of real volumes. It checks block proofs, not routes or
+  audits, and it was written by the same hand.
 
 ## Open questions
 

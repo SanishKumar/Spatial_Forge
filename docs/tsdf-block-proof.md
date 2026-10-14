@@ -242,7 +242,9 @@ refuted, one voxel differing.
 - **The check fuses with the same evaluator the map was fused with.** It
   shows a block is what this engine makes of that scan. A mistake in the
   evaluator would be in both.
+  [A second check](stand-alone-checker.md) fuses another way, in one file
+  that needs only Python's standard library, and agrees with this one on
+  every proof the tests make. It was written by the same hand.
 - **The check is this package.** That it reads only a statement and a
-  proof is a property of what it is given, shown by the tests above. It is
-  not a separate small program.
+  proof is a property of what it is given, shown by the tests above.
 - **A proof shows the depth it holds** to whoever is given it.
