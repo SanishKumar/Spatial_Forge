@@ -110,7 +110,10 @@ bytes is the one value a third party needs to hold. For the fixture it is
 
 `rule` names the arithmetic a block's bytes come from. A change to what
 fusion computes is a new name, and a statement made under the old one is
-then a statement about a different function.
+then a statement about a different function. So nothing is proved or
+checked under a statement that names a rule this package does not fuse
+by: a proof, a certificate or an audit held to one fails its first
+check, `statement`, and none is made under one.
 
 ## Why a frame's pose is in its leaf
 

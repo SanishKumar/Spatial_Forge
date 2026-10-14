@@ -143,13 +143,12 @@ exactly a proof:
   the bytes that are left.
 
 A statement is held to the same canonical JSON, and its fields to what
-the package holds them to. The checker refuses one thing the package
-does not: a statement made under any rule but
-`projective-tsdf/unit-weight/nearest-pixel/1`. It knows the arithmetic
-of that rule and will not check a block under another. The package's
-check of a proof does not look at the rule. Given a statement that names
-another, it checks the block by the one arithmetic it has, which was
-found by writing this checker and is not yet changed.
+the package holds them to. Its rule may be any name, but no block is
+checked under one other than `projective-tsdf/unit-weight/nearest-pixel/1`:
+the proof fails at `statement`. Writing this checker is how it was found
+that the package's own checks did not look at the rule, and checked a
+block under any statement by the one arithmetic they have. They now fail
+at `statement` too, and the tests hold the two to it.
 
 ## What it is pinned to
 
@@ -174,7 +173,8 @@ voxels.
   each frame's tiles left out, a true tile the block reads no pixel of,
   tiles of a frame it reads nothing of: `pixels`, in both. A scan
   committed with a stretched pose and with an endless one: `poses`, in
-  both.
+  both. A proof named for a statement made under another rule:
+  `statement`, in both.
 - **Standing alone.** The file's imports are read from its source, and
   they are hashlib, json, math, re, struct, sys and zlib, all of the
   standard library. It is run by an interpreter started with `-I -S`,

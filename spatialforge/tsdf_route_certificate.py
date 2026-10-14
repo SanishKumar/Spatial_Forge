@@ -84,6 +84,7 @@ from .tsdf_block_volume import (
 from .tsdf_commitment import (
     TsdfFrameCommitment,
     TsdfMapStatement,
+    _rule_not_fused_here,
     _validate_volume,
 )
 from .tsdf_held_blocks import (
@@ -624,7 +625,11 @@ def check_tsdf_route_certificate(
     def invalid(failed_check: str, detail: str) -> TsdfRouteCheck:
         return found(TsdfRouteVerdict.INVALID, failed_check, detail)
 
-    # statement: the certificate names the statement it was made under.
+    # statement: the statement is made under the rule fused here, and
+    # the certificate names it.
+    wrong = _rule_not_fused_here(statement)
+    if wrong is not None:
+        return invalid("statement", wrong)
     if certificate.statement_sha256 != statement_digest:
         return invalid(
             "statement",

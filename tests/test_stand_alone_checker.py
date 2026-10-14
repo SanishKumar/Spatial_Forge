@@ -60,7 +60,9 @@ from spatialforge.tsdf_commitment import _statement
 from tests.heavy_fixtures import shared_room_case
 from tests.test_tsdf_block_evidence import fused
 from tests.test_tsdf_block_proof import (
+    ANOTHER_RULE,
     FIXTURE_PROOFS,
+    RULE_REFUSED,
     change_one_sample,
     drop_a_frame,
     exchange_two_frames,
@@ -535,17 +537,24 @@ class StatementTests(unittest.TestCase):
                 with self.assertRaises(ALONE.Unreadable):
                     ALONE.Statement(wrong.encode("ascii"))
 
-    def test_it_checks_only_the_rule_it_knows(self) -> None:
-        other = replace(
-            WORK.statement, rule="projective-tsdf/unit-weight/nearest-pixel/2"
+    def test_neither_checks_a_block_under_another_rule(self) -> None:
+        other = replace(WORK.statement, rule=ANOTHER_RULE)
+        proof = replace(
+            WORK.proofs[3], statement_sha256=other.digest_sha256
+        ).encoded()
+        refused = ("invalid", "statement", 0, 0, 0)
+        self.assertEqual(package_says(other, proof), refused)
+        self.assertEqual(checker_says(other.encoded(), proof), refused)
+        outcome = ALONE.check(
+            ALONE.Statement(other.encoded()), ALONE.Proof(proof)
         )
-        with self.assertRaisesRegex(
-            ALONE.Unreadable,
-            "made under the rule 'projective-tsdf/unit-weight/nearest-"
-            "pixel/2', and this checker knows only 'projective-tsdf/"
-            "unit-weight/nearest-pixel/1'",
-        ):
-            ALONE.Statement(other.encoded())
+        self.assertEqual(outcome.detail, RULE_REFUSED)
+        # A rule that is not the name of one is not a statement.
+        named_badly = other.encoded().replace(
+            b"nearest-pixel/2", b"Nearest Pixel"
+        )
+        with self.assertRaisesRegex(ALONE.Unreadable, "rule is not the name"):
+            ALONE.Statement(named_badly)
 
 
 class CommandTests(unittest.TestCase):

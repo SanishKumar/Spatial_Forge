@@ -110,6 +110,13 @@ FIXTURE_PROOFS = (
      "e6c26b8f57760c073631f4c4dd10bc55bb244e29b4d76e63df1537cf072f9d4c"),
 )
 FIXTURE_PROOF_BYTES = 7009
+# A statement may name any rule. This package fuses by one.
+ANOTHER_RULE = "projective-tsdf/unit-weight/nearest-pixel/2"
+RULE_REFUSED = (
+    "the statement is made under the rule "
+    "'projective-tsdf/unit-weight/nearest-pixel/2', and this check fuses "
+    "by 'projective-tsdf/unit-weight/nearest-pixel/1' alone"
+)
 FIXTURE_PROOF_HEADER = "\n".join(
     (
         "{",
@@ -1053,6 +1060,34 @@ class AlteredProofTests(unittest.TestCase):
         self.stopped(proof, "statement", statement=other)
         # A proof of the fixture's block against the room's statement.
         self.stopped(WORK.proofs[0], "statement")
+
+    def test_no_block_is_checked_under_another_rule(self) -> None:
+        # Under a statement that names another rule, a check would be
+        # fusing a function the statement does not name, and a verified
+        # block would be a claim about the wrong thing. That is so
+        # whether or not the proof names the statement.
+        other = replace(WORK.room_statement, rule=ANOTHER_RULE)
+        named = replace(WORK.subject, statement_sha256=other.digest_sha256)
+        for proof in (named, WORK.subject):
+            check = self.stopped(proof, "statement", statement=other)
+            self.assertEqual(check.detail, RULE_REFUSED)
+            self.assertEqual(check.selected_observations, 20)
+            self.assertEqual(check.ready_observations, 0)
+        self.stopped(
+            named, "statement", "the proof was made under statement"
+        )
+        # Nor is a proof made under it: the prover recomputes the
+        # statement, and the rule is one of the things it differs in.
+        with self.assertRaisesRegex(
+            TsdfError,
+            "not a statement of this volume and this scan: fusion rule$",
+        ):
+            prove_tsdf_block(
+                other,
+                WORK.room_volume,
+                WORK.room.session,
+                WORK.subject.block_index,
+            )
 
     def test_a_proof_that_is_not_shaped_as_the_statement_says(self) -> None:
         # Each of these names the right statement and lies about what
@@ -2277,6 +2312,45 @@ class BlockProofCliTests(unittest.TestCase):
                     "failed the check of its statement",
                 ],
             )
+
+    def test_cli_checks_no_block_under_another_rule(self) -> None:
+        other = replace(WORK.statement, rule=ANOTHER_RULE)
+        with tempfile.TemporaryDirectory(dir=TEST_ROOT) as temporary:
+            statement = Path(temporary) / "other.sftcommit"
+            write_tsdf_map_statement(other, statement)
+            proof = Path(temporary) / "block.sftproof"
+            write_tsdf_block_proof(
+                replace(WORK.proofs[3], statement_sha256=other.digest_sha256),
+                proof,
+            )
+            code, printed, errors = self.run_cli(
+                "tsdf-block-proof-check", str(statement), str(proof)
+            )
+        self.assertEqual((code, errors), (1, ""))
+        lines = printed.splitlines()
+        self.assertEqual(
+            lines[:3],
+            [
+                "TSDF BLOCK PROOF CHECK scan-synthetic-0001",
+                "statement: valid",
+                f"statement_sha256: {other.digest_sha256}",
+            ],
+        )
+        self.assertEqual(
+            lines[7:],
+            ["check statement: failed"]
+            + [f"check {name}: not reached" for name in CHECKS[1:]]
+            + [
+                f"detail: {RULE_REFUSED}",
+                "session_read: no",
+                "volume_read: no",
+                "statement_modified: no",
+                "proof_modified: no",
+                "verdict: invalid",
+                "result: the proof shows nothing about the map; it "
+                "failed the check of its statement",
+            ],
+        )
 
     def test_cli_names_the_check_an_altered_proof_fails(self) -> None:
         proof = WORK.proofs[3]

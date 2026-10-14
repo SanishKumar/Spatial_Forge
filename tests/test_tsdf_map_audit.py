@@ -63,6 +63,8 @@ from tests.heavy_fixtures import shared_room_case
 from tests.test_tsdf_block_evidence import forbidden_calls, fused
 from tests.test_tsdf_block_evidence import tree_snapshot
 from tests.test_tsdf_block_proof import (
+    ANOTHER_RULE,
+    RULE_REFUSED,
     fixture_volume,
     flip_a_bit,
     forge,
@@ -677,6 +679,32 @@ class AuditTests(unittest.TestCase):
             check.detail,
             f"observation {tiles.sequence}: the block reads the depth pixel",
         )
+
+    def test_no_audit_is_checked_under_another_rule(self) -> None:
+        other = replace(WORK.room_statement, rule=ANOTHER_RULE)
+        audit = WORK.room_audit
+        named = replace(audit, statement_sha256=other.digest_sha256)
+        for held in (named, audit):
+            check = check_tsdf_map_audit(
+                other, held, seed="auditor-1", count=60
+            )
+            self.assertIs(check.verdict, TsdfMapAuditVerdict.INVALID)
+            self.assertEqual(
+                (check.failed_check, check.passed_checks, check.detail),
+                ("statement", (), RULE_REFUSED),
+            )
+            self.assertEqual(check.refuted_blocks, ())
+        with self.assertRaisesRegex(
+            TsdfError,
+            "not a statement of this volume and this scan: fusion rule$",
+        ):
+            audit_tsdf_map(
+                other,
+                WORK.room_volume,
+                WORK.room.session,
+                seed="auditor-1",
+                count=60,
+            )
 
     def test_an_answer_is_made_only_under_a_statement_of_these_two(
         self,

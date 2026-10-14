@@ -76,7 +76,7 @@ The check stops at the first that fails, so an invalid proof names one.
 
 | Check | What it holds to what |
 |---|---|
-| `statement` | The proof names the SHA-256 of this statement. |
+| `statement` | The statement is made under the rule this check fuses by, and the proof names its SHA-256. A statement may name any rule, and under another the check would be fusing a function the statement does not name. |
 | `shape` | It has the statement's count of frames and of blocks, its image size and its tile size. A root does not say how many leaves it is over; the statement does. |
 | `scan root` | The frames' leaves lead to the statement's scan root. From here on every pose and every depth root is the scan's. |
 | `map root` | The block's leaf and its path, at its row, lead to the statement's map root. |
@@ -137,7 +137,7 @@ before `fusion`.
 
 | Altered | Stopped by |
 |---|---|
-| the statement it names; the statement it is checked against | `statement` |
+| the statement it names; the statement it is checked against; a statement made under another rule | `statement` |
 | its count of blocks or frames, its tile size; a frame left out of the leaves and the rest moved up to hide it | `shape` |
 | a pose moved, even by the least a float can move; a pose taken away; a depth root replaced or said to be absent; two frames exchanged; a frame put in place of its neighbour | `scan root` |
 | one bit of one sum; one weight; the block's index; its row; a step of its path; another block's path; another block's accumulators | `map root` |

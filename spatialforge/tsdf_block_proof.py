@@ -95,6 +95,7 @@ from .tsdf_commitment import (
     _block_leaf_data,
     _commit_tsdf_scan,
     _frame_from_leaf_data,
+    _rule_not_fused_here,
     _statement,
     _statement_differences,
     _validate_volume,
@@ -607,7 +608,11 @@ def check_tsdf_block_proof(
     def invalid(failed_check: str, detail: str) -> TsdfBlockProofCheck:
         return found(TsdfBlockProofVerdict.INVALID, failed_check, detail)
 
-    # statement: the proof names the statement it was made under.
+    # statement: the statement is made under the rule fused here, and
+    # the proof names it.
+    wrong = _rule_not_fused_here(statement)
+    if wrong is not None:
+        return invalid("statement", wrong)
     if proof.statement_sha256 != statement_digest:
         return invalid(
             "statement",

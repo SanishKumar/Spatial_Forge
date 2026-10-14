@@ -759,6 +759,22 @@ def check_tsdf_map_statement(
     )
 
 
+def _rule_not_fused_here(statement: TsdfMapStatement) -> str | None:
+    """Why a check cannot fuse a block under this statement, if it cannot.
+
+    A statement names the rule its map was fused by, and this package
+    fuses by one. Under any other a check would be fusing a function the
+    statement does not name.
+    """
+
+    if statement.rule == TSDF_FUSION_RULE:
+        return None
+    return (
+        f"the statement is made under the rule {statement.rule!r}, and "
+        f"this check fuses by {TSDF_FUSION_RULE!r} alone"
+    )
+
+
 def _statement_differences(
     stated: TsdfMapStatement,
     found: TsdfMapStatement,

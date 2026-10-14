@@ -61,6 +61,7 @@ RIGID_TOLERANCE = 1e-5
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _SESSION = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_RULE = re.compile(r"^[a-z0-9][a-z0-9._/-]{0,127}$")
 
 
 class Unreadable(Exception):
@@ -318,11 +319,11 @@ class Statement:
             root["session_id"]
         ):
             raise Unreadable("the statement's session_id is not one")
-        if root["rule"] != RULE:
-            raise Unreadable(
-                f"the statement is made under the rule {root['rule']!r}, "
-                f"and this checker knows only {RULE!r}"
-            )
+        if not isinstance(root["rule"], str) or not _RULE.fullmatch(
+            root["rule"]
+        ):
+            raise Unreadable("the statement's rule is not the name of one")
+        self.rule = root["rule"]
         scan = _fields(
             root["scan"],
             "its scan",
@@ -619,6 +620,12 @@ def check(statement: Statement, proof: Proof) -> Outcome:
     outcome = Outcome()
     selected = proof.frames[::statement.frame_stride]
 
+    if statement.rule != RULE:
+        return outcome.fail(
+            "statement",
+            f"the statement is made under the rule {statement.rule!r}, and "
+            f"this check fuses by {RULE!r} alone",
+        )
     if proof.statement != statement.digest:
         return outcome.fail(
             "statement", f"the proof names statement {proof.statement}"

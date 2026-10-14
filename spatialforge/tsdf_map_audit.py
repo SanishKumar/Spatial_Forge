@@ -73,6 +73,7 @@ from .tsdf_block_volume import (
 from .tsdf_commitment import (
     TsdfFrameCommitment,
     TsdfMapStatement,
+    _rule_not_fused_here,
     _validate_volume,
 )
 from .tsdf_held_blocks import (
@@ -462,7 +463,11 @@ def check_tsdf_map_audit(
     def invalid(failed_check: str, detail: str) -> TsdfMapAuditCheck:
         return found(TsdfMapAuditVerdict.INVALID, failed_check, detail)
 
-    # statement: the audit names the statement it answers for.
+    # statement: the statement is made under the rule fused here, and
+    # the audit names it.
+    wrong = _rule_not_fused_here(statement)
+    if wrong is not None:
+        return invalid("statement", wrong)
     if audit.statement_sha256 != statement_digest:
         return invalid(
             "statement",

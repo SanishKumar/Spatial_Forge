@@ -87,6 +87,8 @@ from tests.heavy_fixtures import shared_room_case
 from tests.test_tsdf_block_evidence import forbidden_calls, fused
 from tests.test_tsdf_block_evidence import tree_snapshot
 from tests.test_tsdf_block_proof import (
+    ANOTHER_RULE,
+    RULE_REFUSED,
     change_one_sample,
     drop_a_frame,
     fixture_volume,
@@ -1208,6 +1210,29 @@ class AlteredCertificateTests(unittest.TestCase):
             "shape",
             "the certificate has frames 19 and the statement 20",
         )
+
+    def test_no_route_is_checked_under_another_rule(self) -> None:
+        other = replace(WORK.room_statement, rule=ANOTHER_RULE)
+        certificate = WORK.room_clear
+        named = replace(certificate, statement_sha256=other.digest_sha256)
+        for held in (named, certificate):
+            check = check_tsdf_route_certificate(other, held)
+            self.assertIs(check.verdict, TsdfRouteVerdict.INVALID)
+            self.assertEqual(
+                (check.failed_check, check.passed_checks, check.detail),
+                ("statement", (), RULE_REFUSED),
+            )
+            self.assertIsNone(check.clearance)
+        self.stopped(
+            named, "statement", "the certificate was made under statement"
+        )
+        with self.assertRaisesRegex(
+            TsdfError,
+            "not a statement of this volume and this scan: fusion rule$",
+        ):
+            certify_tsdf_route(
+                other, WORK.room_volume, WORK.room.session, ROOM_CLEAR
+            )
 
     def test_blocks_that_are_not_the_routes(self) -> None:
         certificate = WORK.room_clear
